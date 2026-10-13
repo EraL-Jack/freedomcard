@@ -58,8 +58,13 @@ export const INITIAL_HAND = 5;
 /** A9 补充 1：每回合抽排阶段抽 2 张。 */
 export const DRAW_PER_TURN = 2;
 
-/** A6-5：卡组 31 张。⚠️ 与 A10-4 的「牌库 30 张」待 Era 对齐（docs/01 §1.3 #2）。 */
-export const DECK_SIZE = 31;
+/**
+ * A6-5 / A10-4（2026-10-13 Era 确认）：卡组 31 张 = 主卡组 30 + 指挥官 1。
+ * 指挥官开局直接进指挥官区，**不进主卡组、不参与洗牌与抽牌**。
+ */
+export const MAIN_DECK_SIZE = 30;
+export const COMMANDER_COUNT = 1;
+export const DECK_SIZE = MAIN_DECK_SIZE + COMMANDER_COUNT; // 31
 
 /** A6-5：同名卡上限 3 张；指挥官有且仅有 1 张。 */
 export const MAX_COPIES = 3;
