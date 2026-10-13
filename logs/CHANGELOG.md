@@ -1092,3 +1092,23 @@
 - 文档同步：`docs/06` 新增 X-6 + 补充第 7 条；`docs/01` §1.1 加别名提示框、§1.3 新增 #9（效果系统）与 #10（力量曲线回合映射）；`docs/09` 新增 2 条「已排除」条目。
 - 回归验证：typecheck **0** / lint **0** / 单测 **99 passed**（core 72 + server 27，+4）
 - 破坏性：**否** —— 仅新增可选字段 `CardDef.text` 与卡池数据；既有行为不变
+
+---
+
+### D-102（2026-10-13 20:55）—— 指挥官力量值曲线的推进时机与档位映射（ADR-0016 / X-7）
+
+- 交付件：`shared/src/types.ts`、`shared/src/constants.ts`、`core/src/state.ts`、`core/src/ops.ts`、`core/src/reducer.ts`、`core/src/rules/commander-growth.ts`（**新增**）、`core/src/rules/start.ts`、`core/src/rules/phase.ts`、`core/src/rules/attack.ts`、`core/src/rules/rules.test.ts`、`server/src/cards.ts`、`docs/06`、`docs/01`、`docs/09`、`docs/10`、`logs/DECISIONS.md`
+- 触发：Era 原话 —— **「是初始0然后每个充能阶段成长，第一回合就会变到1」**
+- 决策：**ADR-0016**（动工前写就）
+- 内容：
+  1. **曲线 = 档位序列，不是「回合号 → 力量值」映射**：`powerCurve` 由 `attrs.powerCurve`（`unknown`）提升为 `CardDef` 一等字段 —— 它已从「只供展示的转录数据」变为「参与结算的规则数据」，不该再对 `unknown` 做断言。
+  2. **档位入状态**：`PlayerState` 新增 `commanderPowerIndex`，初始 `0`；力量值始终由曲线推导，不落第二份数据。
+  3. **推进点两处接线**：`start.ts`（开局，只推进**先攻方**）+ `phase.ts` 的 `advanceOnce`（进入 `charge`，覆盖第 2 回合起）。二者共用 `rules/commander-growth.ts`。
+  4. **封顶不循环**：`index = min(index + 1, curve.length - 1)`；档位无变化时不产出事件。
+  5. **只在己方充能阶段推进**（假设 H16）；**无曲线的指挥官不成长**，恒取 `CardDef.power`。
+  6. **战斗裁决改读当前力量值**：`attack.ts` 由 `def.power` 改为 `unitPower(state, cards, uid)`。
+- **语义要点**：Era 说的是「每个充能阶段成长」而非「第 N 回合变成多少」。**若按回合号查表，开局时 `turn === 1` 会直接取 1，与「初始 0」矛盾** —— 这是两者唯一但决定性的差别。
+- **最容易漏的一处**：`createInitialState` 的初始阶段就是 `charge`，第一回合是「已经处在该阶段」而没有「进入」动作，只改 `advanceOnce` 会让先攻方永远停在初始档。
+- 文档同步：`docs/06` 新增 X-7 条目 + 补充第 8 条；`docs/01` §1.1 加曲线档位表、§1.3 #10 标为已确认；`docs/09` 新增 H16 / H17、「已排除」表划掉力量曲线项；`docs/10` 更新转录方式与「仍未给」清单；`logs/DECISIONS.md` 落 ADR-0016。
+- 回归验证：typecheck **0** / lint **0** / 单测 **107 passed**（core 80 + server 27，+8）；新增 8 条用例 —— 初始档位 0、开局先攻方到 1、开局不推进后攻方、后攻方在自己充能阶段成长、逐回合 1→3→5、末档封顶且不再产出事件、无曲线指挥官不成长、战斗裁决读当前档位。
+- 破坏性：**否** —— 新增可选字段与一个新事件类型；既有事件与行为不变（`commander:grown` 为纯新增）。

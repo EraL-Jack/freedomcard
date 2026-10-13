@@ -26,6 +26,7 @@ import { drawCards, ev, deckShuffled, rngAdvance } from '../ops.js';
 import { nextInt, shuffle } from '../rng.js';
 import { commanderUid } from '../state.js';
 import { checkDeck } from '../deck.js';
+import { growCommander } from './commander-growth.js';
 
 export const startRule = (
   state: GameState,
@@ -86,7 +87,16 @@ export const startRule = (
     );
   }
 
-  // ④ 发起手牌（A10-1：5 张）
+  // ④ 第一回合的充能阶段：指挥官力量值推进一档（X-7 / ADR-0016 §3）
+  //    开局后正处**先攻方**第一回合的充能阶段，此处是「已经在该阶段」而非「进入」，
+  //    故必须在这里单独补一次，否则先攻方永远停在初始档（Era：第一回合就会变到 1）。
+  //
+  //    ⚠️ **只推进先攻方**：揭示是双方的（X-1），但「每回合充能阶段成长」是**己方**回合的事。
+  //    后攻方（seats[1]）的第一次成长发生在它自己的第一个充能阶段 —— 由 `phase.ts` 的
+  //    `advanceOnce` 在跨回合时接线（ADR-0016 §6）。开局就一起推会让后攻方凭空多一档。
+  events.push(...growCommander(state, seats[0]!, ctx));
+
+  // ⑤ 发起手牌（A10-1：5 张）
   for (const id of seats) {
     const drawn = drawCards(at, id, { deck: shuffled.get(id) ?? [], graveyard: [] }, INITIAL_HAND, cursor);
     events.push(...drawn.events);

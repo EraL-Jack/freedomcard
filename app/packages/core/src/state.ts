@@ -1,5 +1,5 @@
 import type { CardInstance, GameState, PlayerId, PlayerState, Zone } from '@app/shared';
-import { INITIAL_HEALTH, INITIAL_MAX_COST } from '@app/shared';
+import { INITIAL_COMMANDER_POWER_INDEX, INITIAL_HEALTH, INITIAL_MAX_COST } from '@app/shared';
 
 /**
  * 对局状态的构造与不可变更新 —— 结构见 ADR-0012。
@@ -70,6 +70,7 @@ export function createInitialState(opts: InitialStateOptions): GameState {
       maxCost: INITIAL_MAX_COST,
       zones: { ...emptyZones(), deck },
       commanderRevealed: false,
+      commanderPowerIndex: INITIAL_COMMANDER_POWER_INDEX,
       mulliganDone: false,
     };
   }

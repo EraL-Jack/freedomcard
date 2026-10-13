@@ -48,6 +48,7 @@ import {
   reject,
   strArg,
   takeFromDeck,
+  unitPower,
 } from '../ops.js';
 import { opponentOf } from '../state.js';
 
@@ -130,8 +131,14 @@ export const attackRule = (
 
   // 力量值快照 —— **必须排在触发之后**（ADR-0013 §7）：
   // 若将来出现「攻击时 +N 力量」的效果，快照在前就会用旧值裁决。
-  const atkPower = atkDef.power;
-  const defPower = defDef.power;
+  //
+  // ⚠️ 读的是**当前**力量值而非静态 `def.power`（ADR-0016 §8）：指挥官按 X-7 的力量曲线
+  //    逐回合成长，若取定义上的初始值，指挥官会永远按第 0 档参战。
+  const atkPower = unitPower(state, ctx.cards, attackerUid);
+  const defPower = unitPower(state, ctx.cards, targetUid);
+  if (atkPower === null || defPower === null) {
+    return reject(RULE_ERRORS.CARD_NOT_FOUND, '无法确定该单位的力量值');
+  }
   const atkDamage = damageOf(atkDef);
 
   const outcome = resolveCombat(atkPower, defPower);

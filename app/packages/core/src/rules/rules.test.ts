@@ -11,15 +11,18 @@ import {
   RULE_ERRORS,
   type CardDef,
   type CardInstance,
+  type GameEvent,
   type GameState,
   type Intent,
   type Phase,
+  type PlayerId,
   type RuleContext,
   type Zone,
 } from '@app/shared';
 
 import { applyIntent, createInitialState, reduce, stateHash, INTENTS } from '../index.js';
 
+import { unitPower } from '../ops.js';
 import { resolveCombat } from './attack.js';
 
 /* ------------------------------ 夹具 ------------------------------ */
@@ -42,6 +45,20 @@ const CARDS: Record<string, CardDef> = {
   c1: { defId: 'c1', name: '持续1', type: 'continuous', cost: 1, power: 0 },
   /** 嘲讽随从 —— A7 现仅此一个关键词，故夹具里也只有一个。 */
   ta1: { defId: 'ta1', name: '嘲讽随从', type: 'minion', cost: 1, power: 4, keywords: [KEYWORD_TAUNT] },
+  /**
+   * 带力量值曲线的指挥官 —— X-7 / ADR-0016。
+   *
+   * `power` 记的是**初始档位的值**（与曲线首项一致，0）；
+   * 不带曲线的 `cmd`（power 5）则恒取定值，不成长 —— 两种形态都要能跑通。
+   */
+  cmdCurve: {
+    defId: 'cmdCurve',
+    name: '曲线指挥官',
+    type: 'commander',
+    cost: 0,
+    power: 0,
+    powerCurve: [0, 1, 3, 5],
+  },
 };
 for (let i = 3; i <= 10; i++) {
   CARDS[`m${i}`] = { defId: `m${i}`, name: `随从${i}`, type: 'minion', cost: 0, power: i };
@@ -725,6 +742,128 @@ describe('攻击的事件序列与触发点（ADR-0013 §7）', () => {
     const r = applyIntent(s, intent('p1', INTENTS.attack, { attackerUid: 'a1', targetUid: 'd1' }), CTX);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.CARD_NOT_FOUND);
+  });
+});
+
+/* ------------------ 指挥官力量值曲线（X-7 / ADR-0016） ------------------ */
+
+/** 连续推进 `times` 次阶段。 */
+function advance(state: GameState, times: number, ctx: RuleContext = CTX) {
+  let s = state;
+  const events: GameEvent[] = [];
+  for (let i = 0; i < times; i++) {
+    const r = applyIntent(s, intent(s.seats[s.activeSeat]!, INTENTS.phaseAdvance), ctx);
+    if (!r.ok) throw new Error(`意外拒绝: ${r.error.code} ${r.error.message}`);
+    events.push(...r.value);
+    s = r.value.reduce(reduce, s);
+  }
+  return { state: s, events };
+}
+
+/** 直接改写某玩家的指挥官力量档位（构造确定场景用）。 */
+function setIndex(state: GameState, playerId: PlayerId, index: number): GameState {
+  const p = state.players[playerId]!;
+  return { ...state, players: { ...state.players, [playerId]: { ...p, commanderPowerIndex: index } } };
+}
+
+describe('指挥官力量值曲线（X-7 / ADR-0016）', () => {
+  /** 用带曲线的指挥官开一局。 */
+  function startWithCurve() {
+    const s = createInitialState({
+      seed: 7,
+      seats: ['p1', 'p2'],
+      decks: { p1: DECK, p2: DECK },
+      commanders: { p1: 'cmdCurve', p2: 'cmdCurve' },
+    });
+    return runWith(s, intent('p1', INTENTS.start));
+  }
+
+  it('初始档位为 0（力量值为曲线首项）', () => {
+    const s = fresh();
+    expect(s.players['p1']!.commanderPowerIndex).toBe(0);
+    expect(s.players['p2']!.commanderPowerIndex).toBe(0);
+  });
+
+  it('开局经历第一次充能 → 先攻方力量值变为 1（Era：第一回合就会变到 1）', () => {
+    const { state: after, events } = startWithCurve();
+    // ⚠️ 先后手由掷骰决定（A2-4），故先攻方要按 `seats[0]` 取，不能写死 p1
+    const first = after.seats[0]!;
+    expect(after.players[first]!.commanderPowerIndex).toBe(1);
+    expect(unitPower(after, CARDS, `${first}#commander`)).toBe(1);
+    const grown = events.filter((e) => e.type === 'commander:grown');
+    expect(grown).toHaveLength(1);
+    expect(grown[0]!.payload).toMatchObject({ playerId: first, index: 1, power: 1 });
+  });
+
+  it('开局只推进先攻方 —— 成长发生在己方充能阶段，后攻方仍停在第 0 档', () => {
+    const { state: after } = startWithCurve();
+    const [first, second] = after.seats as [PlayerId, PlayerId];
+    expect(after.players[first]!.commanderPowerIndex).toBe(1);
+    expect(after.players[second]!.commanderPowerIndex).toBe(0);
+  });
+
+  it('后攻方在自己的第一个充能阶段才成长到 1', () => {
+    const { state: s0 } = startWithCurve();
+    const second = s0.seats[1]!;
+    const s1 = advance(s0, 6).state; // 先攻方走完六阶段 → 后攻方第一回合充能阶段
+    expect(s1.turn).toBe(2);
+    expect(s1.players[second]!.commanderPowerIndex).toBe(1);
+    expect(unitPower(s1, CARDS, `${second}#commander`)).toBe(1);
+  });
+
+  it('逐回合沿曲线推进：第 1 回合 1 → 第 2 回合 3 → 第 3 回合 5', () => {
+    const { state: s0 } = startWithCurve();
+    const uid = `${s0.seats[0]!}#commander`;
+    const powers = [
+      unitPower(s0, CARDS, uid),
+      unitPower(advance(s0, 12).state, CARDS, uid),
+      unitPower(advance(s0, 24).state, CARDS, uid),
+    ];
+    expect(powers).toEqual([1, 3, 5]);
+  });
+
+  it('走到末档后封顶：第 4 回合仍为 5，且不再产出成长事件', () => {
+    const { state: s0 } = startWithCurve();
+    const a = advance(s0, 36);
+    expect(a.state.players['p1']!.commanderPowerIndex).toBe(3);
+    expect(unitPower(a.state, CARDS, 'p1#commander')).toBe(5);
+    // 先攻方共经历 4 次充能，但只有前 3 次推进了档位 → 3 条事件
+    const p1Grown = a.events.filter(
+      (e) => e.type === 'commander:grown' && e.payload?.['playerId'] === 'p1',
+    );
+    expect(p1Grown).toHaveLength(3);
+  });
+
+  it('未定义曲线的指挥官不成长，力量恒为 CardDef.power', () => {
+    const s = createInitialState({
+      seed: 7,
+      seats: ['p1', 'p2'],
+      decks: { p1: DECK, p2: DECK },
+      commanders: { p1: 'cmd', p2: 'cmd' },
+    });
+    const after = run(s, intent('p1', INTENTS.start));
+    expect(after.players['p1']!.commanderPowerIndex).toBe(0);
+    expect(unitPower(after, CARDS, 'p1#commander')).toBe(5);
+  });
+
+  it('战斗裁决读的是指挥官**当前档位**的力量值（ADR-0016 §8）', () => {
+    // 场景固定为：p2 的 m1（力量 2）攻击 p1 的曲线指挥官，只有指挥官档位不同。
+    const attackWithIndex = (index: number): GameState => {
+      const base = craft({
+        phase: 'battle',
+        turn: 4,
+        activeSeat: 1,
+        zones: { commander: [c('p1#commander', 'cmdCurve')] },
+        foeZones: { board: [c('d1', 'm1')] },
+      });
+      const s = setIndex(base, 'p1', index);
+      return run(s, intent('p2', INTENTS.attack, { attackerUid: 'd1', targetUid: 'p1#commander' }));
+    };
+
+    // 第 0 档力量 0 < 攻击方 2 → 防守方（指挥官）输 → 掉 1 血（伤害值默认 1，X-5）
+    expect(attackWithIndex(0).players['p1']!.health).toBe(INITIAL_HEALTH - 1);
+    // 第 2 档力量 3 > 攻击方 2 → 攻击方输 → 指挥官不掉血
+    expect(attackWithIndex(2).players['p1']!.health).toBe(INITIAL_HEALTH);
   });
 });
 
