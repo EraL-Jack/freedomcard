@@ -351,7 +351,15 @@ io.on('connection', (socket) => {
   /** 建房：返回 playerId 与 token（客户端须自行保存，用于重连）。 */
   socket.on(SOCKET_EVENTS.roomCreate, (raw: unknown, ack?: (res: unknown) => void) => {
     const parsed = RoomCreateSchema.safeParse(raw);
-    if (!parsed.success) return ack?.({ ok: false, error: 'INVALID_PAYLOAD' });
+    // ⚠️ 校验失败必须给玩家能看懂的话 —— 只回 INVALID_PAYLOAD 错误码，
+    // 界面上就是一句天书（Era 2026-10-13 实测：人数填 22 超上限 8，
+    // 只看到「操作失败：INVALID_PAYLOAD」，不知道哪里错了）。
+    if (!parsed.success)
+      return ack?.({
+        ok: false,
+        error: 'INVALID_PAYLOAD',
+        message: '参数不合法：昵称需 1–24 个字，人数需 1–8 的整数',
+      });
     const r = roomManager.create(parsed.data);
     if (!r.ok) return ack?.({ ok: false, error: r.error, message: r.message });
     socket.data.playerId = r.value.seat.playerId;
@@ -369,7 +377,12 @@ io.on('connection', (socket) => {
 
   socket.on(SOCKET_EVENTS.roomJoin, (raw: unknown, ack?: (res: unknown) => void) => {
     const parsed = RoomJoinSchema.safeParse(raw);
-    if (!parsed.success) return ack?.({ ok: false, error: 'INVALID_PAYLOAD' });
+    if (!parsed.success)
+      return ack?.({
+        ok: false,
+        error: 'INVALID_PAYLOAD',
+        message: '参数不合法：房间码不能为空，昵称需 1–24 个字',
+      });
     const r = roomManager.join(parsed.data);
     if (!r.ok) return ack?.({ ok: false, error: r.error, message: r.message });
     socket.data.playerId = r.value.seat.playerId;
@@ -391,7 +404,8 @@ io.on('connection', (socket) => {
   /** 重连：校验凭据与保留窗口，返回 lastSeq 与完整快照。 */
   socket.on(SOCKET_EVENTS.roomReconnect, (raw: unknown, ack?: (res: unknown) => void) => {
     const parsed = RoomReconnectSchema.safeParse(raw);
-    if (!parsed.success) return ack?.({ ok: false, error: 'INVALID_PAYLOAD' });
+    if (!parsed.success)
+      return ack?.({ ok: false, error: 'INVALID_PAYLOAD', message: '重连参数不合法，请重新加入房间' });
     const r = roomManager.reconnect(parsed.data);
     if (!r.ok) return ack?.({ ok: false, error: r.error, message: r.message });
     socket.data.playerId = r.value.seat.playerId;
@@ -441,7 +455,8 @@ io.on('connection', (socket) => {
    */
   socket.on(SOCKET_EVENTS.gameIntent, (raw: unknown, ack?: (res: unknown) => void) => {
     const parsed = IntentSchema.safeParse(raw);
-    if (!parsed.success) return ack?.({ ok: false, error: 'INVALID_PAYLOAD' });
+    if (!parsed.success)
+      return ack?.({ ok: false, error: 'INVALID_PAYLOAD', message: '操作参数不合法，请重试' });
     const intent = parsed.data as Intent;
 
     const located = roomManager.locate(intent.playerId);

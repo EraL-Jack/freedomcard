@@ -42,3 +42,21 @@ html {
   -webkit-text-size-adjust: 100%;
   touch-action: manipulation;
 }
+
+/*
+ * 输入框文字色 —— Tailwind preflight **不设置** input 的 color，
+ * 浏览器默认黑字落在深色输入框（bg-slate-950）上几乎不可读。
+ * Era 2026-10-13 实测反馈：「输入的文字看不清楚」。
+ * 全局设一次，避免以后新增输入框又漏。
+ */
+input,
+textarea,
+select {
+  color: #e2e8f0;
+}
+
+/* 自动填充时浏览器会套一层默认样式把文字染黑，同样修回可读的颜色。 */
+input:-webkit-autofill {
+  -webkit-text-fill-color: #e2e8f0;
+  transition: background-color 9999s ease-out;
+}
