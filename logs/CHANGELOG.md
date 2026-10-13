@@ -937,3 +937,17 @@
 - 定位明确：PR 是**留痕**而非审批闸 —— Era 已授权无需审核，故默认**自开自合**；例外仅仓库初始化
 - 工具链事实：本机**无 `gh` CLI**（`command not found`），创建与合并 PR 走 GitHub REST API（curl + PAT），推送分支走 SSH
 - 破坏性：否（流程约定，不改任何交付件内容）
+
+### [2026-10-13 18:05] D-301 · CI 在 GitHub 首次真实运行，三次全绿
+- 类型：补充记录（此前 D-301 条目标注「未在本机验证：CI 从未真实 run 过」，本次补票）
+- 结果：**3 次 workflow run 全部 `conclusion=success`**
+
+  | 触发 | 事件 | 结论 |
+  | --- | --- | --- |
+  | `docs(D-214): 回填槽位`（`00ceb7b`） | push | success |
+  | `docs(D-204): 新增 PR 工作流规范（禁止直接 push master）` | pull_request | success |
+  | `docs(D-204): 新增 PR 工作流规范（PR #1）`（`543b4f3`） | push | success |
+
+- **关键补票：`e2e` job 在 `ubuntu-latest` 上通过** —— 证明 `webServer` 自拉起 `pnpm dev` 在 Linux 下工作正常；Windows 上「收不到就绪信号、卡到 120s 超时」是**平台特有问题**，不是配置错误。本机绕行方案（先手动 `pnpm dev` 再靠 `reuseExistingServer` 复用）仅 Windows 需要，已写在 `playwright.config.ts` 注释里
+- 附带验证：`quality` job 在全新环境（`pnpm install --frozen-lockfile`）下 typecheck / lint / test 全过 —— `allowBuilds` 白名单与 lockfile 一致性得到远端确认
+- 破坏性：否（仅记录，不改文件）
