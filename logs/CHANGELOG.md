@@ -962,3 +962,18 @@
   - **消耗**：支付 `cost` 时，从费用区取**相应数量的卡**送入弃牌区；数量不足则无法支付
 - **影响：破坏性未决项清零** —— `docs/01` §1.3 第 1 条标记为已确认，`GameState` 的区域结构可以定稿（ADR-0012）。剩余 6 条待确认均不阻塞规则引擎开工
 - 破坏性：否（文档层面）；对实现而言是**解锁** —— 此前因该条未决而搁置的区域建模得以继续
+
+### [2026-10-13 18:30] D-102 · ADR-0012 落地：对局状态结构定稿（**尚不含规则处理器**）
+- 版本：v0.1
+- 类型：新增（代码）＋ 新增（决策：ADR-0012）
+- 前提：Era 已澄清「无独立充能区」，`docs/01` §1.3 第 1 条（破坏性未决项）清零
+- **ADR-0012 要点**：8 个区域（`deck`/`hand`/`commander`/`board`/`spell`/`cost`/`graveyard`/`exile`）逐项对应 B2 布局；**不设 `charge` 区**；费用区三种来源（充能阶段放入的随从、指挥官受伤展示的卡）与按数量消耗的支付语义；`CardDef` 与 `CardInstance` 分离；字段最小集 + `attrs` 扩展位；最高费用曲线写成离散表 `[1,3,5,10]` 而非公式
+- 代码改动：
+  - `shared`：`types.ts` 定义 `CardType`/`Zone`/`Phase`/`CardDef`/`CardInstance`/`PlayerState` 与新 `GameState`；`constants.ts` 新增玩法常量（全部注明 `docs/06` 来源）与 `RULE_ERRORS`（与 `ROOM_ERRORS` 分层，不得混用）；`index.ts` 补齐导出
+  - `core`：新增 `state.ts`（`createInitialState`、`emptyZones`、`makeUid`、`activePlayer`、`opponentOf`）
+  - `server`：新增 `cards.ts` —— **卡池刻意留空**（`TODO(slot)`，等 Era 给卡池数据）；`pipeline.ts` 的 `PipelineDeps` 增加 `cards` 并透传给 `RuleContext`；`index.ts` 改用 `createInitialState`
+  - `core/replay.ts`：`ReplayDeps` 增加 `cards` 并随 `ctx` 注入 —— 回放必须能在不依赖外部状态的前提下重跑
+- **刻意未做**：`applyIntent` / `reduce` 仍是 `TODO(slot)`。本批**只定结构**，规则处理器是下一步 —— 结构与行为混在一个 PR 里没法审
+- **一个隐蔽决策记在此处**：卡实例 `uid` 用 `玩家#序号` 确定性生成，**不用随机 id** —— 随机 uid 会进 `stateHash`，服务端与客户端各算一次就会出现假 desync
+- 回归验证：typecheck 0 / lint 0 / 单测 **35 passed**（core 12 + server 23）；E2E 未重跑（纯结构与类型改动，无行为变化）
+- 破坏性：**是** —— `GameState` 字段由 1 个增至 9 个，`RuleContext` 增加 `cards`；所有构造 `GameState` 的位置已同步（`server/src/index.ts`、`pipeline.test.ts`、`replay.test.ts`）

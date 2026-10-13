@@ -13,7 +13,12 @@ import { isDeterministic, replay, type ReplayDeps } from './replay.js';
 
 type Mutable = GameState & { n: number };
 
-const state0: Mutable = { rngCursor: 0, n: 0 };
+/**
+ * 本测试只关心「回放与确定性」本身，不关心玩法，故 **故意不构造完整 GameState** ——
+ * 只填回放真正会读的 `rngCursor`，其余字段留空由断言补齐。
+ * 若哪天这里需要填齐全部字段，说明回放逻辑开始依赖玩法了，那本身就是个应当复核的信号。
+ */
+const state0 = { rngCursor: 0, n: 0 } as unknown as Mutable;
 
 function seq(...types: string[]): Intent[] {
   return types.map((type, i) => ({ type, actor: 'player' as const, playerId: 'p1', seq: i + 1 }));
@@ -31,6 +36,7 @@ function deterministicDeps(): ReplayDeps {
       return { rngCursor: s.rngCursor + 1, n: s.n + event.type.length } as Mutable;
     },
     stateHash: (state) => `h${(state as Mutable).rngCursor}-${(state as Mutable).n}`,
+    cards: {},
     now: (step) => 1000 + step * 10,
   };
 }
@@ -95,6 +101,7 @@ describe('回放 · 确定性校验', () => {
         return { rngCursor: s.rngCursor + 1, n: s.n + event.at } as Mutable;
       },
       stateHash: (state) => `h${(state as Mutable).rngCursor}-${(state as Mutable).n}`,
+    cards: {},
       now: (step) => step,
     };
 
@@ -121,6 +128,7 @@ describe('回放 · 确定性校验', () => {
         return { rngCursor: s.rngCursor + 1, n: s.n + event.at } as Mutable;
       },
       stateHash: (state) => `h${(state as Mutable).rngCursor}-${(state as Mutable).n}`,
+    cards: {},
       now: (step) => 1000 + step,
     };
     expect(isDeterministic(state0, seq('a', 'b'), okDeps)).toBe(true);

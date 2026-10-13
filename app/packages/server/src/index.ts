@@ -18,6 +18,7 @@ import {
   type Intent,
 } from '@app/shared';
 
+import { CARD_POOL } from './cards.js';
 import {
   ReplayRecorder,
   RoomManager,
@@ -87,7 +88,10 @@ const runtimes = new Map<string, RoomRuntime>();
 function runtimeOf(roomId: string): RoomRuntime {
   let rt = runtimes.get(roomId);
   if (!rt) {
-    rt = { state: { rngCursor: 0 }, guard: new SeqGuard(), replay: new ReplayRecorder(Date.now()), serverSeq: 0 };
+    // 空座位的初始状态：真正开局（洗牌 / 发牌 / 掷骰）由 `start_game` Intent 建立。
+    // 卡组此刻尚未提交，故 `decks` 为空 —— 这不是占位偷懒，而是「卡组在开局时才进入状态」。
+    const state = core.createInitialState({ seed: Date.now() >>> 0, seats: [], decks: {} });
+    rt = { state, guard: new SeqGuard(), replay: new ReplayRecorder(Date.now()), serverSeq: 0 };
     runtimes.set(roomId, rt);
   }
   return rt;
@@ -226,6 +230,7 @@ io.on('connection', (socket) => {
       guard: rt.guard,
       replay: rt.replay,
       now: () => Date.now(),
+      cards: CARD_POOL,
       emit: (out) => {
         rt.serverSeq += 1;
         if (out.kind === 'accepted') {

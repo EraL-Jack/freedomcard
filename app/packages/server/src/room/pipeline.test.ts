@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { createInitialState } from '@app/core';
+
 import type { GameEvent, GameState, Intent, Rejection, Result, RuleContext } from '@app/shared';
 
 import {
@@ -52,8 +54,9 @@ function harness() {
     replay,
     now: () => t,
     emit: (out) => emitted.push(out),
+    cards: {},
   };
-  const state0: GameState = { rngCursor: 0 };
+  const state0: GameState = createInitialState({ seed: 0, seats: ['p1', 'p2'], decks: {} });
   return { engine, guard, replay, emitted, deps, state0, tick: (ms: number) => (t += ms) };
 }
 

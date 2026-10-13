@@ -37,3 +37,58 @@ export const ROOM_ERRORS = {
 } as const;
 
 export type RoomErrorCode = (typeof ROOM_ERRORS)[keyof typeof ROOM_ERRORS];
+
+/* ------------------------------------------------------------------ *
+ * 玩法常量 —— 全部照抄 `docs/06` A 组的 Era 输入，不得自行推算。
+ * 每条都注明来源，便于日后核对。
+ * ------------------------------------------------------------------ */
+
+/** A5-2：最高费用增长序列，第 4 回合达到上限。写成离散表而非公式 —— Era 给的是四个值。 */
+export const MAX_COST_CURVE = [1, 3, 5, 10] as const;
+
+/** B2 布局：随从区 1·2·3，故场上随从上限 3。 */
+export const BOARD_SLOTS = 3;
+
+/** A10-2：初始血量 15。 */
+export const INITIAL_HEALTH = 15;
+
+/** A10-1：起手 5 张。 */
+export const INITIAL_HAND = 5;
+
+/** A9 补充 1：每回合抽排阶段抽 2 张。 */
+export const DRAW_PER_TURN = 2;
+
+/** A6-5：卡组 31 张。⚠️ 与 A10-4 的「牌库 30 张」待 Era 对齐（docs/01 §1.3 #2）。 */
+export const DECK_SIZE = 31;
+
+/** A6-5：同名卡上限 3 张；指挥官有且仅有 1 张。 */
+export const MAX_COPIES = 3;
+
+/** A5-2：最高费用初始为 1。 */
+export const INITIAL_MAX_COST = 1;
+
+/** A10-3：先攻方第一回合仅抽 1 张，且不可攻击。 */
+export const FIRST_TURN_DRAW = 1;
+
+/** A2-4：先后手由 1d6 掷骰决定，较大者先攻。 */
+export const SEQUENCE_DIE = 6;
+
+/** 规则拒绝码 —— 与房间错误码（`ROOM_ERRORS`）分属两层，不得混用。 */
+export const RULE_ERRORS = {
+  NOT_IMPLEMENTED: 'NOT_IMPLEMENTED',
+  NOT_STARTED: 'NOT_STARTED',
+  ALREADY_STARTED: 'ALREADY_STARTED',
+  NOT_YOUR_TURN: 'NOT_YOUR_TURN',
+  WRONG_PHASE: 'WRONG_PHASE',
+  CARD_NOT_FOUND: 'CARD_NOT_FOUND',
+  CARD_NOT_IN_ZONE: 'CARD_NOT_IN_ZONE',
+  INSUFFICIENT_COST: 'INSUFFICIENT_COST',
+  BOARD_FULL: 'BOARD_FULL',
+  ALREADY_ATTACKED: 'ALREADY_ATTACKED',
+  INVALID_TARGET: 'INVALID_TARGET',
+  MUST_ATTACK_TAUNT: 'MUST_ATTACK_TAUNT',
+  GAME_OVER: 'GAME_OVER',
+  MULLIGAN_DONE: 'MULLIGAN_DONE',
+} as const;
+
+export type RuleErrorCode = (typeof RULE_ERRORS)[keyof typeof RULE_ERRORS];

@@ -1,4 +1,13 @@
-import type { GameEvent, GameState, Intent, PlayerId, Rejection, Result, RuleContext } from '@app/shared';
+import type {
+  CardDef,
+  GameEvent,
+  GameState,
+  Intent,
+  PlayerId,
+  Rejection,
+  Result,
+  RuleContext,
+} from '@app/shared';
 
 import type { ReplayRecorder } from './replay.js';
 import type { SeqGuard } from './seq-guard.js';
@@ -28,6 +37,8 @@ export interface PipelineDeps {
   now(): number;
   /** 广播回调。必须**同步**执行，见下方「禁止 await」说明。 */
   emit(out: PipelineOut): void;
+  /** 卡池定义 —— 透传给规则引擎的 `RuleContext`，引擎据此查 `cost` / `power` / 关键词。 */
+  cards: Record<string, CardDef>;
 }
 
 export interface SubmitResult {
@@ -50,7 +61,7 @@ export function submitIntent(state: GameState, intent: Intent, deps: PipelineDep
     return { state, out };
   }
 
-  const res = deps.engine.applyIntent(state, intent, { now: deps.now() });
+  const res = deps.engine.applyIntent(state, intent, { now: deps.now(), cards: deps.cards });
   if (!res.ok) {
     const out: PipelineOut = { kind: 'rejected', playerId: intent.playerId, seq: intent.seq, error: res.error };
     deps.emit(out);
@@ -89,7 +100,7 @@ export function submitSystemIntent(
   intent: Intent,
   deps: Omit<PipelineDeps, 'guard'> & { guard?: SeqGuard },
 ): SubmitResult {
-  const res = deps.engine.applyIntent(state, intent, { now: deps.now() });
+  const res = deps.engine.applyIntent(state, intent, { now: deps.now(), cards: deps.cards });
   if (!res.ok) {
     const out: PipelineOut = { kind: 'rejected', playerId: intent.playerId, seq: intent.seq, error: res.error };
     deps.emit(out);
