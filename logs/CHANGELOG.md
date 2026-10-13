@@ -859,11 +859,15 @@
 - 备注：**主观结论区不得由执行方代填**；本报告完成后 T-0001 才算闭环
 - 破坏性：否
 
-### [2026-10-13 11:30] D-301 · GitHub 远端配置（新增，配置类）
+### [2026-10-13 11:45] D-301 · GitHub 远端配置（新增，配置类）
 - 版本：v0.1
 - 类型：新增
 - 摘要：`origin` 指向 `https://github.com/EraL-Jack/freedomcard.git`（按 Era 要求使用 https）；曾临时以「用户名:密码」内联方式配置，已清除，**当前配置中不含任何明文凭据**
 - 影响范围：无代码影响，仅远端映射
-- 阻塞状态：**推送未完成** —— ① 仓库匿名探测返回 404（未创建或为私有库，待 Era 确认）；② Git over HTTPS 不接受账户密码，需 PAT（`ghp_...`）或改用 SSH 公钥
-- 备选：已生成 `~/.ssh/id_ed25519`（公钥待 Era 添加到 GitHub → Settings → SSH and GPG keys）
-- 破坏性：否
+- **推送已完成**：3 个提交（`d572e05` / `cd2d5af` / `dc7e298`）已上远端，默认分支 `master`，已设上游跟踪（`master...origin/master`）
+- 推送过程（三条经验，供后续复用）：
+  1. **Git over HTTPS 只认 PAT**，账户密码直接被拒（「Password authentication is not supported」）
+  2. **本机 `github.com:443` 间歇性不可达**（`api.github.com` 一直通）。表现为 `Recv failure: Connection was reset` 或 `Could not connect after 21s` —— **重试即可**，第 2 次成功
+  3. 备用通道：GitHub Git Data API（blob → tree → commit → ref）可在 443 全断时写入提交，但 **GitHub 会覆盖 author/committer 为令牌身份、并按自己的方式生成 tree**，导致两端 SHA 必然不同；仅作兜底，最终仍应以真实 `git push --force` 收口（远端内容经 blob 逐文件比对确认完全一致后才覆盖）
+- 遗留提示：仓库可见性为 **public**（匿名可访问）；若需改为私有，由 Era 在 Settings → Danger Zone 自行切换
+- 破坏性：否（远端此前仅有本次上传内容）
