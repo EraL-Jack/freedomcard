@@ -16,6 +16,22 @@ export default function HomeScreen(props: {
   const [nickname, setNickname] = useState(() => localStorage.getItem('fc.nickname') ?? '');
   const [code, setCode] = useState('');
   const [capacity, setCapacity] = useState('2');
+  const [localError, setLocalError] = useState('');
+
+  /** 建房 / 加房前的**本地**校验 —— 不发请求就能拦住的错误，不要等服务器打回。 */
+  const createOrJoin = (action: (name: string) => void): void => {
+    const name = nickname.trim();
+    if (!name) {
+      setLocalError('请先填写昵称');
+      return;
+    }
+    if (name.length > 24) {
+      setLocalError('昵称最多 24 个字');
+      return;
+    }
+    setLocalError('');
+    action(name);
+  };
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col gap-4 p-4">
@@ -46,12 +62,14 @@ export default function HomeScreen(props: {
         </label>
 
         <label className="block">
-          <span className="text-xs text-slate-400">人数（建房用）</span>
+          <span className="text-xs text-slate-400">人数（建房用，1–8）</span>
           <input
             className="mt-1 w-20 rounded border border-slate-700 bg-slate-950 px-3 py-2"
             value={capacity}
-            onChange={(e) => setCapacity(e.target.value)}
+            onChange={(e) => setCapacity(e.target.value.replace(/\D/g, ''))}
             inputMode="numeric"
+            min={1}
+            max={8}
             data-testid="capacity"
           />
         </label>
@@ -59,7 +77,13 @@ export default function HomeScreen(props: {
         <button
           type="button"
           className="w-full rounded bg-emerald-700 px-4 py-3"
-          onClick={() => session.create(nickname, Number(capacity) || 2)}
+          onClick={() =>
+            createOrJoin((name) => {
+              // 服务端上限 8：超范围在这里折回，不要等服务器打回。
+              const n = Math.min(8, Math.max(1, Math.round(Number(capacity) || 2)));
+              session.create(name, n);
+            })
+          }
           data-testid="create"
         >
           创建房间
@@ -80,7 +104,7 @@ export default function HomeScreen(props: {
         <button
           type="button"
           className="w-full rounded bg-sky-700 px-4 py-3 disabled:opacity-50"
-          onClick={() => session.join(code, nickname)}
+          onClick={() => createOrJoin((name) => session.join(code, name))}
           disabled={!code.trim()}
           data-testid="join"
         >
@@ -96,6 +120,12 @@ export default function HomeScreen(props: {
       >
         编辑卡组
       </button>
+
+      {localError ? (
+        <p className="text-sm text-rose-300" data-testid="local-error">
+          {localError}
+        </p>
+      ) : null}
 
       {session.notice ? (
         <p className="text-sm text-amber-300" data-testid="notice">

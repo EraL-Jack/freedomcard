@@ -75,6 +75,29 @@ export interface RoomSession {
 
 const LS = { playerId: 'fc.playerId', token: 'fc.token', nickname: 'fc.nickname' } as const;
 
+/**
+ * 服务端拒绝 → 玩家能看懂的一句话。
+ *
+ * 优先级：服务端自带的中文 `message` → 按错误码映射 → 原样展示错误码。
+ * 直接展示错误码等于对玩家说天书 —— Era 2026-10-13 实测：人数填 22 超上限 8，
+ * 界面只弹出「操作失败：INVALID_PAYLOAD」，不知道哪里错了、也不知道该怎么改。
+ */
+const ROOM_ERROR_TEXT: Readonly<Record<string, string>> = {
+  INVALID_PAYLOAD: '参数不合法：昵称需 1–24 个字，人数需 1–8',
+  NOT_FOUND: '房间不存在',
+  NOT_IN_ROOM: '你不在任何房间里',
+  ROOM_FULL: '房间已满',
+  ROOM_ENDED: '对局已结束',
+  INVALID_TOKEN: '重连凭据无效，请重新加入房间',
+};
+
+function failText(res: Ack): string {
+  if (res.message) return `操作失败：${res.message}`;
+  const mapped = res.error ? ROOM_ERROR_TEXT[res.error] : undefined;
+  if (mapped) return `操作失败：${mapped}`;
+  return res.error ? `操作失败（${res.error}）` : '操作失败';
+}
+
 export function useRoom(): RoomSession {
   const [link, setLink] = useState<LinkState>('connecting');
   const [room, setRoom] = useState<RoomView | null>(null);
@@ -184,7 +207,7 @@ export function useRoom(): RoomSession {
 
   const acceptIdentity = (res: Ack): boolean => {
     if (!res.ok || !res.playerId || !res.token) {
-      setNotice(res.error ? `操作失败：${res.error}` : '操作失败');
+      setNotice(failText(res));
       return false;
     }
     localStorage.setItem(LS.playerId, res.playerId);

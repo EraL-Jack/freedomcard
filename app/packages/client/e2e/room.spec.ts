@@ -68,7 +68,8 @@ test('满员后第三人加入被拒', async ({ browser }) => {
   const c = await newClient(browser, 'C');
   await c.getByTestId('code').fill(code);
   await c.getByTestId('join').click();
-  await expect(c.getByTestId('notice')).toContainText('ROOM_FULL', { timeout: 10_000 });
+  // 错误码已映射为玩家能看懂的文案（D-108），断言跟着改为人话
+  await expect(c.getByTestId('notice')).toContainText('房间已满', { timeout: 10_000 });
 });
 
 test('三档视口下占位界面不溢出', async ({ page }) => {
