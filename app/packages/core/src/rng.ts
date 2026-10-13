@@ -57,6 +57,17 @@ export function shuffle<T>(cursor: number, items: readonly T[]): { items: T[]; n
   return { items: out, nextCursor: c };
 }
 
+/**
+ * 把游标推进 `steps` 步（不取值）。
+ *
+ * 与逐次调用等价：mulberry32 每次推进就是加一次 `STEP`，故 `n` 次 = `+n*STEP`。
+ * reducer 用它应用 `rng:advance` 事件 —— 因为洗牌结果已由事件显式携带，
+ * reducer 不需要重算随机，只需把游标推进相同的步数，保持后续取值一致。
+ */
+export function advanceCursor(cursor: number, steps: number): number {
+  return (cursor + Math.imul(steps, STEP)) >>> 0;
+}
+
 /** 由字符串种子生成初始游标（同一 seed 必得同一游标）。 */
 export function seedFrom(text: string): number {
   let h = 2166136261 >>> 0; // FNV-1a 32 位偏移基

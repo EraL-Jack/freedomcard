@@ -90,7 +90,12 @@ function runtimeOf(roomId: string): RoomRuntime {
   if (!rt) {
     // 空座位的初始状态：真正开局（洗牌 / 发牌 / 掷骰）由 `start_game` Intent 建立。
     // 卡组此刻尚未提交，故 `decks` 为空 —— 这不是占位偷懒，而是「卡组在开局时才进入状态」。
-    const state = core.createInitialState({ seed: Date.now() >>> 0, seats: [], decks: {} });
+    const state = core.createInitialState({
+      seed: Date.now() >>> 0,
+      seats: [],
+      decks: {},
+      commanders: {},
+    });
     rt = { state, guard: new SeqGuard(), replay: new ReplayRecorder(Date.now()), serverSeq: 0 };
     runtimes.set(roomId, rt);
   }

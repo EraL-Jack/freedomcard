@@ -993,5 +993,33 @@
 - 决策留痕：`logs/DECISIONS.md` 增「ADR-0012 补充」—— 含一条实现约束：卡组校验**分别校验构成**（`主卡组 == 30 && 指挥官 == 1`）而非只校验总数 31，总数对但构成错必须拒绝
 - 文档同步：`docs/01` §1.1 `{{CARD_SET}}` 加澄清框、§1.3 #2 标为已确认；`docs/06` A6-5 / A10-4 两行加注；`docs/05` A10 状态行与自检表更新
 - **`docs/01` §1.3 待确认项由 6 条降至 5 条**（#3 B2 费用区重复、#4 回合时限、#5 占位卡、#6 游戏名、#7 C2-2 不做清单）
-- 回归验证：typecheck / lint / 单测（见下）
+- 回归验证：typecheck 0 / lint 0 / 单测 35 passed
 - 破坏性：否 —— `DECK_SIZE` 值未变（仍 31），仅拆分常量来源
+
+### [2026-10-13 19:10] D-102 · 规则引擎落地：8 条规则 + reduce 全接线（攻击除外）
+- 版本：v0.1
+- 类型：新增（代码）＋ 新增（交付件：D-222）
+- 前提：`docs/01` §1.3 #1（充能区 = 费用区）、#2（卡组 31 = 30 + 1）均已确认，状态结构已由 ADR-0012 定稿
+- **新增规则**（一个机制一个文件，经 `rules/index.ts` 注册）：
+
+  | Intent | 文件 | 依据 |
+  | --- | --- | --- |
+  | `game:start` | `rules/start.ts` | A8-1 洗牌、A2-4 掷骰、X-1 揭示指挥官、A10-1 起手 5 张 |
+  | `mulligan` | `rules/mulligan.ts` | A8-3 / A10-1 返回底 → 抽满 → 再洗牌 |
+  | `phase:advance` | `rules/phase.ts` | A4-1 六阶段、A9-2 重置清休眠、A9 补充 1 抽 2 张、A10-3 先攻首回合抽 1 张 |
+  | `charge:put` | `rules/charge.ts` | X-2 充能（充能区即费用区） |
+  | `card:play` | `rules/play.ts` | A5 补充 2 按张数支付、A6-1 落区、A9-1 出牌不限 |
+  | `turn:end` | `rules/turn-end.ts` | ADR-0011：超时系统 Intent 与玩家走同一链路 |
+  | `game:concede` | `rules/concede.ts` | A3-4 随时认输 |
+  | `attack:declare` | `rules/attack.ts` | **占位，返回 `NOT_IMPLEMENTED`**，理由见下 |
+
+- **新增基础设施**：`reducer.ts`（`reduce` 从 `engine.ts` 拆出，避免规则模块反向依赖引擎）、`ops.ts`（事件构造器 / `locate` / `drawCards` / `baseGuard` 等共用原语）、`deck.ts`（卡组构成校验）
+- **`reduce` 已接线的事件**：`rng:advance`、`deck:shuffled`、`card:moved`、`commander:revealed`、`mulligan:done`、`units:reset`、`unit:asleep`、`health:changed`、`maxCost:changed`、`phase:changed`、`turn:changed`、`game:started`、`game:ended`
+- **攻击为什么不做**：随从**没有生命值字段**（A6 字段表只有 `cost` / `power` / `damage`，都不是生命），`damage` 的含义与取值范围未给，互伤规则与嘲讽裁决范围未给。这四条任一猜错都要重写战斗模块，故按铁律走 `TODO(slot)`，只留占位接口并在文件头写清缺什么。数据结构（`sleeping`）与事件（`unit:asleep` / `units:reset`）已就位，接上即用
+- **法术 / 持续法术只落区、不结算效果** —— A6-3 字段清单与效果定义未给
+- **新增交付件 `docs/09-假设清单.md`（D-222）**：登记 7 条「不得不选一种做法」的假设（H1 掷骰平点重掷、H2 最高费用限制语义、H3 回合计数口径、H4 起手换牌顺序、H5 揭示指挥官时序、H6 双空牌堆静默停止、H7 响应机制暂不开放），每条注明改动代价；并单列「已排除」清单说明哪些**不能猜**
+- **两个隐蔽决策**：
+  1. 随机消耗必须紧跟 `rng:advance` 且步数与实际调用次数一致 —— 洗牌结果由事件显式携带，reducer 只推进游标；步数错一位，后面所有随机全偏
+  2. `card:moved` 一律追加到末尾，配合「`deck[0]` 是顶」的约定，追加即「置底」—— 起手换牌的「返回卡组底」依赖此语义
+- 回归验证：typecheck 0 / lint 0 / 单测 **73 passed**（core 50 + server 23）
+- 破坏性：**是** —— `PlayerState` 增加 `commanderDefId`，`createInitialState` 增加必填 `commanders`；`reduce` 由空实现变为按事件推进

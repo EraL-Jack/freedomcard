@@ -56,7 +56,12 @@ function harness() {
     emit: (out) => emitted.push(out),
     cards: {},
   };
-  const state0: GameState = createInitialState({ seed: 0, seats: ['p1', 'p2'], decks: {} });
+  const state0: GameState = createInitialState({
+    seed: 0,
+    seats: ['p1', 'p2'],
+    decks: {},
+    commanders: {},
+  });
   return { engine, guard, replay, emitted, deps, state0, tick: (ms: number) => (t += ms) };
 }
 
