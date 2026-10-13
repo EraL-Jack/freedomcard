@@ -139,3 +139,56 @@ export async function turnNo(page: Page): Promise<number> {
 export async function phaseText(page: Page): Promise<string> {
   return ((await page.locator('header').innerText()) ?? '').trim();
 }
+
+/**
+ * 在**当前行动方的回合**里走完「充能 → 推进到主要 → 出一张随从」。
+ *
+ * 攻击链路要用它造出**攻击方与靶子**，故只出**随从**（法术进法术区，不能攻击）。
+ *
+ * 每一步都是「按规则现场推算」而非硬编码卡名：挑支付得起的最便宜的一张，
+ * 充能其余随从来凑费用。改卡池不会连带改测试。
+ *
+ * ⚠️ 前置：调用时该页面必须是行动方，且处于充能阶段。
+ */
+export async function playOneMinion(page: Page): Promise<void> {
+  // ① 充能：留一张随从准备出牌，其余随从进费用区（X-2：只有随从可充能）
+  const hand0 = await readHand(page);
+  const minions0 = hand0.filter((c) => c.kind === '随从');
+  expect(minions0.length, '手牌应有可充能的随从').toBeGreaterThan(0);
+
+  const target = [...hand0]
+    .sort((a, b) => a.cost - b.cost)
+    .find((c) => c.cost <= minions0.filter((m) => m.index !== c.index).length);
+  expect(target).toBeDefined();
+
+  const chargeable = minions0.filter((m) => m.index !== target!.index);
+  // 至少充 1 张：若目标费用为 0，只按费用算会充 0 张，就测不到充能了。
+  const chargeCount = Math.min(chargeable.length, Math.max(1, target!.cost));
+  await pick(page, chargeable.slice(0, chargeCount).map((m) => m.index));
+  await page.getByTestId('charge').click();
+  await expect.poll(() => zoneCount(page, 'cost', 1)).toBe(chargeCount);
+
+  // ② 推进到主要阶段（六阶段不可跳过）
+  await page.getByTestId('advance').click();
+  await expect.poll(() => phaseText(page)).toContain('阶段 重置');
+  await page.getByTestId('advance').click();
+  await expect.poll(() => phaseText(page)).toContain('阶段 抽牌');
+  await page.getByTestId('advance').click();
+  await expect.poll(() => phaseText(page)).toContain('阶段 主要');
+
+  // ③ 出一张**随从**。抽牌阶段抽过牌，手牌序号已变，必须重读。
+  const hand1 = await readHand(page);
+  const costZone = await zoneCount(page, 'cost', 1);
+  const chosen = hand1
+    .filter((c) => c.kind === '随从')
+    .filter((c) => c.cost <= costZone)
+    .sort((a, b) => a.cost - b.cost)[0];
+  expect(chosen, `费用区 ${costZone} 张，应存在支付得起的随从`).toBeDefined();
+
+  await pick(page, [chosen!.index]);
+  await page.getByTestId('play').click();
+  // 我方随从区在 ④ 排 —— B2 上下镜像，我方是后出现的那个
+  await expect(page.getByTestId('slot-0').nth(1).locator('[data-testid="card"]')).toHaveCount(1, {
+    timeout: 10_000,
+  });
+}

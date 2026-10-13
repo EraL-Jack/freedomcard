@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 
-import type { CardInstance, PlayerState, Zone } from '@app/shared';
+import * as core from '@app/core';
+import type { CardInstance, GameState, PlayerState, Zone } from '@app/shared';
 
 import { CARD_POOL } from '@app/shared/cards';
 
@@ -19,20 +20,28 @@ import type { RoomSession } from './useRoom.js';
  * `docs/01` §1.3 #3 记为待 Era 确认，此处照抄不擅自合并。
  */
 
-/** 把一张卡实例渲染成占位卡（卡名 / 数值都要去卡池查定义）。 */
+/**
+ * 把一张卡实例渲染成占位卡（卡名 / 数值都要去卡池查定义）。
+ *
+ * ⚠️ 力量值取**当前值**而非卡面定义值（ADR-0016 §8）：指挥官按 X-7 的曲线
+ * 在每次己方充能阶段成长，取 `def.power` 会让它**永远显示第 0 档** ——
+ * 曲线实现了，但玩家看不见，等于白做。
+ */
 function CardOf(props: {
   card: CardInstance;
+  state: GameState;
   sleeping?: boolean;
   selected?: boolean;
   onClick?: () => void;
 }): React.JSX.Element {
   const def = CARD_POOL[props.card.defId];
+  const power = core.unitPower(props.state, CARD_POOL, props.card.uid) ?? def?.power ?? 0;
   return (
     <div className="w-16 shrink-0 sm:w-20">
       <CardTile
         name={def?.name ?? props.card.defId}
         cost={def?.cost ?? 0}
-        power={def?.power ?? 0}
+        power={power}
         kind={def?.type ?? 'minion'}
         text={def?.text}
         sleeping={props.sleeping}
@@ -51,6 +60,7 @@ function ZoneBox(props: {
   label: string;
   zone: Zone;
   cards: readonly CardInstance[];
+  state: GameState;
   expandable?: boolean;
 }): React.JSX.Element {
   const [open, setOpen] = useState(false);
@@ -72,7 +82,7 @@ function ZoneBox(props: {
       {shown.length > 0 ? (
         <div className="mt-1 flex flex-wrap gap-0.5">
           {shown.map((c) => (
-            <CardOf key={c.uid} card={c} />
+            <CardOf key={c.uid} card={c} state={props.state} />
           ))}
         </div>
       ) : null}
@@ -84,6 +94,7 @@ function ZoneBox(props: {
 function BoardSlot(props: {
   index: number;
   card?: CardInstance;
+  state: GameState;
   selected?: boolean;
   onClick?: () => void;
 }): React.JSX.Element {
@@ -95,6 +106,7 @@ function BoardSlot(props: {
       {props.card ? (
         <CardOf
           card={props.card}
+          state={props.state}
           sleeping={props.card.sleeping}
           selected={props.selected}
           onClick={props.onClick}
@@ -220,20 +232,21 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
 
           {/* ② 对方五区 */}
           <section className="grid grid-cols-5 gap-1">
-            <ZoneBox label="卡组区" zone="deck" cards={theirs.zones.deck} expandable />
-            <ZoneBox label="法术区" zone="spell" cards={theirs.zones.spell} expandable />
-            <ZoneBox label="指挥官" zone="commander" cards={theirs.zones.commander} />
-            <ZoneBox label="弃牌区" zone="graveyard" cards={theirs.zones.graveyard} expandable />
-            <ZoneBox label="除外区" zone="exile" cards={theirs.zones.exile} expandable />
+            <ZoneBox label="卡组区" zone="deck" cards={theirs.zones.deck} expandable state={state} />
+            <ZoneBox label="法术区" zone="spell" cards={theirs.zones.spell} expandable state={state} />
+            <ZoneBox label="指挥官" zone="commander" cards={theirs.zones.commander} state={state} />
+            <ZoneBox label="弃牌区" zone="graveyard" cards={theirs.zones.graveyard} expandable state={state} />
+            <ZoneBox label="除外区" zone="exile" cards={theirs.zones.exile} expandable state={state} />
           </section>
 
           {/* ③ 对方费用区 + 随从区 1·2·3 */}
           <section className="grid grid-cols-4 gap-1">
-            <ZoneBox label="费用区" zone="cost" cards={theirs.zones.cost} expandable />
+            <ZoneBox label="费用区" zone="cost" cards={theirs.zones.cost} expandable state={state} />
             {slots.map((i) => (
               <BoardSlot
                 key={i}
                 index={i}
+                state={state}
                 card={theirs.zones.board[i]}
                 selected={attacker !== null && false}
                 onClick={
@@ -255,6 +268,7 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
               <BoardSlot
                 key={i}
                 index={i}
+                state={state}
                 card={mine.zones.board[i]}
                 selected={attacker === mine.zones.board[i]?.uid}
                 onClick={() => {
@@ -263,16 +277,16 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
                 }}
               />
             ))}
-            <ZoneBox label="费用区" zone="cost" cards={mine.zones.cost} expandable />
+            <ZoneBox label="费用区" zone="cost" cards={mine.zones.cost} expandable state={state} />
           </section>
 
           {/* ⑤ 我方五区 —— 第 2 项「费用区」与第 ④ 排重复，原文如此，待 Era 确认 */}
           <section className="grid grid-cols-5 gap-1">
-            <ZoneBox label="除外区" zone="exile" cards={mine.zones.exile} expandable />
-            <ZoneBox label="费用区" zone="cost" cards={mine.zones.cost} expandable />
-            <ZoneBox label="指挥官" zone="commander" cards={mine.zones.commander} />
-            <ZoneBox label="法术区" zone="spell" cards={mine.zones.spell} expandable />
-            <ZoneBox label="卡组区" zone="deck" cards={mine.zones.deck} expandable />
+            <ZoneBox label="除外区" zone="exile" cards={mine.zones.exile} expandable state={state} />
+            <ZoneBox label="费用区" zone="cost" cards={mine.zones.cost} expandable state={state} />
+            <ZoneBox label="指挥官" zone="commander" cards={mine.zones.commander} state={state} />
+            <ZoneBox label="法术区" zone="spell" cards={mine.zones.spell} expandable state={state} />
+            <ZoneBox label="卡组区" zone="deck" cards={mine.zones.deck} expandable state={state} />
           </section>
 
           {/* ⑥ 我方手牌 —— 可横向滚动（B2-2） */}
@@ -282,6 +296,7 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
                 <CardOf
                   key={c.uid}
                   card={c}
+                  state={state}
                   selected={picked.includes(c.uid)}
                   onClick={() => togglePick(c.uid)}
                 />
