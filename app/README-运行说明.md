@@ -88,9 +88,31 @@ app/
 └── docker-compose.yml
 ```
 
-## 9. 已知限制
+## 9. 房间接口（Socket.IO）
+
+会话层已实现**与玩法无关**的那部分（房间 / 席位 / 去重 / 重连 / 回放）。事件名常量在
+`packages/shared/src/constants.ts` 的 `SOCKET_EVENTS`，禁止在业务代码里写字面量。
+
+| 事件 | 方向 | payload | 说明 |
+| --- | --- | --- | --- |
+| `room:create` | C→S | `{ nickname, capacity }` | 建房。**不预设人数**，`capacity` 由调用方给 |
+| `room:join` | C→S | `{ code, nickname }` | 加入；满员返回 `ROOM_FULL` |
+| `room:reconnect` | C→S | `{ playerId, token }` | 断线重连；返回快照（含 `lastSeqByPlayer`） |
+| `room:leave` | C→S | — | 主动离开；房主离开则移交房主 |
+| `room:state` | S→C | 房间视图 | 房间变化时广播（**不含 token**） |
+| `game:intent` | C→S | `Intent` | 走完整处理链：去重 → 引擎 → reduce → 哈希 → 回放 → 广播 |
+| `game:events` | S→C | 处理结果 | `accepted` 广播全房；`rejected` / `dropped` 只回发送方 |
+
+要记住的三条：
+
+1. **客户端须保存 `playerId` 与 `token`** —— 重连全靠它俩。
+2. 重连后 **从 `lastSeq + 1` 续发** Intent，本地计数归零重来会被判 `STALE` 全部丢弃。
+3. 断线席位保留 **60s（`RECONNECT_GRACE_MS`）**，超时由服务端巡检释放。
+
+## 10. 已知限制
 
 1. 规则引擎的 `applyIntent` / `reduce` 为 `TODO(slot)` —— 规则由 Era 在 `docs/06` A 组输入后实现，**当前不得自行补写玩法**。
-2. 房间、对战、重连等尚未实现（对应 `prompts/03`）。
+   因此现在发 `game:intent` 会收到 `rejected / NOT_IMPLEMENTED` —— 这是**预期状态**，说明链路是通的、只是规则没接。
+2. 房间与重连**已实现**；对战流程（开始对局、回合、胜负）仍未实现，属 `prompts/03` 且依赖 A 组输入。
 3. Tailwind 断点在 `client/src/style.css` 的 `@theme` 中定义，**没有** `tailwind.config.js`（v4 已移除）。
 4. 工程内禁止使用 `xl:` / `2xl:` 变体 —— 五档断点已全部覆盖默认值。

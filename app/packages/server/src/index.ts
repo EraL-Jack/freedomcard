@@ -1,8 +1,23 @@
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import Fastify from 'fastify';
 import { Server as IOServer } from 'socket.io';
 
-import { EchoSchema, SOCKET_EVENTS, type EchoPayload } from '@app/shared';
+import * as core from '@app/core';
+import {
+  EchoSchema,
+  IntentSchema,
+  RoomCreateSchema,
+  RoomJoinSchema,
+  RoomReconnectSchema,
+  SOCKET_EVENTS,
+  RECONNECT_GRACE_MS,
+  type GameState,
+  type EchoPayload,
+  type Intent,
+} from '@app/shared';
+
+import { ReplayRecorder, RoomManager, SeqGuard, buildSnapshot, submitIntent } from './room/index.js';
 
 /** 与 packages/server/package.json 的 version 保持一致。 */
 const VERSION = '0.1.0';
@@ -42,8 +57,152 @@ const io = new IOServer(fastify.server, {
   cors: { origin: true },
 });
 
+/** 会话层：房间 / 席位 / 去重 / 回放。ID 用 crypto，时钟用系统时间。 */
+const roomManager = new RoomManager({
+  clock: { now: () => Date.now() },
+  ids: {
+    id: () => randomUUID(),
+    token: () => randomUUID(),
+    code: () => Math.random().toString(36).slice(2, 8).toUpperCase(),
+  },
+});
+
+/** 每间房一份对局运行时：状态、去重表、回放记录、广播序号。 */
+interface RoomRuntime {
+  state: GameState;
+  guard: SeqGuard;
+  replay: ReplayRecorder;
+  serverSeq: number;
+}
+const runtimes = new Map<string, RoomRuntime>();
+
+function runtimeOf(roomId: string): RoomRuntime {
+  let rt = runtimes.get(roomId);
+  if (!rt) {
+    rt = { state: { rngCursor: 0 }, guard: new SeqGuard(), replay: new ReplayRecorder(Date.now()), serverSeq: 0 };
+    runtimes.set(roomId, rt);
+  }
+  return rt;
+}
+
+function broadcastRoom(roomId: string): void {
+  const room = roomManager.getRoom(roomId);
+  if (room) io.to(roomId).emit(SOCKET_EVENTS.roomState, roomManager.publicView(room));
+}
+
+/** 定期回收超出保留窗口的断线席位；频率取窗口的一半，够用且开销可忽略。 */
+const pruneTimer = setInterval(() => {
+  const freed = roomManager.prune();
+  for (const playerId of freed) {
+    for (const rt of runtimes.values()) rt.guard.reset(playerId);
+    fastify.log.info({ playerId }, '席位因超出保留窗口已释放');
+  }
+}, RECONNECT_GRACE_MS / 2);
+
+/** 优雅退出：停掉巡检定时器再关服务，避免进程被定时器吊住。 */
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(signal, () => {
+    clearInterval(pruneTimer);
+    void fastify.close().then(() => process.exit(0));
+  });
+}
+
 io.on('connection', (socket) => {
   fastify.log.info({ socketId: socket.id }, 'client connected');
+
+  /** 建房：返回 playerId 与 token（客户端须自行保存，用于重连）。 */
+  socket.on(SOCKET_EVENTS.roomCreate, (raw: unknown, ack?: (res: unknown) => void) => {
+    const parsed = RoomCreateSchema.safeParse(raw);
+    if (!parsed.success) return ack?.({ ok: false, error: 'INVALID_PAYLOAD' });
+    const r = roomManager.create(parsed.data);
+    if (!r.ok) return ack?.({ ok: false, error: r.error, message: r.message });
+    socket.data.playerId = r.value.seat.playerId;
+    void socket.join(r.value.room.id);
+    runtimeOf(r.value.room.id);
+    broadcastRoom(r.value.room.id);
+    ack?.({
+      ok: true,
+      room: roomManager.publicView(r.value.room),
+      playerId: r.value.seat.playerId,
+      token: r.value.seat.token,
+      seat: r.value.seat.seat,
+    });
+  });
+
+  socket.on(SOCKET_EVENTS.roomJoin, (raw: unknown, ack?: (res: unknown) => void) => {
+    const parsed = RoomJoinSchema.safeParse(raw);
+    if (!parsed.success) return ack?.({ ok: false, error: 'INVALID_PAYLOAD' });
+    const r = roomManager.join(parsed.data);
+    if (!r.ok) return ack?.({ ok: false, error: r.error, message: r.message });
+    socket.data.playerId = r.value.seat.playerId;
+    void socket.join(r.value.room.id);
+    broadcastRoom(r.value.room.id);
+    ack?.({
+      ok: true,
+      room: roomManager.publicView(r.value.room),
+      playerId: r.value.seat.playerId,
+      token: r.value.seat.token,
+      seat: r.value.seat.seat,
+    });
+  });
+
+  /** 重连：校验凭据与保留窗口，返回 lastSeq 与完整快照。 */
+  socket.on(SOCKET_EVENTS.roomReconnect, (raw: unknown, ack?: (res: unknown) => void) => {
+    const parsed = RoomReconnectSchema.safeParse(raw);
+    if (!parsed.success) return ack?.({ ok: false, error: 'INVALID_PAYLOAD' });
+    const r = roomManager.reconnect(parsed.data);
+    if (!r.ok) return ack?.({ ok: false, error: r.error, message: r.message });
+    socket.data.playerId = r.value.seat.playerId;
+    void socket.join(r.value.room.id);
+    const rt = runtimeOf(r.value.room.id);
+    const playerIds = r.value.room.seats.flatMap((s) => (s ? [s.playerId] : []));
+    const snapshot = buildSnapshot(rt.state, rt.serverSeq, rt.guard, playerIds, core);
+    broadcastRoom(r.value.room.id);
+    ack?.({ ok: true, room: roomManager.publicView(r.value.room), snapshot });
+  });
+
+  socket.on(SOCKET_EVENTS.roomLeave, (_raw: unknown, ack?: (res: unknown) => void) => {
+    const playerId = socket.data.playerId as string | undefined;
+    if (!playerId) return ack?.({ ok: false, error: 'NOT_IN_ROOM' });
+    const before = roomManager.locate(playerId);
+    const r = roomManager.leave(playerId);
+    if (!r.ok) return ack?.({ ok: false, error: r.error, message: r.message });
+    if (before) void socket.leave(before.room.id);
+    if (r.value.room) broadcastRoom(r.value.room.id);
+    ack?.({ ok: true });
+  });
+
+  /**
+   * Intent 入站：走完整处理链（去重 → 引擎 → reduce → 哈希 → 回放 → 广播），全程同步。
+   * 当前 `core.applyIntent` 仍是 `TODO(slot)`，会返回 `NOT_IMPLEMENTED` —— 这是预期状态，
+   * 等 `docs/06` A 组输入后由注册表接管。
+   */
+  socket.on(SOCKET_EVENTS.gameIntent, (raw: unknown, ack?: (res: unknown) => void) => {
+    const parsed = IntentSchema.safeParse(raw);
+    if (!parsed.success) return ack?.({ ok: false, error: 'INVALID_PAYLOAD' });
+    const intent = parsed.data as Intent;
+
+    const located = roomManager.locate(intent.playerId);
+    if (!located) return ack?.({ ok: false, error: 'NOT_IN_ROOM' });
+
+    const rt = runtimeOf(located.room.id);
+    const result = submitIntent(rt.state, intent, {
+      engine: core,
+      guard: rt.guard,
+      replay: rt.replay,
+      now: () => Date.now(),
+      emit: (out) => {
+        rt.serverSeq += 1;
+        if (out.kind === 'accepted') {
+          io.to(located.room.id).emit(SOCKET_EVENTS.gameEvents, { ...out, serverSeq: rt.serverSeq });
+        } else {
+          socket.emit(SOCKET_EVENTS.gameEvents, { ...out, serverSeq: rt.serverSeq });
+        }
+      },
+    });
+    rt.state = result.state;
+    ack?.({ ok: result.out.kind === 'accepted', out: result.out });
+  });
 
   socket.on(SOCKET_EVENTS.echo, (raw: unknown, ack?: (res: unknown) => void) => {
     // 运行时校验只发生在服务端入站处（ADR：客户端不引入 zod）。
@@ -57,7 +216,13 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', (reason) => {
-    fastify.log.info({ socketId: socket.id, reason }, 'client disconnected');
+    const playerId = socket.data.playerId as string | undefined;
+    fastify.log.info({ socketId: socket.id, playerId, reason }, 'client disconnected');
+    if (!playerId) return;
+    // 断线保留席位（不立即释放）；到点由 prune 回收。
+    roomManager.markDisconnected(playerId);
+    const located = roomManager.locate(playerId);
+    if (located) broadcastRoom(located.room.id);
   });
 });
 

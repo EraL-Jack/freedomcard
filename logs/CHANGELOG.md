@@ -871,3 +871,14 @@
   3. 备用通道：GitHub Git Data API（blob → tree → commit → ref）可在 443 全断时写入提交，但 **GitHub 会覆盖 author/committer 为令牌身份、并按自己的方式生成 tree**，导致两端 SHA 必然不同；仅作兜底，最终仍应以真实 `git push --force` 收口（远端内容经 blob 逐文件比对确认完全一致后才覆盖）
 - 遗留提示：仓库可见性为 **public**（匿名可访问）；若需改为私有，由 Era 在 Settings → Danger Zone 自行切换
 - 破坏性：否（远端此前仅有本次上传内容）
+
+### [2026-10-13 12:10] D-103 · 服务端房间会话层（部分交付：玩法无关部分）
+- 版本：v0.1
+- 类型：新增（代码）＋ 修改（`packages/shared`、`app/README-运行说明.md`）
+- 摘要：`app/packages/server/src/room/` 新建五个模块 —— `types.ts`（房间/席位，不含任何玩法字段）、`room.ts`（RoomManager：建房/加入/断线保留/重连/释放/房主移交，`publicView` 不泄漏 token）、`seq-guard.ts`（`(playerId,seq)` 去重，归属会话层不入 state）、`replay.ts`（回放记录，含系统 Intent）、`pipeline.ts`（处理链：去重→引擎→reduce→哈希→回放→广播，全程同步禁 await；`submitSystemIntent` 走同一链路）
+- 关键设计：**不预设玩法** —— 房间容量由调用方传入（Era 未定人数，不写死 2）；引擎经 `EnginePort` 注入，生产注入 `@app/core`，单测注入假实现；超时只留钩子，不预设 `end_turn` 语义
+- `shared` 改动：`SOCKET_EVENTS` 扩展房间事件、新增 `ROOM_ERRORS`、`Room*Schema` 三个入站校验
+- 回归验证：typecheck 0 / lint 0 / **单测 28 passed**（core 5 + server 23）；真实联机冒烟 8 项全过（建房、加入、广播 2/2、满员拒 `ROOM_FULL`、Intent 链路回 `NOT_IMPLEMENTED`、重复 seq 回 `DUPLICATE`、重连带回 `lastSeq=1`、错凭据拒 `INVALID_TOKEN`）
+- 未覆盖：`prompts/03` 的对战部分（开始对局 / 回合 / 胜负），依赖 A 组输入
+- 关联：ADR-0011（幂等归 Room 层、系统 Intent 同链路、链上禁 await）
+- 破坏性：否

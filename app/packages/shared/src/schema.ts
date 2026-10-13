@@ -22,6 +22,25 @@ export const EchoSchema = z.object({
   message: z.string(),
 });
 
+/**
+ * 房间入站 payload。
+ * `capacity` 由客户端传入 —— 项目**不预设人数**（A 组未定），因此这里没有默认值兜底。
+ */
+export const RoomCreateSchema = z.object({
+  nickname: z.string().min(1).max(24),
+  capacity: z.number().int().min(1).max(8),
+});
+
+export const RoomJoinSchema = z.object({
+  code: z.string().min(1),
+  nickname: z.string().min(1).max(24),
+});
+
+export const RoomReconnectSchema = z.object({
+  playerId: PlayerIdSchema,
+  token: z.string().min(1),
+});
+
 export type EchoPayload = z.infer<typeof EchoSchema>;
 
 /** 服务端 /health 响应。 */

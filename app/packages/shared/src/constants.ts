@@ -8,6 +8,14 @@
 /** Socket.IO 事件名 —— 禁止在业务代码里写字符串字面量。 */
 export const SOCKET_EVENTS = {
   echo: 'echo',
+  roomCreate: 'room:create',
+  roomJoin: 'room:join',
+  roomReconnect: 'room:reconnect',
+  roomLeave: 'room:leave',
+  roomState: 'room:state',
+  gameIntent: 'game:intent',
+  gameEvents: 'game:events',
+  gameSnapshot: 'game:snapshot',
 } as const;
 
 /**
@@ -17,3 +25,15 @@ export const SOCKET_EVENTS = {
  */
 export const RECONNECT_GRACE_MS = 60_000;
 export const TURN_TIMEOUT_MS = 30_000;
+
+/** 房间错误码 —— 传输层统一口径，客户端据此提示。 */
+export const ROOM_ERRORS = {
+  ROOM_NOT_FOUND: 'ROOM_NOT_FOUND',
+  ROOM_FULL: 'ROOM_FULL',
+  ROOM_ENDED: 'ROOM_ENDED',
+  INVALID_TOKEN: 'INVALID_TOKEN',
+  GRACE_EXPIRED: 'GRACE_EXPIRED',
+  NOT_IN_ROOM: 'NOT_IN_ROOM',
+} as const;
+
+export type RoomErrorCode = (typeof ROOM_ERRORS)[keyof typeof ROOM_ERRORS];
