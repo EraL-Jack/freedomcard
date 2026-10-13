@@ -5,6 +5,7 @@
  *  - X-3（Era 2026-10-13）：**只比较力量值**。
  *    `atk > def` → 防守方破坏；`atk < def` → 攻击方破坏；`atk == def` → 双方破坏。
  *  - X-4（Era 2026-10-13）：对指挥官造成伤害 → 扣除对应血量 → **血量清空游戏结束**。
+ *  - X-5（Era 2026-10-13）：**卡上未写伤害值时，伤害值默认为 1**（与 `power` 无关）。
  *  - A9-2：每个单位每回合攻击 1 次，攻击后进入休眠态，重置阶段清除。
  *  - A10-3：先攻方第一回合不可攻击。
  *  - A7 嘲讽：对手**随从**攻击时必须优先选择嘲讽目标。
@@ -16,13 +17,14 @@
  *  - 打**指挥官** → 力量值对比，防守方输则**扣血**，血空结束；攻击方输则自己破坏、不掉血。
  *
  * `TODO(slot)` 清单（未决，不猜）：
- *  1. `CardDef.damage` 的取值范围与含义 —— 现按「缺失时用 `power` 兜底」（假设 H13）。
+ *  1. `CardDef.damage` 的**取值范围**（上限/是否可为 0）—— 默认值已由 X-5 定为 1，范围未给。
  *  2. 触发效果的**清单**（A7 关键词表待补）。
  *  3. 效果能否取消 / 替换攻击（现按「不能」，ADR-0013 §8）。
  *  4. 展示出来的卡「如有效果则触发对应效果」—— 效果未定义，故只展示不触发。
  */
 
 import {
+  DEFAULT_DAMAGE,
   KEYWORD_TAUNT,
   RULE_ERRORS,
   type CardDef,
@@ -67,12 +69,11 @@ export function resolveCombat(atkPower: number, defPower: number): CombatOutcome
 /**
  * 取一张卡的伤害值。
  *
- * ⚠️ 假设（已登记假设清单 H13）：`CardDef.damage` 的取值范围 Era 未给，
- * 卡池也是空的，若缺失即按 0 处理，则 Demo 里所有攻击都不掉血、永远打不完。
- * 故此处**缺失时用 `power` 兜底**。Era 确认 `damage` 语义后只改这一个表达式。
+ * X-5（Era 2026-10-13）：**卡上未写伤害值时默认 1**。
+ * 写成常量 `DEFAULT_DAMAGE` 而非字面量 —— 这是唯一一处伤害兜底，改名/改值只动一处。
  */
 export function damageOf(def: CardDef): number {
-  return def.damage ?? def.power;
+  return def.damage ?? DEFAULT_DAMAGE;
 }
 
 export const attackRule = (

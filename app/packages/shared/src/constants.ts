@@ -79,6 +79,13 @@ export const FIRST_TURN_DRAW = 1;
 export const SEQUENCE_DIE = 6;
 
 /**
+ * X-5（Era 2026-10-13）：**卡上未写伤害值时，伤害值默认为 1**。
+ *
+ * 此前按「缺失时用 `power` 兜底」（假设 H13），Era 已给出确定值 —— 与 `power` 无关。
+ */
+export const DEFAULT_DAMAGE = 1;
+
+/**
  * A7：关键词。**现仅 `taunt` 一个**，后续由 Era 补充。
  * 单独成常量而非在各规则文件里写字面量 —— 关键词表是全表最容易变动的一处。
  */

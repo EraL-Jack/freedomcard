@@ -42,6 +42,7 @@ export {
   INITIAL_MAX_COST,
   FIRST_TURN_DRAW,
   SEQUENCE_DIE,
+  DEFAULT_DAMAGE,
   KEYWORD_TAUNT,
   RULE_ERRORS,
 } from './constants.js';
