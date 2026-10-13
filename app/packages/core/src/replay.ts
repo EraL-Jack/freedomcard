@@ -1,4 +1,12 @@
-import type { GameEvent, GameState, Intent, Rejection, Result, RuleContext } from '@app/shared';
+import type {
+  CardDef,
+  GameEvent,
+  GameState,
+  Intent,
+  Rejection,
+  Result,
+  RuleContext,
+} from '@app/shared';
 
 /**
  * 回放与确定性校验。
@@ -14,6 +22,8 @@ export interface ReplayDeps {
   stateHash(state: GameState): string;
   /** 第 `step` 步的时间戳（从 0 开始）。回放时按步复现，保证两次运行完全一致。 */
   now(step: number): number;
+  /** 卡池定义 —— 规则处理器据以查 `cost` / `power` / 关键词，随 `ctx` 一起注入。 */
+  cards: Record<string, CardDef>;
 }
 
 export interface ReplayOutcome {
@@ -32,7 +42,7 @@ export function replay(initial: GameState, intents: readonly Intent[], deps: Rep
   const hashChain: string[] = [];
 
   for (let i = 0; i < intents.length; i++) {
-    const res = deps.applyIntent(state, intents[i]!, { now: deps.now(i) });
+    const res = deps.applyIntent(state, intents[i]!, { now: deps.now(i), cards: deps.cards });
     if (!res.ok) {
       return { state, events, hashChain, failedAt: i, failure: res.error };
     }
