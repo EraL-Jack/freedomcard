@@ -748,3 +748,105 @@
 - [ ] D4（是否预留 `pendingChoice`）建议等 Era 填 A4-3 / A7 后再定
 - [ ] `docs/06` 的 C2-1 / C2-2 / C3-1 仍待 Era 填写
 - [ ] C 组齐后可启动 `prompts/01` 脚手架
+
+---
+
+## v0.1.7-docs（2026-10-13）
+
+### [2026-10-13 10:50] D-219 · .gitignore（新增）
+- 版本：v0.1
+- 类型：新增
+- 原因：`docs/03` §4 要求 commit 与日志条目对应，仓库建立后需先界定不纳入版本控制的内容
+- 摘要：忽略 `node_modules/`、`dist/`、`dist-ssr/`、`.vite/`、`*.tsbuildinfo`、`coverage/`、`playwright-report/`、`test-results/`、`replays/`、`.workbuddy/`、日志与环境变量文件
+- 影响范围：D-101（后续脚手架产物）
+- 关联：D-217（R2-11 git 仓库缺失）、`prompts/01` 第 9 条
+- 回归验证：`git check-ignore -v .workbuddy` 有输出（命中 `.gitignore:19`） —— 通过
+- 破坏性：否
+
+### [2026-10-13 10:50] D-220 · git 仓库（新增）
+- 版本：v0.1
+- 类型：新增
+- 原因：二轮论证 `R2-11` —— 工作区无 git 仓库，`docs/03` §4「每次 commit 必须与一条日志条目对应」缺载体
+- 摘要：工作区根目录 `git init`；分支 `master`；`user.name=Penquill` / `user.email=penquill@local`；基线提交 `d572e05` 收录 19 个规范文件
+- 影响范围：全部交付件（此后变更均可追溯）
+- 关联：D-217、`docs/08` §6.4
+- 回归验证：`git log --oneline` 有输出；`git status --short` 为空 —— 通过
+- 破坏性：否
+
+### [2026-10-13 10:48] D-217 · docs/08-可行性论证报告-第二轮.md
+- 版本：v0.1 → v0.1.1
+- 类型：修改（非破坏性）
+- 原因：`S1` 定案，需回填结论；`V2-10` 行原混入外文词「зависимости」（写入时字符损坏）
+- 摘要：
+  1. §6 由「待 Era 决策」改写为「定案记录」：新增 6.1 三轮对照实测（A 组无白名单 `exit=1` / B 组有 `allowBuilds` `exit=0`）、6.2 键名改名对照表、6.3 定案、6.4 git 已建
+  2. §2.1 `V2-10` 结论由「未修复」改为「未修复（二轮结论，已在三轮用正确键名解决）」
+  3. §8 下一步建议：S1 与 git 两项标记已完成，开工前置清零
+- 影响范围：D-215（一轮报告引用）、`prompts/01`
+- 关联：D-216 编号勘误（v0.1.6）
+- 回归验证：§6 结论与实测命令输出逐条比对 —— 通过
+- 破坏性：否
+
+### [2026-10-13 10:46] D-101-p · prompts/01-脚手架初始化.md
+- 版本：v0.1.5 → v0.1.6
+- 类型：修改（非破坏性）
+- 原因：`S1` 定案后需改写 install 处置条款；原第 10 条写的是 pnpm 10 的 `onlyBuiltDependencies`（pnpm 12 已失效）
+- 摘要：
+  1. 第 10 条重写：白名单键改为 **`allowBuilds`**，给出 YAML 示例、`pnpm approve-builds --all` 自动生成方式、键名陷阱对照表（pnpm 10 vs 12）、实测数据（35 包仅 esbuild 需批准）
+  2. 明确不采用全局放开 `.npmrc` / CLI flag（供应链风险）
+  3. 第 9 条补注「本工作区已于 2026-10-13 执行 git init」
+- 影响范围：D-101
+- 关联：D-217 §6、`S1`
+- 回归验证：按 `allowBuilds` 配置干净重装实测 `exit=0` —— 通过
+- 破坏性：否
+
+### 待办（v0.1.7-docs 追加）
+
+- [x] `S1` 已定案（`allowBuilds` 白名单）并落地
+- [x] git 仓库已建立并有基线提交
+- [x] **开工前置条件全部清零** —— `prompts/01` 已启动
+- [ ] Era 输入 `docs/06` A 组（规则）/ B 组（界面）/ C2 / C3（仅阻塞 prompts/02、04）
+- [ ] D4（是否预留 `pendingChoice`）等 Era 填 A4-3 / A7 后再定
+
+---
+
+## v0.1.8-code（2026-10-13）
+
+### [2026-10-13 11:00] D-101 · app/ 可运行工程（新增）
+- 版本：v0.1
+- 类型：新增
+- 原因：开工前置清零后执行 `prompts/01`
+- 摘要：pnpm monorepo 四个包
+  1. `shared`：`types.ts`（Intent / GameEvent / GameState / Rejection / Result / RuleContext，业务字段一律不写）、`schema.ts`（zod，仅服务端入站用）、`constants.ts`（单独子路径导出，供 client 引用以避免把 zod 带进首屏）
+  2. `core`：`rng.ts`（mulberry32，纯函数、游标外置）、`engine.ts`（`applyIntent` / `reduce` 为 `TODO(slot)`；`stateHash` + `canonicalize` 已实现，与玩法无关）、`registry.ts`（空注册表）
+  3. `server`：Fastify `/health` + Socket.IO echo（含 zod 入站校验）；`SERVE_STATIC=1` 时托管 `client/dist` 并做 SPA 回退
+  4. `client`：React + Vite 8 + Tailwind v4；`@theme` 定义五档断点；Vite 代理 `/health` 与 `/socket.io`
+- 影响范围：D-102、D-103、D-104（后续阶段在此基础上扩展）
+- 关联：`S1`（`allowBuilds` 白名单，实测 `exit=0`）、ADR-0010、ADR-0011
+- 回归验证：T-0001 全 16 项验收通过（install / typecheck / lint / test / build / echo / 代理 / 静态托管 / gitignore）
+- 破坏性：否
+
+### [2026-10-13 11:00] D-105 · docker-compose.yml + Dockerfile（新增）
+- 版本：v0.1
+- 类型：新增
+- 原因：`prompts/01` 骨架版交付件；沿用 C1「两者都要」—— 照写留档，不在本机验证
+- 摘要：Dockerfile 多阶段构建（build 阶段产出 client dist，runtime 阶段跑 server）；compose 单服务 + `./replays` 挂卷 + healthcheck；Nginx 反代段以注释形式留待有域名后启用
+- 影响范围：D-101
+- 关联：D-215（R-17 缺 multi-stage 与 replay 挂卷，本次清偿）
+- 回归验证：**本机未验证**（无 Docker / WSL），已在文件头与 T-0001 §4 标注
+- 破坏性：否
+
+### [2026-10-13 11:00] D-106 · app/README-运行说明.md（新增）
+- 版本：v0.1
+- 类型：新增
+- 摘要：环境要求、安装（含 `pnpm approve-builds --all` 处置）、开发启动、局域网联机测、常用脚本、生产形态、Docker 部署、目录结构、已知限制
+- 影响范围：D-101、D-105
+- 回归验证：与实测命令逐条比对 —— 通过
+- 破坏性：否
+
+### [2026-10-13 11:00] T-0001 · reports/test/T-0001-脚手架验收.md（新增）
+- 版本：v0.1
+- 类型：新增
+- 摘要：16 项验收逐条实测（含命令与真实回显）；结论「有条件发布」；未覆盖项单列（D-105 本机未验证、丢包、真机、规则引擎、房间对战）
+- 关联：D-101、D-105、D-106
+- 闭环状态：**待 F-0001 用户反馈报告**（Era 填写），缺一不算闭环
+- 破坏性：否

@@ -1,0 +1,48 @@
+# 一键部署（骨架版）。
+#
+# ⚠️ 本机无 Docker / WSL —— 本文件**未经本机验证**，属留档件。
+# 部署验证须在云主机上进行；测试报告中该项必须标注「本机未验证」，不得写通过。
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: freedomcard/server:0.1.0
+    container_name: freedomcard-server
+    ports:
+      - '3000:3000'
+    environment:
+      NODE_ENV: production
+      PORT: '3000'
+      HOST: 0.0.0.0
+      SERVE_STATIC: '1'
+      LOG_LEVEL: info
+    volumes:
+      # 每局回放落盘，容器重建不丢。
+      - ./replays:/app/replays
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          "node -e \"fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+# ── 公网部署（有域名与证书后启用）────────────────────────────
+# 用 Nginx 终止 TLS 并反代 WebSocket。注意 /socket.io 必须带 Upgrade 头。
+#
+#   nginx:
+#     image: nginx:1.27-alpine
+#     ports:
+#       - '80:80'
+#       - '443:443'
+#     volumes:
+#       - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+#       - ./certs:/etc/letsencrypt:ro
+#     depends_on:
+#       - server

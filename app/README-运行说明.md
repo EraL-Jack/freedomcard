@@ -1,0 +1,96 @@
+# 运行说明（D-106，骨架版）
+
+## 1. 环境要求
+
+| 项 | 版本 | 备注 |
+| --- | --- | --- |
+| Node.js | `>=22.12.0` | 本机实测 22.22.2 与 24.14.0 均可 |
+| pnpm | `12.11.2` | 由根 `package.json` 的 `packageManager` 锁定 |
+
+> ⚠️ **不要用 pnpm 10 的写法去配置构建脚本白名单**。pnpm 12 的键名是 `allowBuilds`（写在 `pnpm-workspace.yaml`），
+> pnpm 10 的 `onlyBuiltDependencies` 已失效 —— 写了不报错，但 `pnpm install` 仍以 `exit=1` 结束。
+
+## 2. 安装
+
+```bash
+cd app
+pnpm install
+```
+
+安装必须返回 `exit=0`。若出现 `ERR_PNPM_IGNORED_BUILDS`：
+
+```bash
+pnpm approve-builds --all   # 非交互，自动把待批准清单写进 pnpm-workspace.yaml
+pnpm install
+```
+
+## 3. 启动（开发态）
+
+```bash
+pnpm dev          # 同时起 server(3000) 与 client(5173)
+```
+
+- 客户端：<http://localhost:5173>
+- 服务端直连：<http://localhost:3000/health> → `{"ok":true,"version":"0.1.0"}`
+
+客户端通过 Vite 代理访问 `/health` 与 `/socket.io`，因此页面与服务端**同源**，无需处理 CORS。
+
+## 4. 局域网联机测（手机同 WiFi）
+
+```bash
+pnpm --filter @app/client run dev   # vite 已开 host: true
+```
+
+手机浏览器访问 `http://<本机IP>:5173`（本机实测 IP `192.168.31.153`）。
+Windows 需放行 5173 / 3000 端口的入站规则（网络配置文件为 Public 时默认拦截）。
+
+## 5. 常用脚本
+
+| 命令 | 作用 |
+| --- | --- |
+| `pnpm dev` | 并行起服务端与客户端 |
+| `pnpm typecheck` | 全量 `tsc --noEmit` |
+| `pnpm lint` | ESLint（flat config） |
+| `pnpm test` | 单测（当前只有 `core/rng`） |
+| `pnpm build` | 构建客户端到 `packages/client/dist` |
+
+## 6. 生产形态
+
+```bash
+pnpm build
+cd packages/server && SERVE_STATIC=1 pnpm start
+```
+
+`SERVE_STATIC=1` 时服务端托管 `client/dist`，并对未命中的 GET 回退到 `index.html`（SPA 路由）。
+缺省不启用，开发态由 Vite 提供页面。
+
+## 7. Docker 部署
+
+```bash
+docker compose up -d --build
+```
+
+⚠️ **`docker-compose.yml` 与 `Dockerfile` 未经本机验证** —— 本机无 Docker / WSL，属留档件。
+真实验证须在云主机上进行，测试报告中该项必须标注「本机未验证」。
+
+公网部署需自行提供 Nginx 配置：反代 `/socket.io` 时必须透传 `Upgrade` 与 `Connection` 头，否则 WebSocket 会退化成轮询。
+
+## 8. 目录结构
+
+```
+app/
+├── packages/
+│   ├── shared/   # 协议与类型（client 只引 @app/shared/constants，避免把 zod 带进首屏）
+│   ├── core/     # 纯函数规则引擎（无 IO / 无时钟 / 无随机源）
+│   ├── server/   # Fastify + Socket.IO，权威服务端
+│   └── client/   # React + Vite + Tailwind v4
+├── Dockerfile
+└── docker-compose.yml
+```
+
+## 9. 已知限制
+
+1. 规则引擎的 `applyIntent` / `reduce` 为 `TODO(slot)` —— 规则由 Era 在 `docs/06` A 组输入后实现，**当前不得自行补写玩法**。
+2. 房间、对战、重连等尚未实现（对应 `prompts/03`）。
+3. Tailwind 断点在 `client/src/style.css` 的 `@theme` 中定义，**没有** `tailwind.config.js`（v4 已移除）。
+4. 工程内禁止使用 `xl:` / `2xl:` 变体 —— 五档断点已全部覆盖默认值。

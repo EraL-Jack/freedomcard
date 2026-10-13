@@ -1,0 +1,15 @@
+@import 'tailwindcss';
+
+/*
+ * Tailwind v4：断点在 CSS 里定义，没有 tailwind.config.js。
+ * 五个断点必须全部显式重定义 —— 缺一个就会混入 Tailwind 默认值，导致断点顺序倒挂
+ * （默认 xl=1280px 会夹在本项目 md=1024 与 lg=1440 之间，使 xl: 反而早于 lg: 生效）。
+ * 工程内禁止使用 xl: / 2xl: 变体。
+ */
+@theme {
+  --breakpoint-xs: 375px;
+  --breakpoint-sm: 768px;
+  --breakpoint-md: 1024px;
+  --breakpoint-lg: 1440px;
+  --breakpoint-xl: 1920px;
+}

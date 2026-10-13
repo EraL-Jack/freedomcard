@@ -1,0 +1,7 @@
+packages:
+  - 'packages/*'
+
+# pnpm 12 的构建脚本白名单键名（pnpm 10 的 onlyBuiltDependencies 已失效）。
+# 由 `pnpm approve-builds --all` 自动生成；新增带 postinstall 的依赖时追加，不要改用全局放开。
+allowBuilds:
+  esbuild: true
