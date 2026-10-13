@@ -1151,3 +1151,20 @@
 - 回归验证：typecheck **0** / lint **0** / 单测 **116 passed**（core 80 + server 36，+3）/ E2E **3 passed**
 - 破坏性：**否** —— 仅新增卡定义与默认卡组数据；既有卡与机制不变
 - 📌 **占位数据清单**：`PLACEHOLDER_CARD_IDS`（8 张），Era 给正式卡表后整批替换。
+
+---
+
+### D-103（2026-10-13 21:50）—— 开局桥：房间满员且全员准备后建立对局（ADR-0019）
+
+- 交付件：`server/src/room/session.ts`（**新增**）、`server/src/room/session.test.ts`（**新增**）、`shared/src/constants.ts`（新增 `roomReady` 事件名）、`server/src/room/types.ts`（`Seat.ready`）、`server/src/room/room.ts`（`setReady`）、`server/src/index.ts`（会话层接线）、`docs/06` X-9、`docs/01` §1.3 #4、`logs/DECISIONS.md`
+- 触发：ADR-0017 的回合超时已接线，但它要求房间处于 `playing` 且有行动方；而 `runtimeOf` 只能用 `seats: []` 建立空状态，`room.phase` 永远停在 `'lobby'`，`startRule` 的「开局需要 2 名玩家」校验必然拒绝。**ADR-0018 补齐卡池后，这座桥的最后一个前置依赖消失。**
+- 决策：**ADR-0019**（动工前写就）
+  1. 新增会话事件 **`room:ready`**，**不让客户端直接发 `game:start` Intent** —— `seats`（座位顺序）与 `seed`（随机源）必须由服务端决定；交给客户端等于开放先后手伪造与牌序预测。
+  2. `Seat` 新增 `ready: boolean`（建房 / 加入时置 `false`）。它是**房间层事实**（玩家的准备意愿），不是玩法状态。
+  3. 开局条件：**满员且全员 ready** → 建立真实 `GameState` → 以 `actor: 'system'`、`reason: 'all-ready'` 构造 `game:start` Intent → `submitSystemIntent` 走标准链路 → 广播 → `timer.arm()` 开始计时。
+  4. **幂等**：`rt.seeded` 作为阀门；两名玩家几乎同时点准备是常态。
+  5. 卡组来源：当前取 ADR-0018 的占位卡组；卡组编辑（B1）落地后改为玩家提交。
+- **为什么复用 `submitSystemIntent`**：与 ADR-0011 一脉相承 —— 开局也是一条系统 Intent，洗牌 / 掷骰 / 发牌全部由引擎产出标准 `GameEvent[]`，客户端照常 `reduce`，**不需要为「开局」写任何特例分支**。
+- 回归验证：typecheck **0** / lint **0** / 单测 **122 passed**（core 80 + server 42，+6）/ E2E **3 passed** ／`pnpm build` 通过
+- 破坏性：**否** —— 新增字段与事件，既有行为不变
+- ⚠️ **客户端尚未调用**：服务端链路已就绪，但客户端还没有对战桌 UI，故完整联机对战**仍未端到端验证**。下一步做界面时接通。

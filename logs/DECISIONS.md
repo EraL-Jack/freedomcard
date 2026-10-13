@@ -326,6 +326,31 @@
 
 ---
 
+## ADR-0019 开局桥：房间满员且全员准备后建立对局（2026-10-13）
+
+- 日期：2026-10-13 21:50（动工前写就）
+- 背景：会话层（socket handlers）与规则引擎（core）都已就绪，但**两者之间没有桥** —— `runtimeOf` 用 `seats: []` 建立空状态，`room.phase` 因此永远停在 `'lobby'`，`startRule` 的「开局需要 2 名玩家」校验必然拒绝。这同时是 ADR-0017（回合超时）迟迟无法端到端生效的原因：超时要求房间处于 `playing` 且有行动方。ADR-0018 补齐卡池后，本桥的最后一个前置依赖消失。
+- 决策：
+  1. **新增会话事件 `room:ready`，而不是让客户端直接发 `game:start` Intent。**
+     理由：`seats`（座位顺序）与 `seed`（随机源）共同决定先后手与洗牌结果，属服务端权威。若由客户端直接发开局 Intent，等于把座位顺序与种子交给客户端 —— 可伪造先后手、可预测牌序。
+  2. **`Seat` 新增 `ready: boolean`**，建房 / 加入时置 `false`。它是**房间层事实**（玩家是否已准备），不是玩法字段，不违反 `room/types.ts`「只描述传输层事实」的纪律。
+  3. **开局条件**：房间满员（无空位）**且**所有在座玩家均已 ready。满足后由服务端执行：
+     - 用「房间座位顺序 + 默认主卡组 + 默认指挥官」调用 `core.createInitialState` 建立真实 `GameState`；
+     - 以 `actor: 'system'`、`reason: 'all-ready'` 构造 `game:start` Intent → `submitSystemIntent`（走标准链路，洗牌 / 掷骰 / 发牌全部由引擎产出事件）；
+     - 广播房间与快照；
+     - `rt.timer.arm()` 开始本回合计时（ADR-0017）。
+  4. **幂等**：运行时置 `seeded = true`，重复 `room:ready` 不重复开局（两名玩家同时点准备是常态）。
+  5. **卡组来源**：当前取 ADR-0018 的占位卡组；卡组编辑（B1）落地后改为玩家提交。
+  6. `room.phase` 开局成功后置 `'playing'`；对局结束（认输 / 血空）置 `'ended'` 并 `timer.clear()`。
+- 理由：
+  1. **§1 是权威边界而非风格选择**。`seats` 与 `seed` 必须由服务端决定，这是"服务器权威 + 客户端只发意图"（ADR-0002）的直接推论。
+  2. **§3 复用 `submitSystemIntent`** 与 ADR-0011 一脉相承：开局也是一条系统 Intent，客户端拿到的仍是一串标准事件，可直接 `reduce`，**不需要为开局写任何特例分支**。
+  3. **§4 幂等是必须的**：两名玩家几乎同时点准备时会各触发一次 `room:ready`，不设阀门就会开局两次、状态被推走两遍。
+- 影响：`shared/src/constants.ts`（新增 `roomReady` 事件名）、`server/src/room/types.ts`（`Seat.ready`）、`server/src/room/room.ts`（`setReady` / `allReady`）、`server/src/index.ts`（接线与广播）、新增单测、`docs/06` X-9、`docs/01` §1.3 #4、`logs/CHANGELOG.md`。
+- 未决（等 Era）：正式卡表；卡组编辑（B1「支持多个卡组保存」）的交互；`damage` 的取值范围。
+
+---
+
 ## 待决策（等输入后定）
 
 | 候选 | 触发条件 | 待定问题 |

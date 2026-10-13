@@ -12,6 +12,13 @@ export const SOCKET_EVENTS = {
   roomJoin: 'room:join',
   roomReconnect: 'room:reconnect',
   roomLeave: 'room:leave',
+  /**
+   * 准备 / 开始游戏 —— ADR-0019。
+   *
+   * 玩家只表达「我准备好了」，**不携带座位顺序与随机种子** —— 那两项由服务端
+   * 权威决定，交给客户端等于开放先后手伪造与牌序预测。
+   */
+  roomReady: 'room:ready',
   roomState: 'room:state',
   gameIntent: 'game:intent',
   gameEvents: 'game:events',

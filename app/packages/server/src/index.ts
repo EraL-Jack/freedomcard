@@ -32,6 +32,7 @@ import {
   type ReplayRecord,
 } from './room/index.js';
 import { TurnTimer, hostScheduler } from './room/turn-timer.js';
+import { seedGameState } from './room/session.js';
 
 /** 与 packages/server/package.json 的 version 保持一致。 */
 const VERSION = '0.1.0';
@@ -89,6 +90,14 @@ interface RoomRuntime {
   serverSeq: number;
   /** 回合超时计时器 —— 由会话层驱动（ADR-0017），销毁房间时必须 `clear`。 */
   timer: TurnTimer;
+  /**
+   * 是否已用真实座位 / 卡组建立对局 —— ADR-0019。
+   *
+   * `runtimeOf` 惰性建立的是**空座位**状态（`seats: []`），它只用于「房间尚未开局」时
+   * 让 Intent 有处可去（随后会被 `NOT_STARTED` / `INVALID_DECK` 拒绝）。
+   * 真正开局后才置 `true`，并作为**幂等阀门**防止重复开局。
+   */
+  seeded: boolean;
 }
 const runtimes = new Map<string, RoomRuntime>();
 
@@ -108,7 +117,13 @@ function runtimeOf(roomId: string): RoomRuntime {
     });
     // 两步构造：timer 的回调要闭包引用 `roomId`（而非 rt 本身），否则在 timer 先于
     // rt 存在时无法解析；先落对象再挂 timer 是最小的写法。
-    rt = { state, guard: new SeqGuard(), replay: new ReplayRecorder(Date.now()), serverSeq: 0 } as RoomRuntime;
+    rt = {
+      state,
+      guard: new SeqGuard(),
+      replay: new ReplayRecorder(Date.now()),
+      serverSeq: 0,
+      seeded: false,
+    } as RoomRuntime;
     rt.timer = new TurnTimer({
       now: () => Date.now(),
       scheduler: hostScheduler,
@@ -188,6 +203,60 @@ function handleTurnTimeout(roomId: string): void {
   } else {
     rt.timer.arm(); // 已进入下一回合 —— 重新计时
   }
+  broadcastRoom(roomId);
+}
+
+/**
+ * 建立对局 —— ADR-0019「开局桥」。
+ *
+ * 此前 `runtimeOf` 只能用 `seats: []` 建立**空座位**状态，于是 `startRule`
+ * 的「开局需要 2 名玩家」校验必然拒绝，整条联机链路卡在最后一步。
+ * 本函数负责把**房间层的座位事实**交给引擎，建立真实的 `GameState`。
+ *
+ * ⚠️ **开局仍走系统 Intent**（ADR-0011），不在这里直接调 `startRule`：
+ * 洗牌 / 掷骰 / 发牌全部由引擎产出标准 `GameEvent[]`，客户端照常 `reduce`，
+ * 不需要为「开局」写任何特例分支。
+ *
+ * ⚠️ **幂等**：`seeded` 只在这里置 true，重复触发不会二次开局。
+ */
+function startGame(roomId: string): void {
+  const rt = runtimes.get(roomId);
+  const room = roomManager.getRoom(roomId);
+  if (!rt || !room) return;
+  if (rt.seeded || room.phase !== 'lobby') return;
+
+  const seats = room.seats.flatMap((s) => (s ? [s.playerId] : []));
+  if (seats.length < 2) return;
+
+  const seeded = seedGameState({ seats, seed: Date.now() >>> 0 });
+
+  const intent: Intent = {
+    type: core.INTENTS.start,
+    actor: 'system',
+    playerId: seats[0]!,
+    seq: rt.serverSeq + 1,
+    reason: 'all-ready',
+  };
+  const result = submitSystemIntent(seeded, intent, {
+    engine,
+    replay: rt.replay,
+    now: () => Date.now(),
+    cards: CARD_POOL,
+    emit: (out) => emitGameOut(roomId, rt, out),
+  });
+
+  // 引擎拒绝（如卡组构成不合法）→ 保持 lobby，不把对局推走。
+  if (result.out.kind !== 'accepted') {
+    const reason = result.out.kind === 'rejected' ? result.out.error.code : result.out.reason;
+    fastify.log.warn({ roomId, reason }, '开局被引擎拒绝，房间保持 lobby');
+    return;
+  }
+
+  rt.state = result.state;
+  rt.seeded = true;
+  room.phase = 'playing';
+  // 开局后即进入第一回合的充能阶段 —— 开始计时（ADR-0017）。
+  rt.timer.arm();
   broadcastRoom(roomId);
 }
 
@@ -288,6 +357,26 @@ io.on('connection', (socket) => {
     const snapshot = buildSnapshot(rt.state, rt.serverSeq, rt.guard, playerIds, core);
     broadcastRoom(r.value.room.id);
     ack?.({ ok: true, room: roomManager.publicView(r.value.room), snapshot });
+  });
+
+  /**
+   * 准备 / 开始游戏 —— B1 补充 3「双方加入并准备后即开始游戏」+ ADR-0019。
+   *
+   * 玩家只表达「我准备好了」；**座位顺序与随机种子由服务端决定**（ADR-0019 §1）——
+   * 若让玩家一并提交，等于开放先后手伪造与牌序预测。
+   */
+  socket.on(SOCKET_EVENTS.roomReady, (_raw: unknown, ack?: (res: unknown) => void) => {
+    const playerId = socket.data.playerId as string | undefined;
+    if (!playerId) return ack?.({ ok: false, error: 'NOT_IN_ROOM' });
+
+    const r = roomManager.setReady(playerId);
+    if (!r.ok) return ack?.({ ok: false, error: r.error, message: r.message });
+
+    const room = r.value.room;
+    if (r.value.allReady) startGame(room.id);
+    else broadcastRoom(room.id);
+
+    ack?.({ ok: true, room: roomManager.publicView(room), started: r.value.allReady });
   });
 
   socket.on(SOCKET_EVENTS.roomLeave, (_raw: unknown, ack?: (res: unknown) => void) => {
