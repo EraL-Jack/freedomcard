@@ -37,12 +37,26 @@ export function makeUid(playerId: PlayerId, index: number): string {
   return `${playerId}#${index}`;
 }
 
+/**
+ * 指挥官实例的 uid。
+ * 单独命名而不是复用 `makeUid(id, 'cmd')`：指挥官不进主卡组，没有序号，
+ * 混用会让人误以为它是「第 cmd 张卡」。
+ */
+export function commanderUid(playerId: PlayerId): string {
+  return `${playerId}#commander`;
+}
+
 export interface InitialStateOptions {
   seed: number;
   /** 座位顺序，由调用方给出（先后手在此之后由掷骰决定，见 A2-4）。 */
   seats: readonly PlayerId[];
-  /** 每位玩家的卡组 —— `defId` 列表，顺序即初始牌序（洗牌在开局时做）。 */
+  /**
+   * 每位玩家的**主卡组** —— `defId` 列表，顺序即初始牌序（洗牌在开局时做）。
+   * ADR-0012 补充：主卡组 30 张，**不含指挥官**。
+   */
   decks: Record<PlayerId, readonly string[]>;
+  /** 每位玩家的指挥官 `defId`。ADR-0012 补充：指挥官有且仅有 1 张，不进主卡组。 */
+  commanders: Record<PlayerId, string>;
 }
 
 export function createInitialState(opts: InitialStateOptions): GameState {
@@ -51,6 +65,7 @@ export function createInitialState(opts: InitialStateOptions): GameState {
     const deck = (opts.decks[id] ?? []).map((defId, i) => ({ uid: makeUid(id, i), defId }));
     players[id] = {
       id,
+      commanderDefId: opts.commanders[id] ?? '',
       health: INITIAL_HEALTH,
       maxCost: INITIAL_MAX_COST,
       zones: { ...emptyZones(), deck },

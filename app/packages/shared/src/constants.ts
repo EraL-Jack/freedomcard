@@ -94,6 +94,8 @@ export const RULE_ERRORS = {
   MUST_ATTACK_TAUNT: 'MUST_ATTACK_TAUNT',
   GAME_OVER: 'GAME_OVER',
   MULLIGAN_DONE: 'MULLIGAN_DONE',
+  /** 卡组构成不合法（主卡组张数、同名上限、指挥官缺失或类型错）。 */
+  INVALID_DECK: 'INVALID_DECK',
 } as const;
 
 export type RuleErrorCode = (typeof RULE_ERRORS)[keyof typeof RULE_ERRORS];

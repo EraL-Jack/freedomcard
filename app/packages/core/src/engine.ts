@@ -1,32 +1,31 @@
-import type { GameEvent, GameState, Intent, Result, Rejection, RuleContext } from '@app/shared';
+import { RULE_ERRORS, type GameEvent, type GameState, type Intent, type Result, type Rejection, type RuleContext } from '@app/shared';
 
-/**
- * 规则引擎的三个入口。
- *
- * ⚠️ 当前状态：`applyIntent` 与 `reduce` 是 `TODO(slot)` —— 它们的行为完全取决于
- * `docs/06` A 组的规则输入。在 Era 给出规则之前，这里**不得**自行实现任何玩法，
- * 也不得预置「抽牌 / 出牌 / 攻击 / 结束回合」之类的处理器（那是替 Era 发明玩法）。
- *
- * `stateHash` 与玩法无关（只是规范化序列化 + 哈希），因此已实现完整。
- */
+import { get } from './registry.js';
+import './rules/index.js';
+
+export { reduce } from './reducer.js';
 
 /**
  * 校验 Intent 并产出事件。纯函数：禁止 IO / 读时钟 / Math.random()。
- * 不通过时返回 Rejection 且**零副作用**，不存在「改了一半」的中间态。
+ *
+ * 行为：查注册表 → 调对应 handler。未注册的类型一律 `NOT_IMPLEMENTED`，
+ * **不做静默忽略** —— 客户端需要能区分「这条规则还没做」和「这条操作不被允许」。
+ *
+ * 侧效应为零：不通过时返回 Rejection，不存在「改了一半」的中间态。
  */
 export function applyIntent(
-  _state: GameState,
-  _intent: Intent,
-  _ctx: RuleContext,
+  state: GameState,
+  intent: Intent,
+  ctx: RuleContext,
 ): Result<GameEvent[], Rejection> {
-  // TODO(slot): 待 A 组规则输入后，改为查 registry 并调用对应 handler。
-  return { ok: false, error: { code: 'NOT_IMPLEMENTED', message: '规则引擎骨架：applyIntent 待 A 组输入后实现' } };
-}
-
-/** 用一个事件演进状态。纯函数，不可变更新。 */
-export function reduce(state: GameState, _event: GameEvent): GameState {
-  // TODO(slot): 待 A 组规则输入后，按事件类型推进（含 rngCursor）。
-  return state;
+  const handler = get(intent.type);
+  if (!handler) {
+    return {
+      ok: false,
+      error: { code: RULE_ERRORS.NOT_IMPLEMENTED, message: `未注册的规则: ${intent.type}` },
+    };
+  }
+  return handler(state, intent, ctx);
 }
 
 /** 规范化序列化：对象键排序、数组保序、undefined 视为缺失。 */

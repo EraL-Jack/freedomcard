@@ -64,6 +64,11 @@ export interface CardInstance {
 
 export interface PlayerState {
   id: PlayerId;
+  /**
+   * 指挥官卡定义 id。**指挥官不进主卡组**（ADR-0012 补充：31 = 30 + 1），
+   * 故它不是一个 `CardInstance`；在第一个充能阶段揭示时才生成实例置入指挥官区（X-1）。
+   */
+  commanderDefId: string;
   /** 血量 —— `docs/06` A10-2 初始 15；归零判负（A3-1）。 */
   health: number;
   /** 最高费用 —— A5-2 曲线 1→3→5→10，第 4 回合达上限。 */
