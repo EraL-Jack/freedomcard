@@ -326,7 +326,7 @@ describe('阶段流转 phaseRule', () => {
     expect(after.players['p1']!.zones.board.every((x) => x.sleeping !== true)).toBe(true);
   });
 
-  it('抽排阶段抽 2 张；第一回合先攻方只抽 1 张（A10-3）', () => {
+  it('抽牌阶段抽 2 张；第一回合先攻方只抽 1 张（A10-3）', () => {
     const t2 = run(run(craft({ phase: 'charge', turn: 2 }), intent('p1', INTENTS.phaseAdvance)), intent('p1', INTENTS.phaseAdvance));
     expect(t2.players['p1']!.zones.hand.length).toBe(2);
 

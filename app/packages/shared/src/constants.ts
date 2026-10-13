@@ -62,7 +62,7 @@ export const INITIAL_HEALTH = 15;
 /** A10-1：起手 5 张。 */
 export const INITIAL_HAND = 5;
 
-/** A9 补充 1：每回合抽排阶段抽 2 张。 */
+/** A9 补充 1：每回合抽牌阶段抽 2 张。 */
 export const DRAW_PER_TURN = 2;
 
 /**

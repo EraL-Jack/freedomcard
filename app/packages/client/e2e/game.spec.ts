@@ -1,4 +1,6 @@
-import { expect, test, type Browser, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+
+import { startGame } from './helpers.js';
 
 /**
  * 联机开局端到端验证（真界面）。
@@ -10,34 +12,8 @@ import { expect, test, type Browser, type Page } from '@playwright/test';
  * 只断言双方都拿到了一致的对局事实。
  */
 
-async function newClient(browser: Browser, nickname: string): Promise<Page> {
-  const context = await browser.newContext();
-  const page = await context.newPage();
-  await page.goto('/');
-  await expect(page.getByText('服务端已连接')).toBeVisible({ timeout: 15_000 });
-  await page.getByTestId('nickname').fill(nickname);
-  return page;
-}
-
 test('双方准备后开局，对战桌按 B2 布局渲染', async ({ browser }) => {
-  const host = await newClient(browser, 'Host');
-  await host.getByTestId('create').click();
-  const code = ((await host.getByTestId('room-code').textContent()) ?? '').trim();
-  expect(code).toMatch(/^[A-Z0-9]{4,8}$/);
-
-  const guest = await newClient(browser, 'Guest');
-  await guest.getByTestId('code').fill(code);
-  await guest.getByTestId('join').click();
-  await expect(guest.getByTestId('ready')).toBeVisible({ timeout: 10_000 });
-
-  // 双方准备 → 服务端建立对局（ADR-0019）
-  await host.getByTestId('ready').click();
-  await guest.getByTestId('ready').click();
-
-  // 开局后进入对战桌：回合指示与手牌区都出现
-  await expect(host.getByTestId('turn')).toBeVisible({ timeout: 15_000 });
-  await expect(guest.getByTestId('turn')).toBeVisible({ timeout: 15_000 });
-  await expect(host.getByTestId('hand')).toBeVisible({ timeout: 10_000 });
+  const { host, guest } = await startGame(browser);
 
   // A10-1：起手 5 张
   await expect(host.getByTestId('hand').locator('[data-testid="card"]')).toHaveCount(5, {

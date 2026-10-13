@@ -17,6 +17,19 @@ const KIND_STYLE: Readonly<Record<CardType, string>> = {
   continuous: 'border-emerald-500 bg-emerald-900/40',
 };
 
+/**
+ * 类型**文字**标签（A6-1 四类）。
+ *
+ * 只靠颜色区分类型是不够的：色觉障碍玩家分辨不出，且「哪些卡能充能」这类规则
+ * （X-2 限定随从）必须有文字依据 —— 否则界面就是在逼玩家猜规则。
+ */
+const KIND_TAG: Readonly<Record<CardType, string>> = {
+  commander: '指挥官',
+  minion: '随从',
+  spell: '法术',
+  continuous: '持续',
+};
+
 export interface CardTileProps {
   name: string;
   cost: number;
@@ -53,6 +66,9 @@ export default function CardTile(props: CardTileProps): React.JSX.Element {
       <span className="flex items-center justify-between text-[10px] leading-none">
         <span>费 {props.cost}</span>
         <span>力 {props.power}</span>
+      </span>
+      <span className="text-[9px] leading-none text-slate-400" data-testid="card-kind">
+        {KIND_TAG[props.kind]}
       </span>
       {props.sleeping ? <span className="text-[9px] text-slate-400">休眠</span> : null}
     </button>

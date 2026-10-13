@@ -14,6 +14,26 @@ import { defaultDeckSetup } from '../deck-pool.js';
  * 传输与编排分离，是让这段逻辑可测的前提。
  */
 
+/**
+ * 本局随机种子 —— ADR-0021。
+ *
+ * 默认取系统时间；设了 `GAME_SEED` 环境变量则恒取该值。
+ *
+ * ⚠️ **`GAME_SEED` 仅供端到端测试使用，生产不得设置** —— 否则每局牌序相同。
+ *
+ * ## 为什么是「固定种子」而不是「不洗牌」
+ *
+ * 引擎 RNG 是种子化纯函数（ADR-0010），`seed + Intent 序列` 唯一决定结果，
+ * 所以固定 seed 已能确定牌序与先后手。**洗牌照跑，只是结果确定** ——
+ * 若改成「测试时不洗牌」，洗牌分支就永远不在自动化测试覆盖范围内了。
+ */
+export function nextSeed(): number {
+  const raw = process.env['GAME_SEED'];
+  if (raw === undefined || raw === '') return Date.now() >>> 0;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) ? n >>> 0 : Date.now() >>> 0;
+}
+
 export interface SeedOptions {
   /** 座位顺序，按座位号升序。先后手由引擎掷骰决定（A2-4），此处只给「谁在座」。 */
   seats: readonly PlayerId[];

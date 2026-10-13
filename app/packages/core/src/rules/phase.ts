@@ -2,7 +2,7 @@
  * 阶段流转 —— `docs/06` A4-1 / A4-2 / A9 补充 1 / A10-3。
  *
  * 六阶段顺序固定、均不可跳过。这里把「进入某阶段的自动效果」也放在本文件：
- * 重置阶段清休眠、抽排阶段抽牌 —— 它们是阶段定义的一部分，不是独立机制。
+ * 重置阶段清休眠、抽牌阶段抽牌 —— 它们是阶段定义的一部分，不是独立机制。
  */
 
 import {
@@ -57,7 +57,7 @@ export function advanceOnce(state: GameState, ctx: RuleContext): GameEvent[] {
       if (to === 'reset') {
         events.push(ev(at, 'units:reset', { playerId: active }));
       }
-      // A9 补充 1：抽排阶段抽 2 张；A10-3：先攻方第一回合仅抽 1 张
+      // A9 补充 1：抽牌阶段抽 2 张；A10-3：先攻方第一回合仅抽 1 张
       if (to === 'draw') {
         const count = state.turn === 1 && state.activeSeat === 0 ? FIRST_TURN_DRAW : DRAW_PER_TURN;
         const p = state.players[active];
