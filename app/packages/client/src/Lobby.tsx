@@ -141,12 +141,14 @@ export default function Lobby(): React.JSX.Element {
             value={nickname}
             onChange={(e) => setNickname(e.target.value)}
             placeholder="玩家"
+            data-testid="nickname"
           />
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-xs text-slate-400">人数（建房用）</span>
           <input
             className="w-16 rounded border border-slate-700 bg-slate-900 px-2 py-1"
+            data-testid="capacity"
             value={capacity}
             onChange={(e) => setCapacity(e.target.value)}
             inputMode="numeric"
@@ -156,6 +158,7 @@ export default function Lobby(): React.JSX.Element {
           className="rounded bg-slate-700 px-3 py-1.5 hover:bg-slate-600"
           onClick={create}
           disabled={room !== null}
+          data-testid="create"
         >
           建房
         </button>
@@ -166,6 +169,7 @@ export default function Lobby(): React.JSX.Element {
           <span className="text-xs text-slate-400">房间码</span>
           <input
             className="rounded border border-slate-700 bg-slate-900 px-2 py-1 uppercase"
+            data-testid="code"
             value={code}
             onChange={(e) => setCode(e.target.value.toUpperCase())}
             placeholder="ABC123"
@@ -175,10 +179,16 @@ export default function Lobby(): React.JSX.Element {
           className="rounded bg-slate-700 px-3 py-1.5 hover:bg-slate-600"
           onClick={join}
           disabled={room !== null || !code.trim()}
+          data-testid="join"
         >
           加入
         </button>
-        <button className="rounded bg-slate-800 px-3 py-1.5 hover:bg-slate-700" onClick={leave} disabled={!room}>
+        <button
+          className="rounded bg-slate-800 px-3 py-1.5 hover:bg-slate-700"
+          onClick={leave}
+          disabled={!room}
+          data-testid="leave"
+        >
           离开
         </button>
       </div>
@@ -186,13 +196,16 @@ export default function Lobby(): React.JSX.Element {
       {room ? (
         <div className="rounded border border-slate-800 bg-slate-900 p-3">
           <p className="mb-2">
-            房间码 <span className="font-mono text-base text-emerald-300">{room.code}</span>
+            房间码{' '}
+            <span className="font-mono text-base text-emerald-300" data-testid="room-code">
+              {room.code}
+            </span>
             <span className="ml-2 text-xs text-slate-400">
               {room.seats.filter(Boolean).length}/{room.capacity} 人 · {room.phase}
               {me === room.hostId ? ' · 你是房主' : ''}
             </span>
           </p>
-          <ul className="space-y-1">
+          <ul className="space-y-1" data-testid="seats">
             {room.seats.map((s, i) => (
               <li key={i} className="text-slate-300">
                 席位 {i}：
@@ -221,7 +234,11 @@ export default function Lobby(): React.JSX.Element {
         <p className="text-slate-400">当前不在房间内。</p>
       )}
 
-      {notice ? <p className="mt-2 text-xs text-amber-200">{notice}</p> : null}
+      {notice ? (
+        <p className="mt-2 text-xs text-amber-200" data-testid="notice">
+          {notice}
+        </p>
+      ) : null}
     </section>
   );
 }
