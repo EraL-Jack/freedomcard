@@ -121,7 +121,11 @@ export async function pick(page: Page, indices: readonly number[]): Promise<void
  * 区域显示的张数。
  *
  * ⚠️ B2 布局是**上下镜像**的：对方与我都各有同名区域，故必须指定第几个
- * （`zone-cost` 的 0 = 对方，1 = 我方第 ④ 排，2 = 我方第 ⑤ 排重复项）。
+ * （`zone-graveyard` 的 0 = 对方第 ② 排，1 = 我方第 ⑤ 排；
+ *   `zone-cost` 的 0 = 对方第 ③ 排，1 = 我方第 ④ 排）。
+ *
+ * ⚠️ 取的是文本里**最后一个**数字 —— 指挥官区带血量徽标（「血 12」），
+ * 取最后一个才能稳定拿到卡数而不是血量。
  */
 export async function zoneCount(page: Page, zone: string, nth = 0): Promise<number> {
   const text = (await page.getByTestId(`zone-${zone}`).nth(nth).innerText()) ?? '';

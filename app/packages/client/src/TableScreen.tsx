@@ -69,6 +69,12 @@ function ZoneBox(props: {
   /** 点击区域内某张卡的回调 —— 不传则该区域不可点（默认）。 */
   onCardClick?: (uid: string) => void;
   selected?: boolean;
+  /**
+   * 区域标题右侧的徽标 —— 目前只用于**指挥官区显示血量**
+   * （Era 2026-10-14：血量就在指挥官区显示）。
+   */
+  badge?: string;
+  badgeTestId?: string;
 }): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const shown = props.expandable && !open ? [] : props.cards;
@@ -84,6 +90,11 @@ function ZoneBox(props: {
         disabled={!props.expandable}
       >
         <span className="truncate">{props.label}</span>
+        {props.badge ? (
+          <span className="shrink-0 font-mono text-rose-300" data-testid={props.badgeTestId}>
+            {props.badge}
+          </span>
+        ) : null}
         <span className="shrink-0 text-slate-200">{props.cards.length}</span>
       </button>
       {shown.length > 0 ? (
@@ -231,17 +242,9 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
         <span className="text-slate-400">阶段 {PHASE_LABEL[state.phase]}</span>
         <span className="text-slate-400">计时 {remain === null ? '—' : `${remain}s`}</span>
         {/*
-          血量 —— B2 布局原文**未覆盖**，但 A3 的胜负条件就是「血空判负」：
-          不显示血量，玩家既看不到战况，也不知道自己快输了，
-          等于把已接通的判负链路（ADR-0014）对玩家隐藏起来。
-          故按最小改动补在 B2-5 的信息条里，位置待 Era 确认。
+          血量**不在**这里显示 —— Era 2026-10-14 指定：血量就在指挥官区显示。
+          故血量徽标挂在两侧的指挥官区上（见下方 `badge`）。
         */}
-        <span className="text-rose-300" data-testid="hp-foe">
-          对手 {theirs.health}
-        </span>
-        <span className="text-emerald-300" data-testid="hp-me">
-          我方 {mine.health}
-        </span>
         <span className={myTurn ? 'text-emerald-400' : 'text-slate-500'}>
           {myTurn ? '你的回合' : '对手回合'}
         </span>
@@ -270,6 +273,8 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
               zone="commander"
               cards={theirs.zones.commander}
               state={state}
+              badge={`血 ${theirs.health}`}
+              badgeTestId="hp-foe"
               selected={attacker !== null}
               onCardClick={
                 attacker && myTurn
@@ -325,11 +330,21 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
             <ZoneBox label="费用区" zone="cost" cards={mine.zones.cost} expandable state={state} />
           </section>
 
-          {/* ⑤ 我方五区 —— 第 2 项「费用区」与第 ④ 排重复，原文如此，待 Era 确认 */}
+          {/* ⑤ 我方五区 —— 与第 ② 排（对方五区）**严格镜像**（Era 2026-10-14）。
+              ② 卡组/法术/指挥官/弃牌/除外 → ⑤ 除外/弃牌/指挥官/法术/卡组。
+              原第 2 格是「费用区」，导致我方**没有弃牌区**（玩家看不到自己的墓地）；
+              费用区在第 ④ 排已有一格，故此处换成弃牌区不丢信息。 */}
           <section className="grid grid-cols-5 gap-1">
             <ZoneBox label="除外区" zone="exile" cards={mine.zones.exile} expandable state={state} />
-            <ZoneBox label="费用区" zone="cost" cards={mine.zones.cost} expandable state={state} />
-            <ZoneBox label="指挥官" zone="commander" cards={mine.zones.commander} state={state} />
+            <ZoneBox label="弃牌区" zone="graveyard" cards={mine.zones.graveyard} expandable state={state} />
+            <ZoneBox
+              label="指挥官"
+              zone="commander"
+              cards={mine.zones.commander}
+              state={state}
+              badge={`血 ${mine.health}`}
+              badgeTestId="hp-me"
+            />
             <ZoneBox label="法术区" zone="spell" cards={mine.zones.spell} expandable state={state} />
             <ZoneBox label="卡组区" zone="deck" cards={mine.zones.deck} expandable state={state} />
           </section>
