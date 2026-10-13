@@ -50,10 +50,10 @@ test('出随从 → 战斗阶段发起攻击 → 力量值裁决并结算', asyn
   // ③ 发起攻击：先点我方随从（选定攻击方），再点对方随从（选定目标）
   //    B2 上下镜像：`slot-0` 出现两次，nth(0) = 对方，nth(1) = 我方
   //
-  // ⚠️ 只能观测**双方都可见**的结果：B2 原文的第 ⑤ 排是
-  // 「除外 / 费用 / 指挥官 / 法术 / 卡组」，**我方弃牌区根本没有渲染**
-  // （对方弃牌区在第 ② 排有）。故我方随从若被破坏，只能看随从区变空。
+  // 我方弃牌区已与对方**镜像**渲染（Era 2026-10-14），故两侧弃牌区都能观测：
+  // `zone-graveyard` 的 nth(0) = 对方（第 ② 排），nth(1) = 我方（第 ⑤ 排）。
   const foeGraveBefore = await zoneCount(second, 'graveyard', 0);
+  const myGraveBefore = await zoneCount(second, 'graveyard', 1);
 
   await second.getByTestId('slot-0').nth(1).locator('[data-testid="card"]').click();
   await second.getByTestId('slot-0').nth(0).locator('[data-testid="card"]').click();
@@ -61,19 +61,18 @@ test('出随从 → 战斗阶段发起攻击 → 力量值裁决并结算', asyn
   // 战斗结算：至少产出一条「裁决 X vs Y → …」
   await expect(second.getByTestId('log')).toContainText('裁决', { timeout: 10_000 });
 
-  // 无论哪种结局都必然可见：
-  //   防守方破坏 → 对方弃牌区 +1；攻击方破坏 → 我方随从区变空；双方破坏 → 两者
+  // 无论哪种结局都必然可见（断言由规则保证的不变量，不依赖抽到哪张牌）：
+  //   防守方破坏 → 对方弃牌区 +1；攻击方破坏 → 我方弃牌区 +1；双方破坏 → 两者
   await expect
     .poll(async () => {
       const foeGrave = await zoneCount(second, 'graveyard', 0);
-      const myBoard = await second
-        .getByTestId('slot-0')
-        .nth(1)
-        .locator('[data-testid="card"]')
-        .count();
-      return foeGrave > foeGraveBefore || myBoard === 0;
+      const myGrave = await zoneCount(second, 'graveyard', 1);
+      return foeGrave > foeGraveBefore || myGrave > myGraveBefore;
     })
     .toBe(true);
+
+  // 我方弃牌区必须真的渲染出来（此前 B2 原文没给它位置，玩家看不到自己的墓地）
+  expect(Number.isFinite(myGraveBefore)).toBe(true);
 });
 
 test('攻击对方指挥官 → 对方掉血（ADR-0022）', async ({ browser }) => {
@@ -97,6 +96,10 @@ test('攻击对方指挥官 → 对方掉血（ADR-0022）', async ({ browser })
     Number(/(\d+)/.exec((await second.getByTestId('hp-foe').innerText()) ?? '')?.[1] ?? NaN);
   const hpBefore = await hpOf();
   expect(Number.isFinite(hpBefore)).toBe(true);
+
+  // 血量按 Era 2026-10-14 的指定**显示在指挥官区**，不在顶部信息条
+  await expect(second.getByTestId('zone-commander').nth(0)).toContainText('血');
+  await expect(second.locator('header')).not.toContainText('血');
 
   // 点我方随从（选定攻击方）→ 点对方**指挥官**（ADR-0022 新接通的入口）
   // `zone-commander` 出现两次：nth(0) = 对方，nth(1) = 我方
