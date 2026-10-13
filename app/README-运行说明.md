@@ -53,6 +53,10 @@ Windows 需放行 5173 / 3000 端口的入站规则（网络配置文件为 Publ
 | `pnpm lint` | ESLint（flat config） |
 | `pnpm test` | 单测（当前只有 `core/rng`） |
 | `pnpm build` | 构建客户端到 `packages/client/dist` |
+| `pnpm --filter @app/client test:e2e` | 端到端（Playwright）：房间流程 + 375/768/1440 三档视口溢出检查 |
+
+> 首次跑 E2E 需先下载浏览器：`pnpm --filter @app/client exec playwright install chromium`（约 197 MiB，慢）。
+> 截图落在 `packages/client/e2e/screenshots/`（已被 `.gitignore` 忽略）。
 
 ## 6. 生产形态
 
