@@ -78,14 +78,13 @@ export function playerOf(state: GameState, playerId: PlayerId): PlayerState | nu
 }
 
 /**
- * 取卡定义的力量值。**查不到定义返回 null，不得默认 0。**
+ * 取卡定义。**查不到返回 undefined，调用方必须据此拒绝，不得默认按 0 处理。**
  *
  * 卡池缺失时若静默按 0 处理，会让一张本来很强的卡变成「谁都打得过」，
  * 且服务端与客户端都不会报错 —— 属于最难排查的一类假象。
  */
-export function powerOf(cards: Record<string, CardDef>, defId: string): number | null {
-  const def = cards[defId];
-  return def === undefined ? null : def.power;
+export function defOf(cards: Record<string, CardDef>, defId: string): CardDef | undefined {
+  return cards[defId];
 }
 
 /** 是否含指定关键词。定义缺失同样返回 false（不抛错，关键词是可选的）。 */
@@ -163,31 +162,43 @@ export interface DrawResult {
   events: GameEvent[];
   deck: CardInstance[];
   graveyard: CardInstance[];
+  /** 实际取出的卡（可能少于 `n` —— 卡组与弃牌区都空时静默停止）。 */
+  taken: CardInstance[];
 }
 
 /**
- * 从卡组顶抽 `n` 张。
+ * 从卡组顶取 `n` 张送往 `to` 区域。
  *
- * A9 补充 2：卡组用尽时把弃牌区全部洗回卡组再抽。洗牌消耗随机，
+ * A9 补充 2：卡组用尽时把弃牌区全部洗回卡组再取。洗牌消耗随机，
  * 故同步产出 `rng:advance` —— 必须紧邻 `deck:shuffled`，否则回放时游标对不上。
  *
- * 返回抽完后的 `deck` / `graveyard`，供调用方继续推演（如起手换牌的后续洗牌）。
+ * `to` 做成参数是因为**指挥官受伤要把卡送进费用区**（A5 补充 1）：
+ * 与抽牌唯一的区别是目的地，洗牌逻辑完全一样，故不复制一份。
+ *
+ * 返回取完后的 `deck` / `graveyard` 与实际取出的 `taken`，供调用方继续推演
+ * （如起手换牌的后续洗牌、指挥官受伤的展示计数）。
+ *
+ * `reveal = true` 时在每个 `card:moved` **之前**产出 `card:revealed` ——
+ * 顺序有意义：界面要先「翻出来给双方看」，再「放进费用区」。
  */
-export function drawCards(
+export function takeFromDeck(
   at: number,
   playerId: PlayerId,
   piles: DeckPiles,
   n: number,
   cursor: number,
+  to: Zone,
+  reveal = false,
 ): DrawResult {
   let deck = piles.deck.slice();
   let graveyard = piles.graveyard.slice();
   let c = cursor;
   const events: GameEvent[] = [];
+  const taken: CardInstance[] = [];
 
   for (let i = 0; i < n; i++) {
     if (deck.length === 0) {
-      if (graveyard.length === 0) break; // 无牌可抽 —— 规则未定义疲劳，故静默停止（A9-3：无疲劳）
+      if (graveyard.length === 0) break; // 无牌可取 —— 规则未定义疲劳，故静默停止（A9-3：无疲劳）
       const steps = Math.max(0, graveyard.length - 1);
       const s = shuffle(c, graveyard);
       c = s.nextCursor;
@@ -197,10 +208,28 @@ export function drawCards(
       events.push(deckShuffled(at, playerId, deck.map((x) => x.uid)));
     }
     const card = deck.shift()!;
-    events.push(moved(at, playerId, card.uid, 'deck', 'hand'));
+    taken.push(card);
+    if (reveal) {
+      events.push(ev(at, 'card:revealed', { playerId, uid: card.uid, from: 'deck', reason: 'commander-damage' }));
+    }
+    events.push(moved(at, playerId, card.uid, 'deck', to));
   }
 
-  return { events, deck, graveyard };
+  return { events, deck, graveyard, taken };
+}
+
+/**
+ * 抽牌 = 从卡组顶取 `n` 张送往手牌。
+ * 保留此名是因为抽牌是最高频的调用点，语义自明。
+ */
+export function drawCards(
+  at: number,
+  playerId: PlayerId,
+  piles: DeckPiles,
+  n: number,
+  cursor: number,
+): DrawResult {
+  return takeFromDeck(at, playerId, piles, n, cursor, 'hand');
 }
 
 /* --------------------------- 本地推演辅助 --------------------------- */
