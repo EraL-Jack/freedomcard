@@ -51,12 +51,34 @@ Windows 需放行 5173 / 3000 端口的入站规则（网络配置文件为 Publ
 | `pnpm dev` | 并行起服务端与客户端 |
 | `pnpm typecheck` | 全量 `tsc --noEmit` |
 | `pnpm lint` | ESLint（flat config） |
-| `pnpm test` | 单测（当前只有 `core/rng`） |
+| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层，2026-10-13 时点 **131 passed** |
 | `pnpm build` | 构建客户端到 `packages/client/dist` |
-| `pnpm --filter @app/client test:e2e` | 端到端（Playwright）：房间流程 + 375/768/1440 三档视口溢出检查 |
+| `pnpm --filter @app/client test:e2e` | 端到端（Playwright）：**7 条** —— 房间流程 / 视口溢出 / 联机开局 / 回合操作链路 / 攻击与指挥官伤害 |
 
 > 首次跑 E2E 需先下载浏览器：`pnpm --filter @app/client exec playwright install chromium`（约 197 MiB，慢）。
 > 截图落在 `packages/client/e2e/screenshots/`（已被 `.gitignore` 忽略）。
+
+### 跑 E2E 的两个前置（本机 Windows 必读）
+
+1. **先手动起服务，再跑 E2E** —— `playwright.config.ts` 里的 `webServer` 自行拉起
+   `pnpm -r --parallel dev` 时**收不到就绪信号**，会卡到 timeout；但服务本身是能起来的。
+   故本机改为先 `pnpm dev`，靠 `reuseExistingServer` 复用已跑着的服务：
+
+   ```bash
+   pnpm dev &                              # 或另开一个终端
+   pnpm --filter @app/client test:e2e
+   ```
+
+2. **想要确定牌序就带 `GAME_SEED`** —— 手动起服务时环境变量要自己传，
+   因为复用已有服务时 `playwright.config.ts` 里的 `webServer.env` **不会生效**（ADR-0021）：
+
+   ```bash
+   GAME_SEED=20261013 pnpm dev
+   ```
+
+   生产**不要**设这个变量，否则每局牌序相同。
+
+想只跑某一个文件：`pnpm --filter @app/client exec playwright test e2e/combat.spec.ts`
 
 ## 6. 生产形态
 
