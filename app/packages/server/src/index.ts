@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import Fastify from 'fastify';
-import { Server as IOServer } from 'socket.io';
+import { Server as IOServer, type Socket } from 'socket.io';
 
 import * as core from '@app/core';
 import {
@@ -13,6 +13,7 @@ import {
   RoomReconnectSchema,
   SOCKET_EVENTS,
   RECONNECT_GRACE_MS,
+  TURN_TIMEOUT_MS,
   type GameState,
   type EchoPayload,
   type Intent,
@@ -25,8 +26,12 @@ import {
   SeqGuard,
   buildSnapshot,
   submitIntent,
+  submitSystemIntent,
+  type EnginePort,
+  type PipelineOut,
   type ReplayRecord,
 } from './room/index.js';
+import { TurnTimer, hostScheduler } from './room/turn-timer.js';
 
 /** 与 packages/server/package.json 的 version 保持一致。 */
 const VERSION = '0.1.0';
@@ -76,14 +81,19 @@ const roomManager = new RoomManager({
   },
 });
 
-/** 每间房一份对局运行时：状态、去重表、回放记录、广播序号。 */
+/** 每间房一份对局运行时：状态、去重表、回放记录、广播序号、回合计时器。 */
 interface RoomRuntime {
   state: GameState;
   guard: SeqGuard;
   replay: ReplayRecorder;
   serverSeq: number;
+  /** 回合超时计时器 —— 由会话层驱动（ADR-0017），销毁房间时必须 `clear`。 */
+  timer: TurnTimer;
 }
 const runtimes = new Map<string, RoomRuntime>();
+
+/** 引擎端口实例 —— `core` 的公开签名与 `EnginePort` 结构一致，此处仅作显式绑定。 */
+const engine: EnginePort = core;
 
 function runtimeOf(roomId: string): RoomRuntime {
   let rt = runtimes.get(roomId);
@@ -96,7 +106,15 @@ function runtimeOf(roomId: string): RoomRuntime {
       decks: {},
       commanders: {},
     });
-    rt = { state, guard: new SeqGuard(), replay: new ReplayRecorder(Date.now()), serverSeq: 0 };
+    // 两步构造：timer 的回调要闭包引用 `roomId`（而非 rt 本身），否则在 timer 先于
+    // rt 存在时无法解析；先落对象再挂 timer 是最小的写法。
+    rt = { state, guard: new SeqGuard(), replay: new ReplayRecorder(Date.now()), serverSeq: 0 } as RoomRuntime;
+    rt.timer = new TurnTimer({
+      now: () => Date.now(),
+      scheduler: hostScheduler,
+      timeoutMs: TURN_TIMEOUT_MS,
+      onTimeout: () => handleTurnTimeout(roomId),
+    });
     runtimes.set(roomId, rt);
   }
   return rt;
@@ -105,6 +123,72 @@ function runtimeOf(roomId: string): RoomRuntime {
 function broadcastRoom(roomId: string): void {
   const room = roomManager.getRoom(roomId);
   if (room) io.to(roomId).emit(SOCKET_EVENTS.roomState, roomManager.publicView(room));
+}
+
+/**
+ * 统一的对局事件广播出口。
+ *
+ * - 被**接受**的事件 → 广播给整个房间（双方都要看到同一串事件）；
+ * - 被**拒绝 / 丢弃**的 → 只回给发起方，对手没有理由看到别人的非法操作。
+ *
+ * `socket` 缺省（系统 Intent 场景）时降级为广播 —— 系统 Intent 不会被拒绝，
+ * 但保留该分支可避免万一被拒时事件凭空消失。
+ */
+function emitGameOut(roomId: string, rt: RoomRuntime, out: PipelineOut, socket?: Socket): void {
+  rt.serverSeq += 1;
+  const payload = { ...out, serverSeq: rt.serverSeq };
+  if (out.kind === 'accepted' || !socket) {
+    io.to(roomId).emit(SOCKET_EVENTS.gameEvents, payload);
+  } else {
+    socket.emit(SOCKET_EVENTS.gameEvents, payload);
+  }
+}
+
+/**
+ * 回合超时处理 —— ADR-0017。
+ *
+ * ⚠️ **超时不直接改状态**：构造一条 `actor: 'system'` 的 `turn:end` Intent，
+ * 交给与玩家操作完全相同的处理链。绕过引擎直接改 `GameState` 会让服务端与客户端
+ * 各 reduce 一次得到不同结果，`stateHash` 比对必然失败，且这种断裂只在联机时才暴露。
+ *
+ * ⚠️ **全程同步**：本函数由定时器直接驱动，内部不得出现 `await`（ADR-0011）。
+ *
+ * 超时后 `turn:end` 会把剩余的阶段逐个推进直到进入下一回合，故此处
+ * 在确认未结束时重新 `arm`，为下一回合开始计时。
+ */
+function handleTurnTimeout(roomId: string): void {
+  const rt = runtimes.get(roomId);
+  const room = roomManager.getRoom(roomId);
+  if (!rt || !room) return;
+  if (room.phase !== 'playing' || rt.state.winner !== null) return;
+
+  const active = core.activePlayer(rt.state);
+  if (!active) return;
+
+  const intent: Intent = {
+    type: core.INTENTS.turnEnd,
+    actor: 'system',
+    playerId: active,
+    seq: rt.serverSeq + 1,
+    reason: 'timeout',
+  };
+
+  const result = submitSystemIntent(rt.state, intent, {
+    engine,
+    replay: rt.replay,
+    now: () => Date.now(),
+    cards: CARD_POOL,
+    emit: (out) => emitGameOut(roomId, rt, out),
+  });
+  rt.state = result.state;
+
+  if (rt.state.winner !== null) {
+    room.phase = 'ended';
+    rt.timer.clear();
+  } else {
+    rt.timer.arm(); // 已进入下一回合 —— 重新计时
+  }
+  broadcastRoom(roomId);
 }
 
 /** 回放落盘目录（`app/replays`，已被 `.gitignore` 忽略）。 */
@@ -123,11 +207,13 @@ async function flushReplay(roomId: string, record: ReplayRecord): Promise<void> 
   fastify.log.info({ file }, '回放已落盘');
 }
 
-/** 房间已销毁的运行时：落盘回放后回收（同时清掉去重表）。 */
+/** 房间已销毁的运行时：落盘回放后回收（同时清掉去重表与回合计时器）。 */
 function sweepRuntimes(): void {
   for (const [roomId, rt] of runtimes) {
     if (roomManager.getRoom(roomId)) continue;
     runtimes.delete(roomId);
+    // 不 clear 的话，定时器句柄会把已销毁房间的运行时吊住不释放。
+    rt.timer.clear();
     void flushReplay(roomId, rt.replay.finish());
   }
 }
@@ -231,21 +317,27 @@ io.on('connection', (socket) => {
 
     const rt = runtimeOf(located.room.id);
     const result = submitIntent(rt.state, intent, {
-      engine: core,
+      engine,
       guard: rt.guard,
       replay: rt.replay,
       now: () => Date.now(),
       cards: CARD_POOL,
-      emit: (out) => {
-        rt.serverSeq += 1;
-        if (out.kind === 'accepted') {
-          io.to(located.room.id).emit(SOCKET_EVENTS.gameEvents, { ...out, serverSeq: rt.serverSeq });
-        } else {
-          socket.emit(SOCKET_EVENTS.gameEvents, { ...out, serverSeq: rt.serverSeq });
-        }
-      },
+      emit: (out) => emitGameOut(located.room.id, rt, out, socket),
     });
     rt.state = result.state;
+
+    // 只有**被接受**的操作才重新计时：被拒绝 / 重复的 Intent 不续命，
+    // 否则发一串非法操作就能无限拖时间，超时保护当场失效（ADR-0017 §2）。
+    if (result.out.kind === 'accepted') {
+      if (rt.state.winner !== null) {
+        located.room.phase = 'ended';
+        rt.timer.clear();
+      } else {
+        rt.timer.arm();
+      }
+      broadcastRoom(located.room.id);
+    }
+
     ack?.({ ok: result.out.kind === 'accepted', out: result.out });
   });
 
