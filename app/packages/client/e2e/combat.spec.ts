@@ -75,3 +75,39 @@ test('出随从 → 战斗阶段发起攻击 → 力量值裁决并结算', asyn
     })
     .toBe(true);
 });
+
+test('攻击对方指挥官 → 对方掉血（ADR-0022）', async ({ browser }) => {
+  test.setTimeout(60_000);
+
+  const { host, guest } = await startGame(browser);
+  const pages: readonly Page[] = [host, guest];
+
+  // 先攻方**不出牌**直接结束回合 —— 对方场上因此没有随从，
+  // 也就不会触发 A7 的「嘲讽必须优先」限制，攻击指挥官这条路才走得通。
+  const first = await activePage(pages);
+  await first.getByTestId('end-turn').click();
+  await expect.poll(() => turnNo(first)).toBe(2);
+
+  const second = await activePage(pages);
+  await playOneMinion(second);
+  await second.getByTestId('advance').click();
+  await expect.poll(() => second.locator('header').innerText()).toContain('阶段 战斗');
+
+  const hpOf = async (): Promise<number> =>
+    Number(/(\d+)/.exec((await second.getByTestId('hp-foe').innerText()) ?? '')?.[1] ?? NaN);
+  const hpBefore = await hpOf();
+  expect(Number.isFinite(hpBefore)).toBe(true);
+
+  // 点我方随从（选定攻击方）→ 点对方**指挥官**（ADR-0022 新接通的入口）
+  // `zone-commander` 出现两次：nth(0) = 对方，nth(1) = 我方
+  await second.getByTestId('slot-0').nth(1).locator('[data-testid="card"]').click();
+  await second.getByTestId('zone-commander').nth(0).locator('[data-testid="card"]').click();
+
+  await expect(second.getByTestId('log')).toContainText('裁决', { timeout: 10_000 });
+
+  // ADR-0014：指挥官不走「破坏」，改为扣血。随从力量值恒 ≥ 1，
+  // 而指挥官此时为第 1 档（力量 1），故结局必是「防守方破坏」或「双方破坏」，
+  // 两种情况**都会扣血** —— 这个断言不依赖具体抽到哪张牌。
+  await expect.poll(hpOf).toBeLessThan(hpBefore);
+  await expect(second.getByTestId('log')).toContainText('指挥官受到', { timeout: 10_000 });
+});
