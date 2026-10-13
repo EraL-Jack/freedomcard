@@ -4,6 +4,7 @@ import {
   BOARD_SLOTS,
   DECK_SIZE,
   INITIAL_HAND,
+  KEYWORD_TAUNT,
   MAIN_DECK_SIZE,
   RULE_ERRORS,
   type CardDef,
@@ -16,6 +17,8 @@ import {
 } from '@app/shared';
 
 import { applyIntent, createInitialState, reduce, stateHash, INTENTS } from '../index.js';
+
+import { resolveCombat } from './attack.js';
 
 /* ------------------------------ 夹具 ------------------------------ */
 
@@ -31,6 +34,8 @@ const CARDS: Record<string, CardDef> = {
   m2: { defId: 'm2', name: '随从2', type: 'minion', cost: 2, power: 3 },
   s1: { defId: 's1', name: '法术1', type: 'spell', cost: 1, power: 0 },
   c1: { defId: 'c1', name: '持续1', type: 'continuous', cost: 1, power: 0 },
+  /** 嘲讽随从 —— A7 现仅此一个关键词，故夹具里也只有一个。 */
+  ta1: { defId: 'ta1', name: '嘲讽随从', type: 'minion', cost: 1, power: 4, keywords: [KEYWORD_TAUNT] },
 };
 for (let i = 3; i <= 10; i++) {
   CARDS[`m${i}`] = { defId: `m${i}`, name: `随从${i}`, type: 'minion', cost: 0, power: i };
@@ -73,7 +78,10 @@ function craft(patch: {
   phase?: Phase;
   turn?: number;
   activeSeat?: number;
+  /** 己方（p1）区域。 */
   zones?: Partial<Record<Zone, CardInstance[]>>;
+  /** 对手（p2）区域 —— 攻击测试需要给对方摆随从 / 指挥官。 */
+  foeZones?: Partial<Record<Zone, CardInstance[]>>;
 }): GameState {
   const s = createInitialState({
     seed: 1,
@@ -91,6 +99,10 @@ function craft(patch: {
   if (patch.zones) {
     const p = out.players['p1']!;
     out.players = { ...out.players, p1: { ...p, zones: { ...p.zones, ...patch.zones } } };
+  }
+  if (patch.foeZones) {
+    const p = out.players['p2']!;
+    out.players = { ...out.players, p2: { ...p, zones: { ...p.zones, ...patch.foeZones } } };
   }
   return out;
 }
@@ -470,14 +482,181 @@ describe('认输 concedeRule', () => {
   });
 });
 
-/* ------------------------------ 攻击（占位） ------------------------------ */
+/* ------------------------------ 攻击（ADR-0013） ------------------------------ */
 
-describe('攻击 attackRule（占位，等 Era 补字段）', () => {
-  it('明确返回 NOT_IMPLEMENTED，而不是静默通过', () => {
-    const s = craft({ phase: 'battle', zones: { board: [c('p1#0', 'm1')] } });
-    const r = applyIntent(s, intent('p1', INTENTS.attack, { attackerUid: 'p1#0' }), CTX);
+/** 摆一个战斗阶段、第二回合的对局；己方随从与对方随从由参数给。 */
+function battle(
+  mine: CardInstance,
+  foe: CardInstance,
+  extra: Partial<{ turn: number; activeSeat: number; phase: Phase; foeExtra: CardInstance[] }> = {},
+): GameState {
+  return craft({
+    phase: extra.phase ?? 'battle',
+    turn: extra.turn ?? 2,
+    activeSeat: extra.activeSeat ?? 0,
+    zones: { board: [mine] },
+    foeZones: { board: [foe, ...(extra.foeExtra ?? [])] },
+  });
+}
+
+describe('攻击裁决 · 纯力量值比较（ADR-0013 §1）', () => {
+  it('三分支：大 → 防守方死；小 → 攻击方死；相等 → 双死', () => {
+    expect(resolveCombat(5, 3)).toBe('defender');
+    expect(resolveCombat(3, 5)).toBe('attacker');
+    expect(resolveCombat(4, 4)).toBe('both');
+  });
+});
+
+describe('攻击 attackRule（ADR-0013）', () => {
+  it('攻击方力量值大 → 防守方破坏入弃牌区，攻击方留场', () => {
+    // m6(6) vs m3(3)
+    const s = battle(c('a1', 'm6'), c('d1', 'm3'));
+    const after = run(s, intent('p1', INTENTS.attack, { attackerUid: 'a1', targetUid: 'd1' }));
+    expect(after.players['p2']!.zones.board.map((x) => x.uid)).not.toContain('d1');
+    expect(after.players['p2']!.zones.graveyard.map((x) => x.uid)).toContain('d1');
+    expect(after.players['p1']!.zones.board.map((x) => x.uid)).toContain('a1');
+    expect(after.players['p1']!.zones.graveyard.length).toBe(0);
+  });
+
+  it('攻击方力量值小 → 攻击方自己破坏', () => {
+    // m2(2) vs m9(9)
+    const s = battle(c('a1', 'm2'), c('d1', 'm9'));
+    const after = run(s, intent('p1', INTENTS.attack, { attackerUid: 'a1', targetUid: 'd1' }));
+    expect(after.players['p1']!.zones.board.map((x) => x.uid)).not.toContain('a1');
+    expect(after.players['p1']!.zones.graveyard.map((x) => x.uid)).toContain('a1');
+    expect(after.players['p2']!.zones.board.map((x) => x.uid)).toContain('d1');
+  });
+
+  it('力量值相等 → 双方破坏', () => {
+    // m5(5) vs m5(5)
+    const s = battle(c('a1', 'm5'), c('d1', 'm5'));
+    const after = run(s, intent('p1', INTENTS.attack, { attackerUid: 'a1', targetUid: 'd1' }));
+    expect(after.players['p1']!.zones.board.length).toBe(0);
+    expect(after.players['p2']!.zones.board.length).toBe(0);
+    expect(after.players['p1']!.zones.graveyard.map((x) => x.uid)).toContain('a1');
+    expect(after.players['p2']!.zones.graveyard.map((x) => x.uid)).toContain('d1');
+  });
+
+  it('攻击后进入休眠态，再次攻击 → 拒绝 UNIT_ASLEEP', () => {
+    const s = battle(c('a1', 'm6'), c('d1', 'm3'), { foeExtra: [c('d2', 'm3')] });
+    const after = run(s, intent('p1', INTENTS.attack, { attackerUid: 'a1', targetUid: 'd1' }));
+    expect(after.players['p1']!.zones.board[0]!.sleeping).toBe(true);
+    const r = applyIntent(after, intent('p1', INTENTS.attack, { attackerUid: 'a1', targetUid: 'd2' }), CTX);
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.NOT_IMPLEMENTED);
+    if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.UNIT_ASLEEP);
+  });
+
+  it('先攻方第一回合攻击 → 拒绝 CANNOT_ATTACK（A10-3）', () => {
+    const s = battle(c('a1', 'm6'), c('d1', 'm3'), { turn: 1, activeSeat: 0 });
+    const r = applyIntent(s, intent('p1', INTENTS.attack, { attackerUid: 'a1', targetUid: 'd1' }), CTX);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.CANNOT_ATTACK);
+  });
+
+  it('非战斗阶段攻击 → 拒绝 WRONG_PHASE', () => {
+    const s = battle(c('a1', 'm6'), c('d1', 'm3'), { phase: 'main' });
+    const r = applyIntent(s, intent('p1', INTENTS.attack, { attackerUid: 'a1', targetUid: 'd1' }), CTX);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.WRONG_PHASE);
+  });
+
+  it('不是当前行动方 → 拒绝 NOT_YOUR_TURN', () => {
+    const s = battle(c('a1', 'm6'), c('d1', 'm3'));
+    const r = applyIntent(s, intent('p2', INTENTS.attack, { attackerUid: 'd1', targetUid: 'a1' }), CTX);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.NOT_YOUR_TURN);
+  });
+
+  it('攻击己方单位 → 拒绝 INVALID_TARGET', () => {
+    const s = battle(c('a1', 'm6'), c('d1', 'm3'));
+    const r = applyIntent(s, intent('p1', INTENTS.attack, { attackerUid: 'a1', targetUid: 'a1' }), CTX);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.INVALID_TARGET);
+  });
+
+  it('目标不在随从区 / 指挥官区 → 拒绝 INVALID_TARGET', () => {
+    const s = craft({
+      phase: 'battle',
+      turn: 2,
+      zones: { board: [c('a1', 'm6')] },
+      foeZones: { hand: [c('h2', 'm3')] },
+    });
+    const r = applyIntent(s, intent('p1', INTENTS.attack, { attackerUid: 'a1', targetUid: 'h2' }), CTX);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.INVALID_TARGET);
+  });
+});
+
+describe('嘲讽（A7）', () => {
+  it('对方有嘲讽随从时打非嘲讽 → 拒绝 MUST_ATTACK_TAUNT', () => {
+    const s = battle(c('a1', 'm6'), c('d1', 'm3'), { foeExtra: [c('t1', 'ta1')] });
+    const r = applyIntent(s, intent('p1', INTENTS.attack, { attackerUid: 'a1', targetUid: 'd1' }), CTX);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.MUST_ATTACK_TAUNT);
+  });
+
+  it('打嘲讽随从本身 → 允许（多个嘲讽任选其一，不需要裁决）', () => {
+    const s = battle(c('a1', 'm6'), c('t1', 'ta1'), { foeExtra: [c('t2', 'ta1')] });
+    const after = run(s, intent('p1', INTENTS.attack, { attackerUid: 'a1', targetUid: 't1' }));
+    // m6(6) > ta1(4) → 嘲讽随从破坏
+    expect(after.players['p2']!.zones.board.map((x) => x.uid)).not.toContain('t1');
+    expect(after.players['p2']!.zones.board.map((x) => x.uid)).toContain('t2');
+  });
+});
+
+describe('打指挥官（ADR-0013 §5：只破坏，不判负）', () => {
+  it('力量值大于指挥官 → 指挥官入弃牌区，但 winner 仍为 null', () => {
+    const s = craft({
+      phase: 'battle',
+      turn: 2,
+      zones: { board: [c('a1', 'm6')] },
+      foeZones: { commander: [c('p2#commander', 'cmd')] },
+    });
+    const after = run(s, intent('p1', INTENTS.attack, { attackerUid: 'a1', targetUid: 'p2#commander' }));
+    expect(after.players['p2']!.zones.commander.length).toBe(0);
+    expect(after.players['p2']!.zones.graveyard.map((x) => x.uid)).toContain('p2#commander');
+    expect(after.winner).toBeNull();
+  });
+
+  it('力量值小于指挥官 → 攻击方被破坏，指挥官留场', () => {
+    const s = craft({
+      phase: 'battle',
+      turn: 2,
+      zones: { board: [c('a1', 'm3')] },
+      foeZones: { commander: [c('p2#commander', 'cmd')] },
+    });
+    const after = run(s, intent('p1', INTENTS.attack, { attackerUid: 'a1', targetUid: 'p2#commander' }));
+    expect(after.players['p1']!.zones.board.length).toBe(0);
+    expect(after.players['p2']!.zones.commander.length).toBe(1);
+  });
+});
+
+describe('攻击的事件序列与触发点（ADR-0013 §7）', () => {
+  it('声明 → 攻击时触发 → 被攻击时触发 → 裁决，顺序固定', () => {
+    const s = battle(c('a1', 'm6'), c('d1', 'm3'));
+    const { events } = runWith(s, intent('p1', INTENTS.attack, { attackerUid: 'a1', targetUid: 'd1' }));
+    const types = events.map((e) => e.type);
+    expect(types.slice(0, 4)).toEqual([
+      'attack:declared',
+      'trigger:attack',
+      'trigger:defend',
+      'combat:resolved',
+    ]);
+  });
+
+  it('combat:resolved 携带双方力量值快照与裁决结果', () => {
+    const s = battle(c('a1', 'm6'), c('d1', 'm3'));
+    const { events } = runWith(s, intent('p1', INTENTS.attack, { attackerUid: 'a1', targetUid: 'd1' }));
+    const resolved = events.find((e) => e.type === 'combat:resolved');
+    expect(resolved).toBeDefined();
+    expect(resolved!.payload).toMatchObject({ atkPower: 6, defPower: 3, outcome: 'defender' });
+  });
+
+  it('卡池查不到定义 → 拒绝 CARD_NOT_FOUND（不静默按 0 处理）', () => {
+    const s = battle(c('a1', 'ghost'), c('d1', 'm3'));
+    const r = applyIntent(s, intent('p1', INTENTS.attack, { attackerUid: 'a1', targetUid: 'd1' }), CTX);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.CARD_NOT_FOUND);
   });
 });
 

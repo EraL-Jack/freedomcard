@@ -7,6 +7,7 @@
  */
 
 import type {
+  CardDef,
   CardInstance,
   GameEvent,
   GameState,
@@ -74,6 +75,22 @@ export function locate(state: GameState, uid: string): Located | null {
 /** 取玩家对象；座位表里没有则抛错（调用前应已校验）。 */
 export function playerOf(state: GameState, playerId: PlayerId): PlayerState | null {
   return state.players[playerId] ?? null;
+}
+
+/**
+ * 取卡定义的力量值。**查不到定义返回 null，不得默认 0。**
+ *
+ * 卡池缺失时若静默按 0 处理，会让一张本来很强的卡变成「谁都打得过」，
+ * 且服务端与客户端都不会报错 —— 属于最难排查的一类假象。
+ */
+export function powerOf(cards: Record<string, CardDef>, defId: string): number | null {
+  const def = cards[defId];
+  return def === undefined ? null : def.power;
+}
+
+/** 是否含指定关键词。定义缺失同样返回 false（不抛错，关键词是可选的）。 */
+export function hasKeyword(def: CardDef | undefined, keyword: string): boolean {
+  return def?.keywords?.includes(keyword) ?? false;
 }
 
 /** 从 payload 取字符串。非字符串返回 null —— 外部输入不可信。 */

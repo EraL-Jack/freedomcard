@@ -78,6 +78,12 @@ export const FIRST_TURN_DRAW = 1;
 /** A2-4：先后手由 1d6 掷骰决定，较大者先攻。 */
 export const SEQUENCE_DIE = 6;
 
+/**
+ * A7：关键词。**现仅 `taunt` 一个**，后续由 Era 补充。
+ * 单独成常量而非在各规则文件里写字面量 —— 关键词表是全表最容易变动的一处。
+ */
+export const KEYWORD_TAUNT = 'taunt';
+
 /** 规则拒绝码 —— 与房间错误码（`ROOM_ERRORS`）分属两层，不得混用。 */
 export const RULE_ERRORS = {
   NOT_IMPLEMENTED: 'NOT_IMPLEMENTED',
@@ -90,6 +96,10 @@ export const RULE_ERRORS = {
   INSUFFICIENT_COST: 'INSUFFICIENT_COST',
   BOARD_FULL: 'BOARD_FULL',
   ALREADY_ATTACKED: 'ALREADY_ATTACKED',
+  /** 单位处于休眠态，本回合已攻击过（A9-2）。 */
+  UNIT_ASLEEP: 'UNIT_ASLEEP',
+  /** A10-3：先攻方第一回合不可攻击。 */
+  CANNOT_ATTACK: 'CANNOT_ATTACK',
   INVALID_TARGET: 'INVALID_TARGET',
   MUST_ATTACK_TAUNT: 'MUST_ATTACK_TAUNT',
   GAME_OVER: 'GAME_OVER',

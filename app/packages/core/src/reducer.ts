@@ -130,6 +130,14 @@ export function reduce(state: GameState, event: GameEvent): GameState {
       return { ...state, seats, activeSeat: 0, started: true };
     }
 
+    // 战斗的**纯记录**事件（ADR-0013）：破坏由随后的 `card:moved` 承载，
+    // 力量值快照写在 payload 里供回放与动画使用，本身不改状态。
+    case 'attack:declared':
+    case 'trigger:attack':
+    case 'trigger:defend':
+    case 'combat:resolved':
+      return state;
+
     case 'game:ended':
       return { ...state, winner: s(event, 'winner') || null };
 
