@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import Fastify from 'fastify';
 import { Server as IOServer } from 'socket.io';
@@ -17,7 +18,14 @@ import {
   type Intent,
 } from '@app/shared';
 
-import { ReplayRecorder, RoomManager, SeqGuard, buildSnapshot, submitIntent } from './room/index.js';
+import {
+  ReplayRecorder,
+  RoomManager,
+  SeqGuard,
+  buildSnapshot,
+  submitIntent,
+  type ReplayRecord,
+} from './room/index.js';
 
 /** 与 packages/server/package.json 的 version 保持一致。 */
 const VERSION = '0.1.0';
@@ -90,6 +98,31 @@ function broadcastRoom(roomId: string): void {
   if (room) io.to(roomId).emit(SOCKET_EVENTS.roomState, roomManager.publicView(room));
 }
 
+/** 回放落盘目录（`app/replays`，已被 `.gitignore` 忽略）。 */
+const REPLAY_DIR = fileURLToPath(new URL('../../../replays', import.meta.url));
+
+/**
+ * 写 `replay.json`。
+ *
+ * ⚠️ **异步，且严格在 Intent 处理链之外**（ADR-0011）：链上一旦出现 `await` 就会破坏原子性。
+ * 因此记录阶段只在内存同步累积，落盘放到房间销毁时执行。
+ */
+async function flushReplay(roomId: string, record: ReplayRecord): Promise<void> {
+  await mkdir(REPLAY_DIR, { recursive: true });
+  const file = `${REPLAY_DIR}/${roomId}-${Date.now()}.json`;
+  await writeFile(file, JSON.stringify(record, null, 2), 'utf8');
+  fastify.log.info({ file }, '回放已落盘');
+}
+
+/** 房间已销毁的运行时：落盘回放后回收（同时清掉去重表）。 */
+function sweepRuntimes(): void {
+  for (const [roomId, rt] of runtimes) {
+    if (roomManager.getRoom(roomId)) continue;
+    runtimes.delete(roomId);
+    void flushReplay(roomId, rt.replay.finish());
+  }
+}
+
 /** 定期回收超出保留窗口的断线席位；频率取窗口的一半，够用且开销可忽略。 */
 const pruneTimer = setInterval(() => {
   const freed = roomManager.prune();
@@ -97,6 +130,7 @@ const pruneTimer = setInterval(() => {
     for (const rt of runtimes.values()) rt.guard.reset(playerId);
     fastify.log.info({ playerId }, '席位因超出保留窗口已释放');
   }
+  sweepRuntimes();
 }, RECONNECT_GRACE_MS / 2);
 
 /** 优雅退出：停掉巡检定时器再关服务，避免进程被定时器吊住。 */
@@ -169,6 +203,7 @@ io.on('connection', (socket) => {
     if (!r.ok) return ack?.({ ok: false, error: r.error, message: r.message });
     if (before) void socket.leave(before.room.id);
     if (r.value.room) broadcastRoom(r.value.room.id);
+    else sweepRuntimes();
     ack?.({ ok: true });
   });
 

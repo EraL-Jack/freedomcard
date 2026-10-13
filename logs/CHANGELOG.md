@@ -882,3 +882,14 @@
 - 未覆盖：`prompts/03` 的对战部分（开始对局 / 回合 / 胜负），依赖 A 组输入
 - 关联：ADR-0011（幂等归 Room 层、系统 Intent 同链路、链上禁 await）
 - 破坏性：否
+
+### [2026-10-13 12:35] D-102 · core 回放与确定性 runner（部分交付）+ D-103 回放落盘
+- 版本：v0.1
+- 类型：新增（代码）＋ 新增（报告）
+- 摘要：`core/src/replay.ts` 新增 `replay()`（按步重跑 Intent 序列，产出事件与哈希链）与 `isDeterministic()`（同一序列跑两次比对哈希链）；**时间源强制注入** `now(step)`，handler 内读时钟即会被判不确定
+- server 侧：回放落盘 `flushReplay()` 写 `app/replays/<roomId>-<ts>.json`（目录已被 `.gitignore` 忽略）；触发点为房间销毁后的 `sweepRuntimes()`；**异步且严格在处理链之外**（ADR-0011）
+- 回归验证：typecheck 0 / lint 0 / 单测 **35 passed**（core 12 + server 23）；真实联机冒烟 9 项全过（含回放文件生成与 `endedAt` 写入）
+- **测试设计说明**：确定性校验配了两条**反向用例**（外部可变状态、handler 读时钟）故意使其失败 —— 用来证明该检查能真正抓到问题，而不是永远返回 true 的空测试
+- 关联：`T-0002-房间会话层验收.md`（结论「有条件发布」）
+- 未覆盖：Accepted 路径的真实数据（引擎仍为 `TODO(slot)`，全部 Intent 被拒），已由单测用假引擎覆盖
+- 破坏性：否
