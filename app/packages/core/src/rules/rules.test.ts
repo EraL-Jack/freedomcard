@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   BOARD_SLOTS,
   DECK_SIZE,
+  DEFAULT_DAMAGE,
   INITIAL_HAND,
   INITIAL_HEALTH,
   KEYWORD_TAUNT,
@@ -35,6 +36,8 @@ const CARDS: Record<string, CardDef> = {
   m2: { defId: 'm2', name: '随从2', type: 'minion', cost: 2, power: 3 },
   /** 力量 7 / 伤害 3 —— 用于验证「伤害值与力量值不是一回事」（ADR-0014 H13）。 */
   d7: { defId: 'd7', name: '重击随从', type: 'minion', cost: 3, power: 7, damage: 3 },
+  /** 力量 6 / 伤害 5 —— 验证伤害值可以**大于**力量值，两者互不推导（X-5）。 */
+  d6: { defId: 'd6', name: '爆发随从', type: 'minion', cost: 3, power: 6, damage: 5 },
   s1: { defId: 's1', name: '法术1', type: 'spell', cost: 1, power: 0 },
   c1: { defId: 'c1', name: '持续1', type: 'continuous', cost: 1, power: 0 },
   /** 嘲讽随从 —— A7 现仅此一个关键词，故夹具里也只有一个。 */
@@ -663,10 +666,17 @@ describe('打指挥官 · 伤害与胜负（ADR-0014）', () => {
     expect(s.winner).toBe('p1');
   });
 
-  it('伤害值缺失时以力量值兜底（假设 H13）', () => {
-    // m6 没有 damage 字段 → 伤害 = power = 6
+  it('伤害值缺失时默认为 1，与力量值无关（X-5）', () => {
+    // m6 没有 damage 字段、power 为 6 → 伤害取默认 1，不是 6
     const after = run(cmdBattle(c('a1', 'm6')), hit());
-    expect(after.players['p2']!.health).toBe(INITIAL_HEALTH - 6);
+    expect(after.players['p2']!.health).toBe(INITIAL_HEALTH - DEFAULT_DAMAGE);
+    expect(after.players['p2']!.health).toBe(INITIAL_HEALTH - 1);
+  });
+
+  it('伤害值显式写在卡上时按卡上的值，可大于力量值（X-5）', () => {
+    // d6：power 6 > cmd 5 故命中；damage 5 → 扣 5（不是 6）
+    const after = run(cmdBattle(c('a1', 'd6')), hit());
+    expect(after.players['p2']!.health).toBe(INITIAL_HEALTH - 5);
   });
 
   it('攻击方力量值小于指挥官 → 攻击方自己破坏，指挥官不掉血', () => {
