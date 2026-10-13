@@ -114,5 +114,7 @@ app/
 1. 规则引擎的 `applyIntent` / `reduce` 为 `TODO(slot)` —— 规则由 Era 在 `docs/06` A 组输入后实现，**当前不得自行补写玩法**。
    因此现在发 `game:intent` 会收到 `rejected / NOT_IMPLEMENTED` —— 这是**预期状态**，说明链路是通的、只是规则没接。
 2. 房间与重连**已实现**；对战流程（开始对局、回合、胜负）仍未实现，属 `prompts/03` 且依赖 A 组输入。
+3. 客户端的房间区块是**占位界面**（琥珀色，已标注），只用于联机自检 —— 布局与视觉等 Era 在 `docs/06` B 组输入后整体替换。
+   **其点击流程未在本机验证**：本机无浏览器自动化工具（装 agent-browser 需拉 ~500MB Chromium）。已验证的是页面 HTTP 200、构建产物含该组件、zod 未进首屏；真实交互由 Era 在浏览器/手机上实测（`F-0001` §3.3）。
 3. Tailwind 断点在 `client/src/style.css` 的 `@theme` 中定义，**没有** `tailwind.config.js`（v4 已移除）。
 4. 工程内禁止使用 `xl:` / `2xl:` 变体 —— 五档断点已全部覆盖默认值。

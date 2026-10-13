@@ -28,7 +28,7 @@ function deterministicDeps(): ReplayDeps {
     }),
     reduce: (state, event): GameState => {
       const s = state as Mutable;
-      return { rngCursor: s.rngCursor + 1, n: s.n + event.type.length };
+      return { rngCursor: s.rngCursor + 1, n: s.n + event.type.length } as Mutable;
     },
     stateHash: (state) => `h${(state as Mutable).rngCursor}-${(state as Mutable).n}`,
     now: (step) => 1000 + step * 10,
@@ -92,7 +92,7 @@ describe('回放 · 确定性校验', () => {
       }),
       reduce: (state, event): GameState => {
         const s = state as Mutable;
-        return { rngCursor: s.rngCursor + 1, n: s.n + event.at };
+        return { rngCursor: s.rngCursor + 1, n: s.n + event.at } as Mutable;
       },
       stateHash: (state) => `h${(state as Mutable).rngCursor}-${(state as Mutable).n}`,
       now: (step) => step,
@@ -118,7 +118,7 @@ describe('回放 · 确定性校验', () => {
       }),
       reduce: (state, event): GameState => {
         const s = state as Mutable;
-        return { rngCursor: s.rngCursor + 1, n: s.n + event.at };
+        return { rngCursor: s.rngCursor + 1, n: s.n + event.at } as Mutable;
       },
       stateHash: (state) => `h${(state as Mutable).rngCursor}-${(state as Mutable).n}`,
       now: (step) => 1000 + step,

@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
-import { io, type Socket } from 'socket.io-client';
 
 // 只引子路径，避免把 zod 拖进首屏产物。
 import { SOCKET_EVENTS } from '@app/shared/constants';
+
+import Lobby from './Lobby.js';
+import { socket } from './socket.js';
 
 interface Health {
   ok: boolean;
@@ -24,9 +26,6 @@ export default function App(): React.JSX.Element {
       .then(setHealth)
       .catch(() => setHealth(null));
 
-    // 同源连接：由 Vite 代理转发到服务端，手机走局域网时也能连上。
-    const socket: Socket = io({ path: '/socket.io', transports: ['websocket', 'polling'] });
-
     socket.on('connect', () => {
       setSocketState('online');
       socket.emit(SOCKET_EVENTS.echo, { message: 'ping' }, (res: unknown) => {
@@ -38,7 +37,9 @@ export default function App(): React.JSX.Element {
 
     return () => {
       controller.abort();
-      socket.close();
+      socket.off('connect');
+      socket.off('disconnect');
+      socket.off('connect_error');
     };
   }, []);
 
@@ -71,6 +72,8 @@ export default function App(): React.JSX.Element {
           <h2 className="mb-2 font-medium text-slate-400">Socket echo 回包</h2>
           <pre className="overflow-x-auto text-sky-300">{echoReply}</pre>
         </section>
+
+        <Lobby />
 
         <p className="text-xs text-slate-500">
           玩法相关的一切尚未定义 —— 规则与界面由 Era 在 <code>docs/06</code> 输入后实现。
