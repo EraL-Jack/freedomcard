@@ -55,6 +55,10 @@ function CardOf(props: {
 /**
  * 区域块 —— B2-3：弃牌 / 除外 / 费用区默认**缩略**（只显示数量），点击展开全貌。
  * 费用区按 B2-3 的要求**直接显示数量**。
+ *
+ * `onCardClick` 是为了让**指挥官区也能当攻击目标**（ADR-0022）——
+ * 此前只有随从区可点，导致「打指挥官 → 扣血 → 血空结束」这条已确认的规则
+ * 在界面上走不到，只能互砍随从、永远分不出胜负。
  */
 function ZoneBox(props: {
   label: string;
@@ -62,6 +66,9 @@ function ZoneBox(props: {
   cards: readonly CardInstance[];
   state: GameState;
   expandable?: boolean;
+  /** 点击区域内某张卡的回调 —— 不传则该区域不可点（默认）。 */
+  onCardClick?: (uid: string) => void;
+  selected?: boolean;
 }): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const shown = props.expandable && !open ? [] : props.cards;
@@ -82,7 +89,13 @@ function ZoneBox(props: {
       {shown.length > 0 ? (
         <div className="mt-1 flex flex-wrap gap-0.5">
           {shown.map((c) => (
-            <CardOf key={c.uid} card={c} state={props.state} />
+            <CardOf
+              key={c.uid}
+              card={c}
+              state={props.state}
+              selected={props.selected}
+              onClick={props.onCardClick ? () => props.onCardClick?.(c.uid) : undefined}
+            />
           ))}
         </div>
       ) : null}
@@ -217,6 +230,18 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
         <span data-testid="turn">第 {state.turn} 回合</span>
         <span className="text-slate-400">阶段 {PHASE_LABEL[state.phase]}</span>
         <span className="text-slate-400">计时 {remain === null ? '—' : `${remain}s`}</span>
+        {/*
+          血量 —— B2 布局原文**未覆盖**，但 A3 的胜负条件就是「血空判负」：
+          不显示血量，玩家既看不到战况，也不知道自己快输了，
+          等于把已接通的判负链路（ADR-0014）对玩家隐藏起来。
+          故按最小改动补在 B2-5 的信息条里，位置待 Era 确认。
+        */}
+        <span className="text-rose-300" data-testid="hp-foe">
+          对手 {theirs.health}
+        </span>
+        <span className="text-emerald-300" data-testid="hp-me">
+          我方 {mine.health}
+        </span>
         <span className={myTurn ? 'text-emerald-400' : 'text-slate-500'}>
           {myTurn ? '你的回合' : '对手回合'}
         </span>
@@ -234,7 +259,23 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
           <section className="grid grid-cols-5 gap-1">
             <ZoneBox label="卡组区" zone="deck" cards={theirs.zones.deck} expandable state={state} />
             <ZoneBox label="法术区" zone="spell" cards={theirs.zones.spell} expandable state={state} />
-            <ZoneBox label="指挥官" zone="commander" cards={theirs.zones.commander} state={state} />
+            {/* ADR-0022：指挥官也是合法攻击目标 —— 否则只能互砍随从，永远分不出胜负。
+                嘲讽优先由引擎裁决（A7），界面不预判，被拒就显示服务端原因。 */}
+            <ZoneBox
+              label="指挥官"
+              zone="commander"
+              cards={theirs.zones.commander}
+              state={state}
+              selected={attacker !== null}
+              onCardClick={
+                attacker && myTurn
+                  ? (uid) => {
+                      session.attack(attacker, uid);
+                      setAttacker(null);
+                    }
+                  : undefined
+              }
+            />
             <ZoneBox label="弃牌区" zone="graveyard" cards={theirs.zones.graveyard} expandable state={state} />
             <ZoneBox label="除外区" zone="exile" cards={theirs.zones.exile} expandable state={state} />
           </section>
