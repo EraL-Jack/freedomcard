@@ -91,6 +91,15 @@ export function reduce(state: GameState, event: GameEvent): GameState {
       });
     }
 
+    /**
+     * 指挥官力量值档位推进（X-7）。事件自带 `index` / `power`，
+     * 状态里只存档位 —— 力量值本身始终由 `powerCurve` 推导，不落第二份数据。
+     */
+    case 'commander:grown':
+      return withPlayer(state, s(event, 'playerId'), (p) => {
+        p.commanderPowerIndex = n(event, 'index');
+      });
+
     case 'mulligan:done':
       return withPlayer(state, s(event, 'playerId'), (p) => {
         p.mulliganDone = true;

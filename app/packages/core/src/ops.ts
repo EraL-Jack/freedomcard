@@ -17,7 +17,7 @@ import type {
   Rejection,
   Zone,
 } from '@app/shared';
-import { RULE_ERRORS } from '@app/shared';
+import { INITIAL_COMMANDER_POWER_INDEX, RULE_ERRORS } from '@app/shared';
 
 import { advanceCursor, shuffle } from './rng.js';
 import { ZONES, activePlayer } from './state.js';
@@ -106,6 +106,54 @@ export function strListArg(value: unknown): string[] | null {
     out.push(v);
   }
   return out;
+}
+
+/* ------------------------------ 力量值 ------------------------------ */
+
+/**
+ * 取指挥官的力量值曲线；**未定义则返回 null** —— 此时按定长 `power` 处理（不成长）。
+ *
+ * 只认 `type === 'commander'`：样例卡里曲线是指挥官专属机制，随从写曲线属于数据错误，
+ * 这里按「没有曲线」处理而不是报错，是为了不让一张卡的数据问题炸掉整个对局。
+ */
+export function powerCurveOf(def: CardDef | undefined): readonly number[] | null {
+  if (!def || def.type !== 'commander') return null;
+  const curve = def.powerCurve;
+  if (!curve || curve.length === 0) return null;
+  return curve.every((v) => Number.isFinite(v)) ? curve : null;
+}
+
+/**
+ * 指挥官在指定档位的力量值。
+ *
+ * **超出曲线末尾则取末档**（封顶，不循环）—— X-7 只给了四个值，没有第 5 档，
+ * 循环回 0 会让满级指挥官突然归零，属于发明规则。
+ */
+export function commanderPowerAt(def: CardDef, index: number): number {
+  const curve = powerCurveOf(def);
+  if (!curve) return def.power;
+  const i = Math.min(Math.max(index, 0), curve.length - 1);
+  return curve[i] ?? def.power;
+}
+
+/**
+ * 取一个场上单位的**当前**力量值；查不到卡定义返回 `null`（调用方必须据此拒绝）。
+ *
+ * 指挥官走曲线档位，其余一律取 `CardDef.power` 定值。
+ *
+ * ⚠️ 战斗裁决**必须**走这里而不是直接读 `def.power` —— 否则指挥官会永远按初始档参战，
+ * X-7 的曲线就成了死数据（ADR-0016 §8）。
+ */
+export function unitPower(state: GameState, cards: Record<string, CardDef>, uid: string): number | null {
+  const loc = locate(state, uid);
+  if (!loc) return null;
+  const def = defOf(cards, loc.card.defId);
+  if (!def) return null;
+  if (loc.zone === 'commander') {
+    const p = state.players[loc.playerId];
+    return commanderPowerAt(def, p?.commanderPowerIndex ?? INITIAL_COMMANDER_POWER_INDEX);
+  }
+  return def.power;
 }
 
 /* ------------------------------ 拒绝 ------------------------------ */

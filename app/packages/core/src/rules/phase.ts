@@ -22,6 +22,7 @@ import {
 
 import { drawCards, ev, maxCostChanged, phaseChanged, turnChanged } from '../ops.js';
 import { activePlayer } from '../state.js';
+import { growCommander } from './commander-growth.js';
 
 /** 阶段顺序 —— A4-1，索引即推进顺序。 */
 export const PHASE_ORDER: readonly Phase[] = ['charge', 'reset', 'draw', 'main', 'battle', 'end'];
@@ -82,7 +83,13 @@ export function advanceOnce(state: GameState, ctx: RuleContext): GameEvent[] {
 
   events.push(phaseChanged(at, state.phase, 'charge'));
   events.push(turnChanged(at, nextTurn, nextSeat));
-  if (nextPlayer) events.push(maxCostChanged(at, nextPlayer, maxCostForTurn(nextTurn)));
+  if (nextPlayer) {
+    events.push(maxCostChanged(at, nextPlayer, maxCostForTurn(nextTurn)));
+    // 进入充能阶段的自动效果：指挥官力量值推进一档（X-7 / ADR-0016 §3）。
+    // 覆盖「第 2 回合及以后」；第 1 回合由 `start.ts` 负责 —— 开局时已经处在
+    // 充能阶段，没有「进入」动作可挂，故必须两处都接。
+    events.push(...growCommander(state, nextPlayer, ctx));
+  }
   return events;
 }
 

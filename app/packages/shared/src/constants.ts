@@ -86,6 +86,15 @@ export const SEQUENCE_DIE = 6;
 export const DEFAULT_DAMAGE = 1;
 
 /**
+ * X-7（Era 2026-10-13）：**指挥官力量值初始取曲线第 0 档**。
+ *
+ * 「初始 0 然后每个充能阶段成长」—— 故开局（尚未经历任何充能阶段）时索引为 0，
+ * 第一次充能阶段后变为 1。写成常量是因为它同时被 `createInitialState` 与
+ * `growCommander` 的封顶逻辑依赖，散落成字面量后改一处会漏另一处。
+ */
+export const INITIAL_COMMANDER_POWER_INDEX = 0;
+
+/**
  * A7：关键词。**现仅 `taunt` 一个**，后续由 Era 补充。
  * 单独成常量而非在各规则文件里写字面量 —— 关键词表是全表最容易变动的一处。
  */

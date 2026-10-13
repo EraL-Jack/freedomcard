@@ -59,6 +59,18 @@ export interface CardDef {
    * 而 `A7` 关键词表与触发时机均未给。所有效果一律保持 `TODO(slot)`。
    */
   text?: string;
+  /**
+   * **指挥官力量值曲线**（`docs/06` X-7，Era 2026-10-13：「初始 0，然后每个充能阶段成长，
+   * 第一回合就会变到 1」）。
+   *
+   * 语义是**档位序列，不是回合号→力量的映射**：`[0,1,3,5]` 表示初始取第 0 档（值 0），
+   * 每经过一次己方充能阶段推进一档，走到底后保持末档。
+   *
+   * ⚠️ 仅对 `type === 'commander'` 生效；**缺失时力量恒取 `power` 定值**（不成长）。
+   * 原先放在 `attrs.powerCurve`（ADR-0015 §3 时期它只是「只记不用的转录数据」），
+   * 现因参与结算而提升为一等字段 —— 避免对 `unknown` 做断言。
+   */
+  powerCurve?: readonly number[];
   /** 扩展位：Era 说明「字段清单我会给输入」，届时只加字段不改结构。 */
   attrs?: Record<string, unknown>;
 }
@@ -89,6 +101,16 @@ export interface PlayerState {
   zones: Record<Zone, CardInstance[]>;
   /** X-1：指挥官在第一个充能阶段揭示后直接置入指挥官区。 */
   commanderRevealed: boolean;
+  /**
+   * 指挥官力量值所处的**曲线档位** —— X-7（Era 2026-10-13）。
+   *
+   * 初始 `0`（曲线第一档）；**每次己方充能阶段**推进 1 档，走到底后保持末档。
+   * 只有定义了 `powerCurve` 的指挥官才受它影响，其余一律取 `CardDef.power` 定值。
+   *
+   * 放在玩家级而非卡级：指挥官不进主卡组、没有实例序号（ADR-0012），
+   * 与 `commanderDefId` 同属玩家自身的持久属性。
+   */
+  commanderPowerIndex: number;
   /** 起手换牌只允许一次（A10-1）。 */
   mulliganDone: boolean;
 }
