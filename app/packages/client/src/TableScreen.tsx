@@ -248,8 +248,12 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
       </header>
 
       <div className="flex min-h-0 flex-1 gap-1">
-        {/* 对战桌主体 */}
-        <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
+        {/* 对战桌主体 —— `justify-between` 让六排**均匀铺满**可用高度：
+            对方手牌贴顶、我方手牌贴近操作条，中间各区随窗口高度均匀分布。
+            此前内容全部堆在顶部，窗口一高底部就剩一大片空白（Era 2026-10-13
+            实机反馈「没有适配」）。内容溢出时 justify-between 自动退化为
+            正常流 + 滚动，不会裁掉顶部。 */}
+        <div className="flex min-h-0 flex-1 flex-col justify-between gap-1 overflow-y-auto">
           {/* ① 对方手牌 —— 只显示张数，不暴露内容 */}
           <section className="rounded border border-slate-700 bg-slate-900/40 px-2 py-1 text-[11px] text-slate-400">
             对方手牌 {theirs.zones.hand.length} 张
