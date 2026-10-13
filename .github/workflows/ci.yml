@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+# 同一分支上的新推送会取消仍在跑的旧任务，省机器时间。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: typecheck / lint / test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 仓库根没有 package.json（工程在 app/ 下），无法靠 packageManager 自动识别，故显式锁版本。
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.11.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+
+      - name: 安装依赖
+        working-directory: app
+        run: pnpm install --frozen-lockfile
+
+      - name: 类型检查
+        working-directory: app
+        run: pnpm typecheck
+
+      - name: Lint
+        working-directory: app
+        run: pnpm lint
+
+      - name: 单测
+        working-directory: app
+        run: pnpm test
+
+  e2e:
+    name: 端到端（Chromium）
+    runs-on: ubuntu-latest
+    # 需要下载浏览器，单列一个 job，失败不影响质量闸门先出结果。
+    steps:
+      - uses: actions/checkout@v4
+      # 仓库根没有 package.json（工程在 app/ 下），无法靠 packageManager 自动识别，故显式锁版本。
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.11.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+
+      - name: 安装依赖
+        working-directory: app
+        run: pnpm install --frozen-lockfile
+
+      - name: 安装 Chromium
+        working-directory: app/packages/client
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: 端到端
+        working-directory: app/packages/client
+        run: pnpm test:e2e
+
+      - name: 上传截图
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: app/packages/client/e2e/screenshots
+          if-no-files-found: ignore

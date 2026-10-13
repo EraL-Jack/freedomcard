@@ -904,3 +904,17 @@
 - **未在本机验证**：点击流程。本机无浏览器自动化工具（agent-browser 需拉 ~500MB Chromium，未安装）；已验证页面 HTTP 200 与产物包含性，交互实测留给 Era（见 `F-0001` §3.3）
 - `F-0001` 的 §3 体验步骤已同步加入房间自检流程
 - 破坏性：否
+
+### [2026-10-13 17:40] D-301 · GitHub Actions CI 工作流 ＋ D-107 E2E 首次实跑通过
+- 版本：v0.1
+- 类型：新增（配置）＋ 修改（`playwright.config.ts`、`.gitignore`）
+- 摘要：`.github/workflows/ci.yml` 两个 job —— `quality`（typecheck / lint / test）与 `e2e`（Chromium，独立 job 以免浏览器下载拖住质量闸门）；因仓库根无 `package.json`，`pnpm/action-setup@v4` **显式锁 `version: 12.11.2`**，`cache-dependency-path` 指向 `app/pnpm-lock.yaml`
+- **D-107 E2E 首次实跑：3 passed**（建房→加入→双方可见→刷新重连 / 满员拒入 / 375·768·1440 三档视口不溢出），耗时 4.4s
+- 过程中查到并修掉三个真问题：
+  1. **浏览器版本错位** —— 本机 `ms-playwright` 里是 `chromium-1208`，Playwright 1.64 要 `1248`；旧的后台下载任务留下 `__dirlock` 导致新安装直接报锁冲突。`1248` 实际已下载完成，清理旧版本后即对齐
+  2. **`playwright.config.ts` 的 `cwd: '..'` 语义错误** —— 相对 configDir 解析成 `app/packages`（非 `app` 根）；虽因 pnpm 向上查找 workspace 而未暴露，仍改为 `'../..'`
+  3. **`.gitignore` 的 `e2e/screenshots/` 未生效** —— 模式含中间斜杠被当作根相对路径，只匹配仓库根的 `e2e/screenshots/`；改为 `**/e2e/screenshots/`
+- **未解决（已写进配置注释）**：Windows 下 `webServer` 自行拉起 `pnpm -r --parallel dev` 收不到就绪信号，会卡到 120s 超时；服务本身正常（手工启动后 `127.0.0.1:5173` 返回 200、`/health` 返回 `{"ok":true}`）。本机改为**先手动 `pnpm dev` 再靠 `reuseExistingServer` 复用**，此路径已验证 3/3 通过；CI（ubuntu-latest）的自拉起行为尚未观察
+- 回归验证（提交前实跑）：typecheck 0 / lint 0 / 单测 **35 passed**（core 12 + server 23）/ E2E 3 passed
+- **未在本机验证**：CI 在 GitHub 上的实际运行结果（本条仅为工作流文件，未触发过一次真实 run）
+- 破坏性：否

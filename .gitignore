@@ -11,7 +11,7 @@ dist-ssr/
 coverage/
 playwright-report/
 test-results/
-e2e/screenshots/
+**/e2e/screenshots/
 
 # 回放与运行时数据
 replays/
