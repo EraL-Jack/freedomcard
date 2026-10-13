@@ -21,6 +21,12 @@ export interface Seat {
   /** 服务端已处理的最大 seq —— 重连时下发给客户端，客户端从 `lastSeq + 1` 续发。 */
   lastSeq: number;
   disconnectedAt: number | null;
+  /**
+   * 是否已准备 —— B1 补充 3「双方加入并准备后即开始游戏」+ ADR-0019。
+   *
+   * 属于**房间层事实**（玩家的操作意愿），不是玩法状态，故放在这里而非 `GameState`。
+   */
+  ready: boolean;
 }
 
 export interface Room {

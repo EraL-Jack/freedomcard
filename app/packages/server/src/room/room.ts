@@ -57,6 +57,7 @@ export class RoomManager {
       connected: true,
       lastSeq: 0,
       disconnectedAt: null,
+      ready: false,
     };
     const room: Room = {
       id: this.ids.id(),
@@ -99,10 +100,29 @@ export class RoomManager {
       connected: true,
       lastSeq: 0,
       disconnectedAt: null,
+      ready: false,
     };
     room.seats[free] = seat;
     this.byPlayer.set(playerId, { roomId: room.id, token });
     return { ok: true, value: { room, seat } };
+  }
+
+  /**
+   * 准备 —— B1 补充 3「双方加入并准备后即开始游戏」+ ADR-0019。
+   *
+   * 返回 `allReady` 表示**本次操作后**是否「满员且全员就绪」；由会话层据此决定是否开局。
+   * 重复设 true 是幂等的 —— 两名玩家几乎同时点准备是常态，幂等放在这里比放在调用方可靠。
+   *
+   * 房间已不在 `lobby` 时返回 `allReady: false`，由会话层保证不会二次开局。
+   */
+  setReady(playerId: PlayerId): Outcome<{ room: Room; allReady: boolean }> {
+    const found = this.locate(playerId);
+    if (!found) return { ok: false, error: ROOM_ERRORS.NOT_IN_ROOM, message: '不在房间内' };
+    const { room, seat } = found;
+    if (room.phase !== 'lobby') return { ok: true, value: { room, allReady: false } };
+    seat.ready = true;
+    const allReady = room.seats.every((s) => s !== null && s.ready);
+    return { ok: true, value: { room, allReady } };
   }
 
   /** 标记断线：席位不释放，进入保留窗口。 */
