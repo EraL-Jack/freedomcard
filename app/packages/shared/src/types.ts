@@ -18,7 +18,13 @@ export type CardType = 'commander' | 'minion' | 'spell' | 'continuous';
 
 /**
  * 区域 —— ADR-0012，与 `docs/06` B2 布局逐项对应。
- * **没有独立的 `charge`（充能区）**：Era 于 2026-10-13 确认 X-2 中的「充能区」即 `cost`。
+ *
+ * ⚠️ **命名别名（ADR-0015）**：Era 的输入里，同一个区域出现过三个名字 ——
+ * 「充能区」（X-2）、「费用区」（A5 补充 / B2 布局）、「伤害区」（卡牌样例卡面文本）。
+ * **三者同一，都对应 `cost`**。
+ *
+ * 别名只存在于文档与注释，**不进代码标识符** —— 若再加一个 `'damage'` 枚举值，
+ * 就等于制造了两个指向同一处的区域，后续所有按区域查找都要处理这个伪区分。
  */
 export type Zone =
   | 'deck'
@@ -46,6 +52,13 @@ export interface CardDef {
   damage?: number;
   /** 关键词 —— `docs/06` A7 现仅 `'taunt'`，后续由 Era 补充。 */
   keywords?: string[];
+  /**
+   * **原始卡面文本** —— 转录自用，供 UI 展示与人工核对。
+   *
+   * ⚠️ **只存不解析**（ADR-0015 §2）：把卡面翻译成可执行效果是「发明规则」，
+   * 而 `A7` 关键词表与触发时机均未给。所有效果一律保持 `TODO(slot)`。
+   */
+  text?: string;
   /** 扩展位：Era 说明「字段清单我会给输入」，届时只加字段不改结构。 */
   attrs?: Record<string, unknown>;
 }
