@@ -1,28 +1,31 @@
 /**
- * 攻击结算 —— ADR-0013。
+ * 攻击结算 —— ADR-0013（裁决）+ ADR-0014（指挥官伤害与胜负）。
  *
  * 依据：
- *  - Era 2026-10-13 裁决输入：**只比较力量值**。
+ *  - X-3（Era 2026-10-13）：**只比较力量值**。
  *    `atk > def` → 防守方破坏；`atk < def` → 攻击方破坏；`atk == def` → 双方破坏。
+ *  - X-4（Era 2026-10-13）：对指挥官造成伤害 → 扣除对应血量 → **血量清空游戏结束**。
  *  - A9-2：每个单位每回合攻击 1 次，攻击后进入休眠态，重置阶段清除。
  *  - A10-3：先攻方第一回合不可攻击。
  *  - A7 嘲讽：对手**随从**攻击时必须优先选择嘲讽目标。
- *  - Era 同批输入：攻击时与被攻击时都可能有触发效果。
+ *  - A5 补充 1：指挥官每受 1 点伤害 → 从卡组顶展示 1 张卡（如有效果则触发），
+ *    然后置入费用区。
  *
- * ⚠️ 本文件**不引入生命值**，也**不扣血**。理由见 ADR-0013 §1 / §4：
- * 裁决式子里没有伤害数值的位置，A3-1 唯一判负条件是血空而 Era 未给
- * 「一次攻击造成多少伤害」，故这部分一律 `TODO(slot)`，不替 Era 发明。
+ * **两条不同的路径**（ADR-0014 §1）：
+ *  - 打**随从** → 力量值对比 → 输的一方破坏，不掉血（随从没有血量）。
+ *  - 打**指挥官** → 力量值对比，防守方输则**扣血**，血空结束；攻击方输则自己破坏、不掉血。
  *
  * `TODO(slot)` 清单（未决，不猜）：
- *  1. 指挥官被破坏是否判负（A3-1 只承认血空）。本实现**只破坏不判负**。
- *  2. 攻击是否掉血、掉多少；`CardDef.damage` 的含义与取值范围。
- *  3. 触发效果的**清单**（A7 关键词表待 Era 补充）。
- *  4. 效果能否取消 / 替换攻击（现按「不能」处理，见 ADR-0013 §8）。
+ *  1. `CardDef.damage` 的取值范围与含义 —— 现按「缺失时用 `power` 兜底」（假设 H13）。
+ *  2. 触发效果的**清单**（A7 关键词表待补）。
+ *  3. 效果能否取消 / 替换攻击（现按「不能」，ADR-0013 §8）。
+ *  4. 展示出来的卡「如有效果则触发对应效果」—— 效果未定义，故只展示不触发。
  */
 
 import {
   KEYWORD_TAUNT,
   RULE_ERRORS,
+  type CardDef,
   type GameEvent,
   type GameState,
   type Intent,
@@ -33,15 +36,16 @@ import {
 
 import {
   baseGuard,
+  defOf,
   ev,
   firstRejection,
   hasKeyword,
   locate,
   moved,
   phaseGuard,
-  powerOf,
   reject,
   strArg,
+  takeFromDeck,
 } from '../ops.js';
 import { opponentOf } from '../state.js';
 
@@ -49,7 +53,7 @@ import { opponentOf } from '../state.js';
 export type CombatOutcome = 'defender' | 'attacker' | 'both';
 
 /**
- * 纯力量值比较 —— Era 给的三分支。
+ * 纯力量值比较 —— Era 给的三分支（X-3）。
  *
  * 单独导出是为了让「裁决」这件事可单测、可被后续效果系统复用，
  * 而不必构造一整个对局状态。
@@ -58,6 +62,17 @@ export function resolveCombat(atkPower: number, defPower: number): CombatOutcome
   if (atkPower > defPower) return 'defender';
   if (atkPower < defPower) return 'attacker';
   return 'both';
+}
+
+/**
+ * 取一张卡的伤害值。
+ *
+ * ⚠️ 假设（已登记假设清单 H13）：`CardDef.damage` 的取值范围 Era 未给，
+ * 卡池也是空的，若缺失即按 0 处理，则 Demo 里所有攻击都不掉血、永远打不完。
+ * 故此处**缺失时用 `power` 兜底**。Era 确认 `damage` 语义后只改这一个表达式。
+ */
+export function damageOf(def: CardDef): number {
+  return def.damage ?? def.power;
 }
 
 export const attackRule = (
@@ -96,23 +111,27 @@ export const attackRule = (
     return reject(RULE_ERRORS.INVALID_TARGET, '目标只能是对方随从或指挥官');
   }
 
+  const foePlayer = state.players[foe];
+  if (!foePlayer) return reject(RULE_ERRORS.NOT_STARTED, '对手不在座');
+
   // A7 嘲讽：对方场上有嘲讽随从时，目标必须落在嘲讽集合内。
   // 多个嘲讽由攻击方任选其一 —— 「任选」不构成需要裁决的冲突（ADR-0013 §6）。
-  const foePlayer = state.players[foe];
-  if (foePlayer) {
-    const taunts = foePlayer.zones.board.filter((c) => hasKeyword(ctx.cards[c.defId], KEYWORD_TAUNT));
-    if (taunts.length > 0 && !taunts.some((c) => c.uid === targetUid)) {
-      return reject(RULE_ERRORS.MUST_ATTACK_TAUNT, '对方存在嘲讽随从，必须优先选择嘲讽目标');
-    }
+  const taunts = foePlayer.zones.board.filter((c) => hasKeyword(defOf(ctx.cards, c.defId), KEYWORD_TAUNT));
+  if (taunts.length > 0 && !taunts.some((c) => c.uid === targetUid)) {
+    return reject(RULE_ERRORS.MUST_ATTACK_TAUNT, '对方存在嘲讽随从，必须优先选择嘲讽目标');
+  }
+
+  const atkDef = defOf(ctx.cards, atk.card.defId);
+  const defDef = defOf(ctx.cards, tgt.card.defId);
+  if (!atkDef || !defDef) {
+    return reject(RULE_ERRORS.CARD_NOT_FOUND, '卡池中查不到该卡定义');
   }
 
   // 力量值快照 —— **必须排在触发之后**（ADR-0013 §7）：
   // 若将来出现「攻击时 +N 力量」的效果，快照在前就会用旧值裁决。
-  const atkPower = powerOf(ctx.cards, atk.card.defId);
-  const defPower = powerOf(ctx.cards, tgt.card.defId);
-  if (atkPower === null || defPower === null) {
-    return reject(RULE_ERRORS.CARD_NOT_FOUND, '卡池中查不到该卡定义');
-  }
+  const atkPower = atkDef.power;
+  const defPower = defDef.power;
+  const atkDamage = damageOf(atkDef);
 
   const outcome = resolveCombat(atkPower, defPower);
   const at = ctx.now;
@@ -126,14 +145,40 @@ export const attackRule = (
     ev(at, 'combat:resolved', { by: me, attackerUid, targetUid, atkPower, defPower, outcome }),
   );
 
-  const defenderDies = outcome === 'defender' || outcome === 'both';
+  const defenderLoses = outcome === 'defender' || outcome === 'both';
   const attackerDies = outcome === 'attacker' || outcome === 'both';
-  if (defenderDies) events.push(moved(at, tgt.playerId, targetUid, tgt.zone, 'graveyard'));
+  const targetIsCommander = tgt.zone === 'commander';
+
+  if (defenderLoses && targetIsCommander) {
+    // ADR-0014 §1：指挥官不走「破坏」，改为受伤扣血。
+    const next = Math.max(0, foePlayer.health - atkDamage); // H15：血量不为负
+    events.push(ev(at, 'commander:damaged', { playerId: foe, amount: atkDamage, sourceUid: attackerUid }));
+
+    // A5 补充 1：每 1 点伤害 → 从卡组顶展示 1 张 → 置入费用区（H14：逐点触发，含重复卡）
+    const revealed = takeFromDeck(
+      at,
+      foe,
+      { deck: foePlayer.zones.deck, graveyard: foePlayer.zones.graveyard },
+      atkDamage,
+      state.rngCursor,
+      'cost',
+      true,
+    );
+    events.push(...revealed.events);
+    // ⚠️ 展示出的卡「如有效果则触发对应效果」—— 效果清单未给，故**只展示不触发**（TODO(slot)）
+
+    events.push(ev(at, 'health:changed', { playerId: foe, value: next, delta: -atkDamage }));
+    if (next <= 0) {
+      events.push(ev(at, 'game:ended', { winner: me, reason: 'health' }));
+    }
+  } else if (defenderLoses) {
+    events.push(moved(at, tgt.playerId, targetUid, tgt.zone, 'graveyard'));
+  }
+
   if (attackerDies) events.push(moved(at, me, attackerUid, 'board', 'graveyard'));
 
   // A9-2：攻击后休眠。已被破坏的单位不再标记 —— 对死掉的单位标休眠没有意义。
   if (!attackerDies) events.push(ev(at, 'unit:asleep', { playerId: me, uid: attackerUid }));
 
-  // ⚠️ 此处**不产出** `game:ended`：指挥官被破坏是否判负 Era 未给（ADR-0013 §5）。
   return { ok: true, value: events };
 };

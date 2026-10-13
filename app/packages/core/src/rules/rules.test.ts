@@ -4,6 +4,7 @@ import {
   BOARD_SLOTS,
   DECK_SIZE,
   INITIAL_HAND,
+  INITIAL_HEALTH,
   KEYWORD_TAUNT,
   MAIN_DECK_SIZE,
   RULE_ERRORS,
@@ -32,6 +33,8 @@ const CARDS: Record<string, CardDef> = {
   cmd: { defId: 'cmd', name: '指挥官', type: 'commander', cost: 0, power: 5 },
   m1: { defId: 'm1', name: '随从1', type: 'minion', cost: 1, power: 2 },
   m2: { defId: 'm2', name: '随从2', type: 'minion', cost: 2, power: 3 },
+  /** 力量 7 / 伤害 3 —— 用于验证「伤害值与力量值不是一回事」（ADR-0014 H13）。 */
+  d7: { defId: 'd7', name: '重击随从', type: 'minion', cost: 3, power: 7, damage: 3 },
   s1: { defId: 's1', name: '法术1', type: 'spell', cost: 1, power: 0 },
   c1: { defId: 'c1', name: '持续1', type: 'continuous', cost: 1, power: 0 },
   /** 嘲讽随从 —— A7 现仅此一个关键词，故夹具里也只有一个。 */
@@ -604,30 +607,85 @@ describe('嘲讽（A7）', () => {
   });
 });
 
-describe('打指挥官（ADR-0013 §5：只破坏，不判负）', () => {
-  it('力量值大于指挥官 → 指挥官入弃牌区，但 winner 仍为 null', () => {
-    const s = craft({
+describe('打指挥官 · 伤害与胜负（ADR-0014）', () => {
+  /** 己方一个随从，对方指挥官已揭示在对面指挥官区。 */
+  function cmdBattle(attacker: CardInstance = c('a1', 'd7')): GameState {
+    return craft({
       phase: 'battle',
       turn: 2,
-      zones: { board: [c('a1', 'm6')] },
+      zones: { board: [attacker] },
       foeZones: { commander: [c('p2#commander', 'cmd')] },
     });
-    const after = run(s, intent('p1', INTENTS.attack, { attackerUid: 'a1', targetUid: 'p2#commander' }));
-    expect(after.players['p2']!.zones.commander.length).toBe(0);
-    expect(after.players['p2']!.zones.graveyard.map((x) => x.uid)).toContain('p2#commander');
+  }
+
+  const hit = (uid = 'a1'): Intent =>
+    intent('p1', INTENTS.attack, { attackerUid: uid, targetUid: 'p2#commander' });
+
+  it('力量值大于指挥官 → 按伤害值扣血，指挥官不被破坏', () => {
+    // d7：power 7 > cmd 5 → 防守方输；damage 3 → 扣 3
+    const after = run(cmdBattle(), hit());
+    const foe = after.players['p2']!;
+    expect(foe.health).toBe(INITIAL_HEALTH - 3);
+    expect(foe.zones.commander.length).toBe(1);
     expect(after.winner).toBeNull();
   });
 
-  it('力量值小于指挥官 → 攻击方被破坏，指挥官留场', () => {
-    const s = craft({
-      phase: 'battle',
-      turn: 2,
-      zones: { board: [c('a1', 'm3')] },
-      foeZones: { commander: [c('p2#commander', 'cmd')] },
-    });
-    const after = run(s, intent('p1', INTENTS.attack, { attackerUid: 'a1', targetUid: 'p2#commander' }));
+  it('每点伤害展示 1 张卡组顶的卡并置入费用区（A5 补充 1）', () => {
+    const s = cmdBattle();
+    const { events, state: after } = runWith(s, hit());
+    const foe = after.players['p2']!;
+    expect(events.filter((e) => e.type === 'card:revealed').length).toBe(3);
+    expect(foe.zones.cost.length).toBe(3);
+    expect(foe.zones.deck.length).toBe(s.players['p2']!.zones.deck.length - 3);
+  });
+
+  it('展示出来的卡只入费用区，不触发任何效果（效果清单未给）', () => {
+    const { events } = runWith(cmdBattle(), hit());
+    expect(events.filter((e) => e.type === 'trigger:defend').length).toBe(1);
+    expect(events.some((e) => e.type === 'effect:resolved')).toBe(false);
+  });
+
+  it('血量清空 → 游戏结束，胜者为攻击方', () => {
+    let s = cmdBattle();
+    for (let i = 0; i < 5; i++) {
+      // 攻击后随从会休眠，这里手动重置以连续攻击
+      const p1 = s.players['p1']!;
+      s = {
+        ...s,
+        players: {
+          ...s.players,
+          p1: { ...p1, zones: { ...p1.zones, board: p1.zones.board.map((c) => ({ ...c, sleeping: false })) } },
+        },
+      };
+      s = run(s, hit());
+    }
+    expect(s.players['p2']!.health).toBe(0);
+    expect(s.winner).toBe('p1');
+  });
+
+  it('伤害值缺失时以力量值兜底（假设 H13）', () => {
+    // m6 没有 damage 字段 → 伤害 = power = 6
+    const after = run(cmdBattle(c('a1', 'm6')), hit());
+    expect(after.players['p2']!.health).toBe(INITIAL_HEALTH - 6);
+  });
+
+  it('攻击方力量值小于指挥官 → 攻击方自己破坏，指挥官不掉血', () => {
+    // m3：power 3 < cmd 5 → 攻击方输
+    const after = run(cmdBattle(c('a1', 'm3')), hit());
     expect(after.players['p1']!.zones.board.length).toBe(0);
+    expect(after.players['p1']!.zones.graveyard.map((x) => x.uid)).toContain('a1');
+    expect(after.players['p2']!.health).toBe(INITIAL_HEALTH);
     expect(after.players['p2']!.zones.commander.length).toBe(1);
+  });
+});
+
+describe('伤害只作用于指挥官（ADR-0014 §1）', () => {
+  it('打随从只破坏、双方血量都不变', () => {
+    const s = battle(c('a1', 'm6'), c('d1', 'm3'));
+    const after = run(s, intent('p1', INTENTS.attack, { attackerUid: 'a1', targetUid: 'd1' }));
+    expect(after.players['p1']!.health).toBe(INITIAL_HEALTH);
+    expect(after.players['p2']!.health).toBe(INITIAL_HEALTH);
+    expect(after.winner).toBeNull();
   });
 });
 

@@ -136,6 +136,8 @@ export function reduce(state: GameState, event: GameEvent): GameState {
     case 'trigger:attack':
     case 'trigger:defend':
     case 'combat:resolved':
+    case 'commander:damaged':
+    case 'card:revealed':
       return state;
 
     case 'game:ended':
