@@ -1,84 +1,31 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
-// 只引子路径，避免把 zod 拖进首屏产物。
-import { SOCKET_EVENTS } from '@app/shared/constants';
+import DeckScreen from './DeckScreen.js';
+import HomeScreen from './HomeScreen.js';
+import TableScreen from './TableScreen.js';
+import { useRoom } from './useRoom.js';
 
-import Lobby from './Lobby.js';
-import { socket } from './socket.js';
-
-interface Health {
-  ok: boolean;
-  version: string;
-}
-
-type LinkState = 'connecting' | 'online' | 'offline';
-
+/**
+ * 视图切换 —— 页面清单严格按 B1：
+ *  - **主界面**：加入房间 / 创建房间 / 编辑卡组（B1 补充 1）
+ *  - **对战桌**：创建 / 加入房间即进入（B1 补充 3）
+ *  - **卡组编辑**：需要，支持多个卡组保存（B1 补充 2）
+ *
+ * ⚠️ B1 明确说**不需要**大厅页、房间等待页、结算页、排行榜 —— 故一律不建。
+ *
+ * 没有路由库：三个视图就一个 `useState` 足够，引入 router 只会增加首屏体积。
+ * 「在对战桌里」由 `session.room` 决定，而不是单独的 view 字段 ——
+ * 房间存在就该在对战桌，二者不该各持一份真相。
+ */
 export default function App(): React.JSX.Element {
-  const [health, setHealth] = useState<Health | null>(null);
-  const [socketState, setSocketState] = useState<LinkState>('connecting');
-  const [echoReply, setEchoReply] = useState<string>('—');
+  const session = useRoom();
+  const [view, setView] = useState<'home' | 'deck'>('home');
 
-  useEffect(() => {
-    const controller = new AbortController();
-
-    void fetch('/health', { signal: controller.signal })
-      .then((res) => res.json() as Promise<Health>)
-      .then(setHealth)
-      .catch(() => setHealth(null));
-
-    socket.on('connect', () => {
-      setSocketState('online');
-      socket.emit(SOCKET_EVENTS.echo, { message: 'ping' }, (res: unknown) => {
-        setEchoReply(JSON.stringify(res));
-      });
-    });
-    socket.on('disconnect', () => setSocketState('offline'));
-    socket.on('connect_error', () => setSocketState('offline'));
-
-    return () => {
-      controller.abort();
-      socket.off('connect');
-      socket.off('disconnect');
-      socket.off('connect_error');
-    };
-  }, []);
-
-  return (
-    <main className="min-h-dvh bg-slate-950 p-4 text-slate-100 sm:p-6 md:p-8 lg:p-10">
-      <div className="mx-auto max-w-2xl space-y-4">
-        <h1 className="text-xl font-semibold sm:text-2xl md:text-3xl">卡牌对战 Demo · 骨架</h1>
-
-        <section className="rounded-lg border border-slate-800 bg-slate-900 p-4">
-          <h2 className="mb-2 text-sm font-medium text-slate-400">服务端状态</h2>
-          <p className="text-lg">
-            {socketState === 'online' ? (
-              <span className="text-emerald-400">服务端已连接</span>
-            ) : socketState === 'connecting' ? (
-              <span className="text-amber-400">连接中…</span>
-            ) : (
-              <span className="text-rose-400">服务端未连接</span>
-            )}
-          </p>
-        </section>
-
-        <section className="rounded-lg border border-slate-800 bg-slate-900 p-4 text-sm">
-          <h2 className="mb-2 font-medium text-slate-400">HTTP /health</h2>
-          <pre className="overflow-x-auto text-emerald-300">
-            {health ? JSON.stringify(health, null, 2) : '请求失败'}
-          </pre>
-        </section>
-
-        <section className="rounded-lg border border-slate-800 bg-slate-900 p-4 text-sm">
-          <h2 className="mb-2 font-medium text-slate-400">Socket echo 回包</h2>
-          <pre className="overflow-x-auto text-sky-300">{echoReply}</pre>
-        </section>
-
-        <Lobby />
-
-        <p className="text-xs text-slate-500">
-          玩法相关的一切尚未定义 —— 规则与界面由 Era 在 <code>docs/06</code> 输入后实现。
-        </p>
-      </div>
-    </main>
-  );
+  if (view === 'deck') {
+    return <DeckScreen onBack={() => setView('home')} />;
+  }
+  if (session.room) {
+    return <TableScreen session={session} />;
+  }
+  return <HomeScreen session={session} onEditDeck={() => setView('deck')} />;
 }

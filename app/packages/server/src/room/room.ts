@@ -232,7 +232,16 @@ export class RoomManager {
       capacity: room.capacity,
       hostId: room.hostId,
       seats: room.seats.map((s) =>
-        s ? { seat: s.seat, playerId: s.playerId, nickname: s.nickname, connected: s.connected } : null,
+        s
+          ? {
+              seat: s.seat,
+              playerId: s.playerId,
+              nickname: s.nickname,
+              connected: s.connected,
+              // ADR-0019：准备状态属于房间层事实，不含任何玩法信息。
+              ready: s.ready,
+            }
+          : null,
       ),
     };
   }

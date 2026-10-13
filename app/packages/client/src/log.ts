@@ -1,0 +1,140 @@
+// `ZONES` 只有 core 导出（shared 只有类型），而类型是 shared 的 —— 两边都要引。
+import { ZONES } from '@app/core';
+import type { GameEvent, GameState, PlayerState, Zone } from '@app/shared';
+
+import { CARD_POOL } from '@app/shared/cards';
+
+import { PHASE_LABEL, ZONE_LABEL } from './labels.js';
+
+/**
+ * 事件 → 中文日志文案。
+ *
+ * ⚠️ 这是**表现层**的翻译，不是规则：它只把引擎产出的事件讲成人话，不参与任何结算。
+ * B2-5 要求「日志在对战桌右边单独一列」，而引擎事件是英文标识符，
+ * 故需要在客户端做这一层映射。
+ *
+ * 卡名从共享卡池查得 —— 这也是卡池必须放在 `shared` 的原因（ADR-0020）。
+ */
+
+/** 取卡名；查不到定义时退回 `defId`，避免出现空白格。 */
+function cardName(defId: string | undefined): string {
+  if (!defId) return '—';
+  return CARD_POOL[defId]?.name ?? defId;
+}
+
+/** 取玩家显示名；查不到昵称时退回 `playerId` 前 6 位。 */
+function who(names: Readonly<Record<string, string>>, playerId: unknown): string {
+  if (typeof playerId !== 'string') return '—';
+  return names[playerId] ?? playerId.slice(0, 6);
+}
+
+/** 按 uid 反查 defId —— 事件的 payload 只带 uid，卡名要到状态里查。 */
+function defIdOf(state: GameState | null, uid: unknown): string | undefined {
+  if (!state || typeof uid !== 'string') return undefined;
+  for (const id of state.seats) {
+    const p: PlayerState | undefined = state.players[id];
+    if (!p) continue;
+    for (const z of ZONES) {
+      const card = p.zones[z].find((x) => x.uid === uid);
+      if (card) return card.defId;
+    }
+  }
+  return undefined;
+}
+
+function zoneText(zone: unknown): string {
+  if (typeof zone !== 'string') return '?';
+  return ZONE_LABEL[zone as Zone] ?? zone;
+}
+
+function phaseText(phase: unknown): string {
+  if (typeof phase !== 'string') return '?';
+  return PHASE_LABEL[phase as keyof typeof PHASE_LABEL] ?? phase;
+}
+
+const OUTCOME_LABEL: Readonly<Record<string, string>> = {
+  defender: '防守方破坏',
+  attacker: '攻击方破坏',
+  both: '双方破坏',
+};
+
+/**
+ * 把一条事件翻译成一行日志。
+ *
+ * 返回 `null` 表示「不进日志」，目前两类：
+ *  - `rng:advance`：纯记账事件，对玩家无信息量；
+ *  - `attack:declared` / `trigger:*`：会被随后的 `combat:resolved` 合并成一行，
+ *    单独成行只会让一次攻击刷出 4 条记录。
+ */
+export function describeEvent(
+  e: GameEvent,
+  names: Readonly<Record<string, string>>,
+  state: GameState | null,
+): string | null {
+  const p = e.payload ?? {};
+  const str = (k: string): string | undefined =>
+    typeof p[k] === 'string' ? (p[k] as string) : undefined;
+  const num = (k: string): number | undefined =>
+    typeof p[k] === 'number' ? (p[k] as number) : undefined;
+
+  switch (e.type) {
+    case 'rng:advance':
+      return null;
+
+    case 'game:started':
+      return '对局开始';
+
+    case 'commander:revealed':
+      return `揭示指挥官：${cardName(str('defId'))}`;
+
+    case 'deck:shuffled':
+      return `${who(names, str('playerId'))} 洗牌`;
+
+    case 'card:moved': {
+      const from = str('from');
+      const to = str('to');
+      const name = cardName(defIdOf(state, str('uid')));
+      if (from === 'deck' && to === 'hand') return `${who(names, str('playerId'))} 抽到 ${name}`;
+      if (from === 'board' && to === 'graveyard') return `${name} 被破坏`;
+      if (to === 'cost') return `${name} 置入费用区`;
+      if (to === 'board') return `${name} 登场`;
+      return `${name}：${zoneText(from)} → ${zoneText(to)}`;
+    }
+
+    case 'mulligan:done':
+      return `${who(names, str('playerId'))} 完成换牌`;
+
+    case 'units:reset':
+      return '重置阶段：清除休眠';
+
+    case 'unit:asleep':
+      return `${cardName(defIdOf(state, str('uid')))} 进入休眠`;
+
+    case 'commander:damaged':
+      return `指挥官受到 ${num('amount') ?? 1} 点伤害`;
+
+    case 'card:revealed':
+      return `展示：${cardName(defIdOf(state, str('uid')))}`;
+
+    case 'combat:resolved':
+      return `裁决 ${num('atkPower')} vs ${num('defPower')} → ${OUTCOME_LABEL[str('outcome') ?? ''] ?? '?'}`;
+
+    case 'health:changed':
+      return `${who(names, str('playerId'))} 血量 → ${num('value') ?? '?'}`;
+
+    case 'maxCost:changed':
+      return `${who(names, str('playerId'))} 最高费用 → ${num('value') ?? '?'}`;
+
+    case 'phase:changed':
+      return `阶段：${phaseText(str('from'))} → ${phaseText(str('to'))}`;
+
+    case 'turn:changed':
+      return `—— 第 ${num('turn') ?? '?'} 回合 ——`;
+
+    case 'game:ended':
+      return `对局结束，胜者：${who(names, str('winner'))}`;
+
+    default:
+      return e.type;
+  }
+}
