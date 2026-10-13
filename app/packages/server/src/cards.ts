@@ -1,20 +1,21 @@
-import type { CardDef } from '@app/shared';
+import { KEYWORD_TAUNT, type CardDef } from '@app/shared';
 
 /**
  * 卡池（卡定义表）。
  *
- * 数据来源：Era 于 2026-10-13 提供的**首批卡牌样例** `ETCG=炎刃.docx`（5 张）。
- * 转录原则见 **ADR-0015**：
+ * ## 数据来源有两类，务必区分
  *
- * 1. **只转录，不发明** —— `cost` / `power` / `type` 照抄卡面，`text` 存原始卡面文本。
- * 2. **效果一律不执行** —— `A7` 关键词表（现仅 `taunt`）与触发时机均未给，
- *    故本表里的效果文字**都不参与任何结算**，只供 UI 展示与人工核对。
- * 3. **`damage` 不写** —— 样例卡面均未写伤害值，按 X-5 取 `DEFAULT_DAMAGE = 1`。
- *    若某张卡显式写了伤害值，在此处补 `damage: n`。
+ * 1. **Era 提供** —— 首批卡牌样例 `ETCG=炎刃.docx`（2026-10-13，5 张）。
+ *    转录原则见 **ADR-0015**：`cost` / `power` / `type` 照抄卡面，
+ *    `text` 存卡面原文；**效果一律不执行**（`A7` 关键词表与触发时机均未给）。
+ *    `damage` 不写 —— 样例卡面均未写伤害值，按 X-5 取 `DEFAULT_DAMAGE = 1`。
  *
- * ⚠️ **池尚不完整**：4 张非指挥官卡受「同名上限 3」约束，最多只够 12 张主卡组，
- * 不足 A6-5 要求的 30 张。卡组校验照旧严格（主卡组 30 + 指挥官 1），
- * 不会因为有样例卡就放宽。
+ * 2. **我方补齐的占位卡** —— 见文件末尾 `PLACEHOLDER_CARD_IDS`（8 张）。
+ *    Era 2026-10-13 授权生成，**只补数值、不写效果**，
+ *    目的是让「组出 30 张合法主卡组」成立以跑通联机链路；
+ *    正式卡表到位后**整批替换**。
+ *
+ * ⚠️ 卡组校验照旧严格（主卡组 30 + 指挥官 1），不因池有占位卡而放宽。
  */
 export const CARD_POOL: Record<string, CardDef> = {
   bladeLord: {
@@ -92,7 +93,70 @@ export const CARD_POOL: Record<string, CardDef> = {
     power: 0,
     text: '展示卡组顶7张卡，选择其中一个力量值在你除外区的炎刃数量以下的随从召唤。',
   },
+
+  /* ------------------------------------------------------------------ *
+   * ↓↓↓ 以下为**占位卡**（我方补齐，非 Era 输入） ↓↓↓
+   *
+   * 授权来源：Era 2026-10-13 —— 「其他卡组内容先由你生成补充完整」。
+   *
+   * 补齐的**唯一目的**：让「能组出 30 张合法主卡组」这件事成立，
+   * 从而把会话层 → 引擎的联机链路真正跑通（此前卡池只有 4 种非指挥官卡，
+   * 受同名上限 3 约束最多 12 张，永远开不了局）。
+   *
+   * ⚠️ 三条自律（与 ADR-0015 §2 一致）：
+   *  1. **只给数值** —— `cost` / `power` / `type`，一律**不写 `text`**，
+   *     因为效果属于玩法，Era 未给，写了就是发明。
+   *  2. **不引入新关键词** —— 仅用 A7 已定义的 `taunt`。
+   *  3. **不写 `damage`** —— 缺失时按 X-5 取默认 1。
+   *
+   * 数值规则（`power = cost + 1` 基线，带关键词者按「补偿」下调）：
+   *  `cost 0 → power 1`、`cost 1 → power 2`、`cost 2 → power 3`…
+   *  带 `taunt` 的随从力量下调 1（用控制力换场面）。
+   *
+   * 📌 Era 给出正式卡表后：直接整批替换这 8 张，无需改任何机制代码。
+   * ------------------------------------------------------------------ */
+
+  bladeRecruit: { defId: 'bladeRecruit', name: '炎刃新兵', type: 'minion', cost: 0, power: 1 },
+  bladeGuard: {
+    defId: 'bladeGuard',
+    name: '炎刃卫士',
+    type: 'minion',
+    cost: 2,
+    // 带 taunt → 按数值规则下调 1（3 → 2）
+    power: 2,
+    keywords: [KEYWORD_TAUNT],
+  },
+  bladeKnight: { defId: 'bladeKnight', name: '炎刃骑士', type: 'minion', cost: 3, power: 4 },
+  bladeCaptain: { defId: 'bladeCaptain', name: '炎刃队长', type: 'minion', cost: 4, power: 5 },
+  bladeVeteran: { defId: 'bladeVeteran', name: '炎刃老兵', type: 'minion', cost: 5, power: 6 },
+  bladeChampion: { defId: 'bladeChampion', name: '炎刃勇士', type: 'minion', cost: 6, power: 7 },
+  bladeTactics: { defId: 'bladeTactics', name: '炎刃战术', type: 'spell', cost: 2, power: 0 },
+  bladeBanner: {
+    defId: 'bladeBanner',
+    name: '炎刃战旗',
+    type: 'continuous',
+    cost: 3,
+    power: 0,
+  },
 };
+
+/**
+ * **占位卡清单** —— 由我方补齐，等待 Era 的正式卡表整体替换。
+ *
+ * 单独维护这张表，是为了让「哪些数据是临时的」这件事**可枚举、可核对**：
+ * 卡池会随 Era 的输入不断膨胀，若没有显式清单，占位数据很容易被淹没、
+ * 最后当成既有设计的一部分留在正式版本里。
+ */
+export const PLACEHOLDER_CARD_IDS: readonly string[] = [
+  'bladeRecruit',
+  'bladeGuard',
+  'bladeKnight',
+  'bladeCaptain',
+  'bladeVeteran',
+  'bladeChampion',
+  'bladeTactics',
+  'bladeBanner',
+];
 
 /**
  * 卡名类别判定 —— 卡面文本多处引用「卡名包含『炎刃』的卡」
