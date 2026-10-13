@@ -13,3 +13,32 @@
   --breakpoint-lg: 1440px;
   --breakpoint-xl: 1920px;
 }
+
+/*
+ * B5 移动端形态：竖屏、锁定竖屏、单指可完成全部操作。
+ *
+ * 锁定竖屏：Web 无法真正锁定屏幕方向（`screen.orientation.lock` 需全屏且支持不一），
+ * 故在横屏下把内容区收成竖屏比例并居中。B5-2 明确「否」—— 不弹横屏提示。
+ */
+@media (orientation: landscape) and (max-height: 600px) {
+  #root {
+    max-width: 60vh;
+    margin: 0 auto;
+  }
+}
+
+/* 刘海屏安全区 —— index.html 已设 viewport-fit=cover，这里补内边距。 */
+@supports (padding: env(safe-area-inset-top)) {
+  body {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+}
+
+/* 单指操作：禁用双击缩放造成的误触，并让点击反馈更跟手。 */
+html {
+  -webkit-text-size-adjust: 100%;
+  touch-action: manipulation;
+}

@@ -31,6 +31,7 @@ import {
   type PipelineOut,
   type ReplayRecord,
 } from './room/index.js';
+import type { Room } from './room/types.js';
 import { TurnTimer, hostScheduler } from './room/turn-timer.js';
 import { seedGameState } from './room/session.js';
 
@@ -228,8 +229,16 @@ function startGame(roomId: string): void {
   const seats = room.seats.flatMap((s) => (s ? [s.playerId] : []));
   if (seats.length < 2) return;
 
-  const seeded = seedGameState({ seats, seed: Date.now() >>> 0 });
+  // ① 先用真实座位 / 卡组建立「尚未开局」的初始状态，并作为快照下发给客户端。
+  //
+  //    ⚠️ 顺序不能反：`reduce` 是**增量**的，客户端必须先有起点状态，
+  //    才能消化随后到来的开局事件。若先广播事件后发快照，开局那一批
+  //    事件会被客户端丢弃（无从 reduce），表现为「开局日志凭空消失」。
+  const prev = rt.state;
+  rt.state = seedGameState({ seats, seed: Date.now() >>> 0 });
+  broadcastSnapshot(roomId);
 
+  // ② 开局仍走系统 Intent（ADR-0011）：洗牌 / 掷骰 / 发牌全部由引擎产出事件。
   const intent: Intent = {
     type: core.INTENTS.start,
     actor: 'system',
@@ -237,7 +246,7 @@ function startGame(roomId: string): void {
     seq: rt.serverSeq + 1,
     reason: 'all-ready',
   };
-  const result = submitSystemIntent(seeded, intent, {
+  const result = submitSystemIntent(rt.state, intent, {
     engine,
     replay: rt.replay,
     now: () => Date.now(),
@@ -245,8 +254,9 @@ function startGame(roomId: string): void {
     emit: (out) => emitGameOut(roomId, rt, out),
   });
 
-  // 引擎拒绝（如卡组构成不合法）→ 保持 lobby，不把对局推走。
+  // ③ 引擎拒绝（如卡组构成不合法）→ 回滚并保持在 lobby，允许重新准备后重试。
   if (result.out.kind !== 'accepted') {
+    rt.state = prev;
     const reason = result.out.kind === 'rejected' ? result.out.error.code : result.out.reason;
     fastify.log.warn({ roomId, reason }, '开局被引擎拒绝，房间保持 lobby');
     return;
@@ -257,7 +267,37 @@ function startGame(roomId: string): void {
   room.phase = 'playing';
   // 开局后即进入第一回合的充能阶段 —— 开始计时（ADR-0017）。
   rt.timer.arm();
+  // 再发一次快照：这次才带上计时截止时刻（首次快照在 arm 之前，只能给 deadline = 0）。
+  broadcastSnapshot(roomId);
   broadcastRoom(roomId);
+}
+
+/**
+ * 广播对局快照 —— 客户端据此建立 `GameState` 起点。
+ *
+ * 为什么必须有这一步：`reduce` 是**增量**的，客户端拿到一串事件却无从 reduce
+ * （没有起点状态）。开局 / 加入 / 重连三个入口都要下发。
+ */
+function broadcastSnapshot(roomId: string): void {
+  const rt = runtimes.get(roomId);
+  const room = roomManager.getRoom(roomId);
+  if (!rt || !room) return;
+  io.to(roomId).emit(SOCKET_EVENTS.gameSnapshot, snapshotOf(room, rt));
+}
+
+/**
+ * 构造快照 —— B2-5 要求「回合数与计时居中显示」，故把**本回合的计时截止时刻**
+ * 一并下发；未计时时为 `0`（客户端据此显示「—」）。
+ *
+ * ⚠️ 截止时刻来自服务端时钟（ADR-0017：会话层是唯一允许读时钟的地方），
+ * 客户端不自行推算，避免两端时钟不同步时各说各话。
+ */
+function snapshotOf(room: Room, rt: RoomRuntime): Record<string, unknown> {
+  const playerIds = room.seats.flatMap((s) => (s ? [s.playerId] : []));
+  return {
+    ...buildSnapshot(rt.state, rt.serverSeq, rt.guard, playerIds, core),
+    turnDeadline: rt.timer.deadlineAt,
+  };
 }
 
 /** 回放落盘目录（`app/replays`，已被 `.gitignore` 忽略）。 */
@@ -334,6 +374,9 @@ io.on('connection', (socket) => {
     if (!r.ok) return ack?.({ ok: false, error: r.error, message: r.message });
     socket.data.playerId = r.value.seat.playerId;
     void socket.join(r.value.room.id);
+    // 中途加入（有人离开后补位）时，对局可能已开始 —— 需要下发快照作为 reduce 起点。
+    const rt = runtimeOf(r.value.room.id);
+    const snapshot = rt.seeded ? snapshotOf(r.value.room, rt) : null;
     broadcastRoom(r.value.room.id);
     ack?.({
       ok: true,
@@ -341,6 +384,7 @@ io.on('connection', (socket) => {
       playerId: r.value.seat.playerId,
       token: r.value.seat.token,
       seat: r.value.seat.seat,
+      ...(snapshot ? { snapshot } : {}),
     });
   });
 
@@ -353,8 +397,7 @@ io.on('connection', (socket) => {
     socket.data.playerId = r.value.seat.playerId;
     void socket.join(r.value.room.id);
     const rt = runtimeOf(r.value.room.id);
-    const playerIds = r.value.room.seats.flatMap((s) => (s ? [s.playerId] : []));
-    const snapshot = buildSnapshot(rt.state, rt.serverSeq, rt.guard, playerIds, core);
+    const snapshot = snapshotOf(r.value.room, rt);
     broadcastRoom(r.value.room.id);
     ack?.({ ok: true, room: roomManager.publicView(r.value.room), snapshot });
   });

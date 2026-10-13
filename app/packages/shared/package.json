@@ -13,6 +13,10 @@
     "./constants": {
       "types": "./src/constants.ts",
       "default": "./src/constants.ts"
+    },
+    "./cards": {
+      "types": "./src/cards.ts",
+      "default": "./src/cards.ts"
     }
   },
   "scripts": {

@@ -41,9 +41,12 @@ test('建房 → 加入 → 双方可见 → 刷新自动重连', async ({ brows
   // 席位列表里应出现对方昵称（房主侧看到 Guest）
   await expect(host.getByTestId('seats')).toContainText('Guest');
 
-  // 刷新页面 → 凭据在 localStorage，应自动重连回原房间
+  // 刷新页面 → 凭据在 localStorage，应自动重连回原房间。
+  //
+  // ⚠️ 刷新后落在**对战桌**而非主界面（B1 补充 3：加入房间即进入对战桌），
+  // 因此这里不再断言主界面的「服务端已连接」，改为断言重连本身的事实：
+  // notice 提示 + 房间码仍在。
   await host.reload();
-  await expect(host.getByText('服务端已连接')).toBeVisible({ timeout: 15_000 });
   await expect(host.getByTestId('notice')).toContainText('已自动重连', { timeout: 10_000 });
   await expect(host.getByTestId('room-code')).toHaveText(code);
 

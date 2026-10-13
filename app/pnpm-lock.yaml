@@ -184,6 +184,9 @@ importers:
 
   packages/client:
     dependencies:
+      '@app/core':
+        specifier: workspace:*
+        version: link:../core
       '@app/shared':
         specifier: workspace:*
         version: link:../shared

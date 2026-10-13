@@ -48,3 +48,11 @@ export {
   RULE_ERRORS,
 } from './constants.js';
 export type { RuleErrorCode } from './constants.js';
+
+/**
+ * 卡池 —— 唯一定义在 `shared/src/cards.ts`（ADR-0020）。
+ *
+ * ⚠️ 客户端必须走**子路径** `@app/shared/cards`，不要从本文件（`.`）导入 ——
+ * 本文件会经 `schema.js` 拉入 zod，实测首屏 +24 kB gzip。
+ */
+export { CARD_POOL, PLACEHOLDER_CARD_IDS, isBladeCard } from './cards.js';
