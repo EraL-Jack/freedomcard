@@ -1,0 +1,29 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+dist-ssr/
+.vite/
+*.tsbuildinfo
+
+# 测试与覆盖率
+coverage/
+playwright-report/
+test-results/
+
+# 回放与运行时数据
+replays/
+
+# 工作区记忆与实测残留（非交付件）
+.workbuddy/
+
+# 日志与临时文件
+*.log
+.DS_Store
+Thumbs.db
+
+# 环境变量
+.env
+.env.local
+.env.*.local
