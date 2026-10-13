@@ -16,6 +16,17 @@ export const IntentSchema = z.object({
   playerId: PlayerIdSchema,
   seq: z.number().int().nonnegative(),
   reason: z.string().min(1).optional(),
+  /**
+   * Intent 参数 —— **必须显式声明，不能依赖 passthrough**。
+   *
+   * ⚠️ `z.object()` 默认 **strip**（静默丢弃）未声明的键。漏掉这一行，
+   * 所有带参数的 Intent —— 充能 `uids`、出牌 `uid`、攻击 `attackerUid`，
+   * 换牌 `returns` —— 都会在传输层被剥掉参数，引擎侧只看到「缺少参数」。
+   *
+   * 单测直接构造 Intent 对象、不走 `.parse()`，**因此测不出这个问题**；
+   * 它只在真实联机链路上暴露（2026-10-13 由 E2E 发现：点充能返回「uids 必须是 uid 数组」）。
+   */
+  payload: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const EchoSchema = z.object({

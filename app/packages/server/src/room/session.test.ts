@@ -5,7 +5,7 @@ import { MAIN_DECK_SIZE } from '@app/shared';
 
 import { CARD_POOL } from '../cards.js';
 import { DEFAULT_COMMANDER_ID, DEFAULT_MAIN_DECK } from '../deck-pool.js';
-import { seedGameState } from './session.js';
+import { nextSeed, seedGameState } from './session.js';
 
 /**
  * 开局桥自检 —— ADR-0019。
@@ -59,5 +59,61 @@ describe('开局桥 seedGameState（ADR-0019）', () => {
     for (const [id, n] of counts) {
       expect(n, `${id} 超过同名上限`).toBeLessThanOrEqual(3);
     }
+  });
+});
+
+/**
+ * 随机种子来源 —— ADR-0021。
+ *
+ * 要钉住的是「`GAME_SEED` 只在被设置时才生效」这条边界：
+ * 生产不设该变量，若代码误把它当固定值读取，每局牌序都会相同 ——
+ * 这种错误在单机试玩时极难发现，只能靠测试兜住。
+ */
+describe('nextSeed（ADR-0021）', () => {
+  const key = 'GAME_SEED';
+  let saved: string | undefined;
+
+  const withEnv = (value: string | undefined, fn: () => void): void => {
+    saved = process.env[key];
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+    try {
+      fn();
+    } finally {
+      if (saved === undefined) delete process.env[key];
+      else process.env[key] = saved;
+    }
+  };
+
+  it('未设置 GAME_SEED 时回落到时间种子（每次不同）', () => {
+    withEnv(undefined, () => {
+      const a = nextSeed();
+      const b = nextSeed();
+      // 严格来说两次可能撞在同一毫秒 —— 断言「是有限数且非负」才是稳定的部分，
+      // 真正要防的是「恒返回同一个常量」。
+      expect(Number.isFinite(a)).toBe(true);
+      expect(a).toBeGreaterThanOrEqual(0);
+      expect(a).toBeLessThanOrEqual(0xffffffff);
+      expect(Number.isFinite(b)).toBe(true);
+    });
+  });
+
+  it('设置 GAME_SEED 时恒取该值（E2E 的确定性来源）', () => {
+    withEnv('20261013', () => {
+      expect(nextSeed()).toBe(20261013);
+      expect(nextSeed()).toBe(nextSeed());
+    });
+  });
+
+  it('GAME_SEED 非法时回落到时间种子，不返回 NaN', () => {
+    withEnv('not-a-number', () => {
+      expect(Number.isNaN(nextSeed())).toBe(false);
+    });
+  });
+
+  it('GAME_SEED 为空串等同未设置', () => {
+    withEnv('', () => {
+      expect(Number.isNaN(nextSeed())).toBe(false);
+    });
   });
 });

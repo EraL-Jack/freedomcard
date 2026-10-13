@@ -19,11 +19,16 @@ export const ZONE_LABEL: Readonly<Record<Zone, string>> = {
   exile: '除外区',
 };
 
-/** 阶段名 —— 按 `docs/06` A4-1 六阶段。 */
+/**
+ * 阶段名 —— 按 `docs/06` A4-1 六阶段。
+ *
+ * ⚠️ 「抽牌」：Era 于 2026-10-13 确认 A4-1 原文写的「**抽排**阶段」是**笔误**，
+ * 正确用词为「抽牌阶段」。代码与文档均已统一更正。
+ */
 export const PHASE_LABEL: Readonly<Record<Phase, string>> = {
   charge: '充能',
   reset: '重置',
-  draw: '抽排',
+  draw: '抽牌',
   main: '主要',
   battle: '战斗',
   end: '结束',

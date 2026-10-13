@@ -33,7 +33,7 @@ import {
 } from './room/index.js';
 import type { Room } from './room/types.js';
 import { TurnTimer, hostScheduler } from './room/turn-timer.js';
-import { seedGameState } from './room/session.js';
+import { nextSeed, seedGameState } from './room/session.js';
 
 /** 与 packages/server/package.json 的 version 保持一致。 */
 const VERSION = '0.1.0';
@@ -111,7 +111,7 @@ function runtimeOf(roomId: string): RoomRuntime {
     // 空座位的初始状态：真正开局（洗牌 / 发牌 / 掷骰）由 `start_game` Intent 建立。
     // 卡组此刻尚未提交，故 `decks` 为空 —— 这不是占位偷懒，而是「卡组在开局时才进入状态」。
     const state = core.createInitialState({
-      seed: Date.now() >>> 0,
+      seed: nextSeed(),
       seats: [],
       decks: {},
       commanders: {},
@@ -235,7 +235,7 @@ function startGame(roomId: string): void {
   //    才能消化随后到来的开局事件。若先广播事件后发快照，开局那一批
   //    事件会被客户端丢弃（无从 reduce），表现为「开局日志凭空消失」。
   const prev = rt.state;
-  rt.state = seedGameState({ seats, seed: Date.now() >>> 0 });
+  rt.state = seedGameState({ seats, seed: nextSeed() });
   broadcastSnapshot(roomId);
 
   // ② 开局仍走系统 Intent（ADR-0011）：洗牌 / 掷骰 / 发牌全部由引擎产出事件。
