@@ -1023,3 +1023,22 @@
   2. `card:moved` 一律追加到末尾，配合「`deck[0]` 是顶」的约定，追加即「置底」—— 起手换牌的「返回卡组底」依赖此语义
 - 回归验证：typecheck 0 / lint 0 / 单测 **73 passed**（core 50 + server 23）
 - 破坏性：**是** —— `PlayerState` 增加 `commanderDefId`，`createInitialState` 增加必填 `commanders`；`reduce` 由空实现变为按事件推进
+
+---
+
+## D-102 · 规则引擎（三）战斗结算与触发时机（2026-10-13 19:30）
+
+- 交付件：`app/packages/core/src/rules/attack.ts`（占位 → 实现）、`core/src/reducer.ts`、`core/src/ops.ts`、`shared/src/constants.ts`、`shared/src/index.ts`、`core/src/rules/rules.test.ts`
+- 触发：Era 给出战斗裁决输入 —— 「只对比力量值，攻击方力量值大于被攻击方，被攻击方破坏；小于的话攻击方自己破坏；等于的话双方破坏。此外，在攻击时和被攻击时都可能有触发的效果」
+- 决策：**ADR-0013**（`logs/DECISIONS.md`），动工前写就
+- 内容：
+  - `attack:declare` 由 `NOT_IMPLEMENTED` 变为完整实现：三分支裁决、破坏入弃牌区、攻击后休眠（A9-2）、先攻首回合禁攻（A10-3）、嘲讽约束（A7）
+  - 事件序列固定：声明 → `trigger:attack` → `trigger:defend` → **快照力量值** → `combat:resolved` → 破坏 → 休眠
+  - `resolveCombat(atk, def)` 导出为纯函数，便于后续效果系统复用
+  - `ops.ts` 新增 `powerOf`（查不到定义返回 **null**，不默认 0）与 `hasKeyword`
+  - `reducer.ts` 新增 4 个纯记录事件的显式分支
+  - 新增常量 `KEYWORD_TAUNT` 与拒绝码 `UNIT_ASLEEP` / `CANNOT_ATTACK`
+- **刻意未做**（不发明）：攻击**不掉血**；指挥官被破坏**不判负**；触发效果**不结算**（A7 效果清单未给）。三条均写入 `docs/01` §1.3 #8 / #9 与 `docs/09`
+- 文档同步：`docs/06` X-3 填为「战斗裁决与触发效果」+ 补充第 4 条；`docs/01` §1.1 新增战斗裁决段、§1.3 增 #8 / #9；`docs/05` A9 状态更新；`docs/09` 新增假设 H8–H12，「随从生命值」「互伤规则」两条标为**已消解**
+- 回归验证：typecheck **0** / lint **0** / 单测 **89 passed**（core 66 + server 23）；新增 16 条攻击用例，含三分支、休眠、禁攻、嘲讽、打指挥官不判负、事件顺序、卡池缺失拒绝
+- 破坏性：**否**（新增事件类型与常量，既有行为不变）；对接口是**扩展** —— `attack:declare` 由拒绝变为接受
