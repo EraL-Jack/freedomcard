@@ -11,6 +11,7 @@ import { RULE_ERRORS, type GameEvent, type GameState, type Intent, type Result, 
 
 import { reduce } from '../reducer.js';
 import { activePlayer } from '../state.js';
+import { drawForPhase } from './draw.js';
 import { advanceOnce, PHASE_ORDER } from './phase.js';
 
 /** 安全阀：最多推进「阶段数 + 2」次，防止任何意外的不变量破坏导致死循环。 */
@@ -36,6 +37,16 @@ export const turnEndRule = (
   const startTurn = state.turn;
 
   for (let i = 0; i < MAX_STEPS; i++) {
+    // 抽牌手动化（Era 2026-10-18）的**超时兜底**：玩家链路在「未抽牌的抽牌阶段」
+    // 禁止推进（`phase.ts`），但系统链路不能卡死 —— 未抽则先自动补抽再走。
+    if (s.phase === 'draw' && !s.drawnThisPhase) {
+      const active = activePlayer(s);
+      if (active) {
+        const drawn = drawForPhase(s, active, ctx);
+        events.push(...drawn);
+        s = drawn.reduce(reduce, s);
+      }
+    }
     const step = advanceOnce(s, ctx);
     if (step.length === 0) break;
     events.push(...step);

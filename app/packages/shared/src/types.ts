@@ -127,6 +127,12 @@ export interface GameState {
   /** 当前行动方在 `seats` 中的下标。 */
   activeSeat: number;
   phase: Phase;
+  /**
+   * 本抽牌阶段是否已完成抽牌 —— Era 2026-10-18：抽牌改为**玩家点击牌组**触发，
+   * 不再是进入抽牌阶段的自动效果。仅 `phase === 'draw'` 时有意义；
+   * 进入抽牌阶段时由 reducer 重置为 `false`。
+   */
+  drawnThisPhase: boolean;
   /** 回合数，从 1 开始。 */
   turn: number;
   /** 是否已开局（完成洗牌、发牌、掷骰）。 */

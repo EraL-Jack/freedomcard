@@ -60,3 +60,22 @@ input:-webkit-autofill {
   -webkit-text-fill-color: #e2e8f0;
   transition: background-color 9999s ease-out;
 }
+
+/*
+ * 事件呈现层（横幅/飘字）入场动画 —— Era 2026-10-18：过阶段与对战过程要有可见反馈。
+ * 只播入场；退场由播放队列切换到下一条事件时直接替换（每条事件横幅停留时长见 useRoom FX_MS）。
+ */
+@keyframes fx-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.85) translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.fx-pop {
+  animation: fx-pop 0.22s ease-out;
+}

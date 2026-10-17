@@ -2,6 +2,8 @@ import { expect, test, type Page } from '@playwright/test';
 
 import {
   activePage,
+  advancePhase,
+  chargeMinions,
   pick,
   phaseText,
   readHand,
@@ -35,34 +37,15 @@ test('推进阶段 → 充能 → 出牌 → 结束回合', async ({ browser }) 
   // ① 开局即处于第一回合的充能阶段（ADR-0016：开局不经过「进入」动作）
   await expect.poll(() => phaseText(p)).toContain('阶段 充能');
 
-  // ② 充能 —— 留一张手牌准备出牌，其余随从进费用区（X-2：只有随从可充能）
-  const hand0 = await readHand(p);
-  const minions = hand0.filter((c) => c.kind === '随从');
-  expect(minions.length, '起手应有可充能的随从').toBeGreaterThan(0);
+  // ② 充能 —— 逐张充能随从（D-112 选中排他：多张充能 = 多次单张操作），
+  //    留一张随从准备出牌（X-2：只有随从可充能）
+  const chargeCount = await chargeMinions(p);
+  expect(await zoneCount(p, 'cost', 1)).toBe(chargeCount);
 
-  // 目标卡 = 支付得起的最便宜的一张：按费用升序，看「充能其余随从后够不够付」。
-  // 费用为 0 的卡恒可出，故这个查找必然命中 —— 用例不依赖具体牌序。
-  const target = [...hand0]
-    .sort((a, b) => a.cost - b.cost)
-    .find((c) => c.cost <= minions.filter((m) => m.index !== c.index).length);
-  expect(target).toBeDefined();
-  const t = target!;
-
-  const chargeable = minions.filter((m) => m.index !== t.index);
-  // 至少充 1 张：若目标费用为 0，只按费用算会充 0 张，本用例就没测到充能了。
-  const chargeCount = Math.min(chargeable.length, Math.max(1, t.cost));
-  await pick(p, chargeable.slice(0, chargeCount).map((m) => m.index));
-  await p.getByTestId('charge').click();
-
-  await expect.poll(() => zoneCount(p, 'cost', 1)).toBe(chargeCount);
-
-  // ③ 推进阶段 —— 六阶段不可跳过（A4-2），故一步步走：充能 → 重置 → 抽牌 → 主要
-  await p.getByTestId('advance').click();
-  await expect.poll(() => phaseText(p)).toContain('阶段 重置');
-  await p.getByTestId('advance').click();
-  await expect.poll(() => phaseText(p)).toContain('阶段 抽牌');
-  await p.getByTestId('advance').click();
-  await expect.poll(() => phaseText(p)).toContain('阶段 主要');
+  // ③ 推进阶段 —— 六阶段不可跳过（A4-2）；重置瞬穿 + 抽牌手动（Era 2026-10-18）：
+  //    充能 →（重置瞬穿）→ 抽牌（点卡组）→ 主要
+  await advancePhase(p, '抽牌');
+  await advancePhase(p, '主要');
 
   // ④ 出牌 —— 抽牌阶段抽过牌，手牌序号已变，必须重读
   const hand1 = await readHand(p);
@@ -92,8 +75,9 @@ test('推进阶段 → 充能 → 出牌 → 结束回合', async ({ browser }) 
   }
 
   // ⑤ 结束回合 —— 回合数 +1，且行动权移交对手
+  //    （事件播放队列节奏让回合切换晚几秒到达，poll 超时放宽到 15s）
   const turn0 = await turnNo(p);
   await p.getByTestId('end-turn').click();
-  await expect.poll(() => turnNo(p)).toBe(turn0 + 1);
+  await expect.poll(() => turnNo(p), { timeout: 15_000 }).toBe(turn0 + 1);
   await expect(p.getByText('对手回合')).toBeVisible({ timeout: 10_000 });
 });

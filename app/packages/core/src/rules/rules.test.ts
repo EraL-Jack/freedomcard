@@ -306,14 +306,12 @@ describe('起手换牌 mulliganRule', () => {
 /* ------------------------------ 阶段流转 ------------------------------ */
 
 describe('阶段流转 phaseRule', () => {
-  it('六阶段顺序固定，逐档推进不跳步', () => {
-    let s = craft({ phase: 'charge', turn: 2 });
-    const seen: Phase[] = [s.phase];
-    for (let i = 0; i < 5; i++) {
-      s = run(s, intent('p1', INTENTS.phaseAdvance));
-      seen.push(s.phase);
-    }
-    expect(seen).toEqual(['charge', 'reset', 'draw', 'main', 'battle', 'end']);
+  it('六阶段顺序固定，逐档推进不跳步（重置阶段事件完整但瞬穿自动推进，Era 2026-10-18）', () => {
+    const s0 = craft({ phase: 'charge', turn: 2 });
+    // 从充能推进 4 次：抽牌（经重置瞬穿）→ 主要 → 战斗 → 结束
+    const r = advance(s0, 4);
+    const chain = r.events.filter((e) => e.type === 'phase:changed').map((e) => e.payload?.['to']);
+    expect(chain).toEqual(['reset', 'draw', 'main', 'battle', 'end']);
   });
 
   it('进入重置阶段清除己方随从休眠', () => {
@@ -326,17 +324,43 @@ describe('阶段流转 phaseRule', () => {
     expect(after.players['p1']!.zones.board.every((x) => x.sleeping !== true)).toBe(true);
   });
 
-  it('抽牌阶段抽 2 张；第一回合先攻方只抽 1 张（A10-3）', () => {
-    const t2 = run(run(craft({ phase: 'charge', turn: 2 }), intent('p1', INTENTS.phaseAdvance)), intent('p1', INTENTS.phaseAdvance));
-    expect(t2.players['p1']!.zones.hand.length).toBe(2);
+  it('抽牌不再自动：进入抽牌阶段手牌不变，点击卡组才抽；未抽禁止推进（Era 2026-10-18）', () => {
+    // 充能 →（重置瞬穿）→ 抽牌：一次推进即达抽牌阶段，且**不自动抽**
+    let s = run(craft({ phase: 'charge', turn: 2 }), intent('p1', INTENTS.phaseAdvance));
+    expect(s.phase).toBe('draw');
+    expect(s.drawnThisPhase).toBe(false);
+    expect(s.players['p1']!.zones.hand.length).toBe(0);
 
-    const t1 = run(run(craft({ phase: 'charge', turn: 1 }), intent('p1', INTENTS.phaseAdvance)), intent('p1', INTENTS.phaseAdvance));
-    expect(t1.players['p1']!.zones.hand.length).toBe(1);
+    // 未抽牌时推进被拒（提示先抽牌）
+    const blocked = applyIntent(s, intent('p1', INTENTS.phaseAdvance), CTX);
+    expect(blocked.ok).toBe(false);
+    if (!blocked.ok) expect(blocked.error.message).toContain('抽牌');
+
+    // 点击卡组 → 抽 2 张（A9 补充 1）
+    s = run(s, intent('p1', INTENTS.draw));
+    expect(s.players['p1']!.zones.hand.length).toBe(2);
+    expect(s.drawnThisPhase).toBe(true);
+
+    // 重复抽牌被拒
+    const again = applyIntent(s, intent('p1', INTENTS.draw), CTX);
+    expect(again.ok).toBe(false);
+    if (!again.ok) expect(again.error.code).toBe(RULE_ERRORS.DRAW_DONE);
+
+    // 抽过之后可以推进
+    s = run(s, intent('p1', INTENTS.phaseAdvance));
+    expect(s.phase).toBe('main');
+  });
+
+  it('第一回合先攻方点击卡组只抽 1 张（A10-3）', () => {
+    let s = run(craft({ phase: 'charge', turn: 1 }), intent('p1', INTENTS.phaseAdvance));
+    s = run(s, intent('p1', INTENTS.draw));
+    expect(s.players['p1']!.zones.hand.length).toBe(1);
   });
 
   it('结束阶段之后进入下一回合：换行动方、回合 +1、最高费用按曲线增长', () => {
     let s = craft({ phase: 'charge', turn: 1, activeSeat: 0 });
-    for (let i = 0; i < 6; i++) s = run(s, intent(s.seats[s.activeSeat]!, INTENTS.phaseAdvance));
+    // 重置瞬穿后，一回合只需 5 次推进：抽牌→主要→战斗→结束→下一回合充能
+    s = advance(s, 5).state;
     expect(s.turn).toBe(2);
     expect(s.activeSeat).toBe(1);
     expect(s.phase).toBe('charge');
@@ -752,6 +776,13 @@ function advance(state: GameState, times: number, ctx: RuleContext = CTX) {
   let s = state;
   const events: GameEvent[] = [];
   for (let i = 0; i < times; i++) {
+    // 抽牌手动化（Era 2026-10-18）：未抽牌的抽牌阶段禁止推进，先补抽牌动作。
+    if (s.phase === 'draw' && !s.drawnThisPhase) {
+      const d = applyIntent(s, intent(s.seats[s.activeSeat]!, INTENTS.draw), ctx);
+      if (!d.ok) throw new Error(`意外拒绝（抽牌）: ${d.error.code} ${d.error.message}`);
+      events.push(...d.value);
+      s = d.value.reduce(reduce, s);
+    }
     const r = applyIntent(s, intent(s.seats[s.activeSeat]!, INTENTS.phaseAdvance), ctx);
     if (!r.ok) throw new Error(`意外拒绝: ${r.error.code} ${r.error.message}`);
     events.push(...r.value);
@@ -876,6 +907,10 @@ describe('确定性', () => {
       const active = s.seats[0]!;
       s = run(s, intent(active, INTENTS.mulligan, { returns: [] }), { now: 2, cards: CARDS });
       for (let i = 0; i < 6; i++) {
+        // 手动抽牌（Era 2026-10-18）：抽牌阶段先抽再推进
+        if (s.phase === 'draw' && !s.drawnThisPhase) {
+          s = run(s, intent(s.seats[s.activeSeat]!, INTENTS.draw), { now: 3 + i, cards: CARDS });
+        }
         s = run(s, intent(s.seats[s.activeSeat]!, INTENTS.phaseAdvance), { now: 3 + i, cards: CARDS });
       }
       return s;

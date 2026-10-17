@@ -127,6 +127,8 @@ export const RULE_ERRORS = {
   MUST_ATTACK_TAUNT: 'MUST_ATTACK_TAUNT',
   GAME_OVER: 'GAME_OVER',
   MULLIGAN_DONE: 'MULLIGAN_DONE',
+  /** 本抽牌阶段已抽过牌（抽牌为手动点击卡组，Era 2026-10-18）。 */
+  DRAW_DONE: 'DRAW_DONE',
   /** 卡组构成不合法（主卡组张数、同名上限、指挥官缺失或类型错）。 */
   INVALID_DECK: 'INVALID_DECK',
 } as const;

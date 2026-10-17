@@ -128,8 +128,15 @@ export function reduce(state: GameState, event: GameEvent): GameState {
         p.maxCost = n(event, 'value');
       });
 
-    case 'phase:changed':
-      return { ...state, phase: s(event, 'to') as GameState['phase'] };
+    case 'phase:changed': {
+      const to = s(event, 'to') as GameState['phase'];
+      // 进入抽牌阶段 → 重置「已抽」标记（Era 2026-10-18：抽牌改为手动点击卡组）。
+      return { ...state, phase: to, ...(to === 'draw' ? { drawnThisPhase: false } : {}) };
+    }
+
+    /** 手动抽牌完成（`draw.ts`）—— 标记本阶段已抽，允许推进到下一阶段。 */
+    case 'draw:completed':
+      return { ...state, drawnThisPhase: true };
 
     case 'turn:changed':
       return { ...state, turn: n(event, 'turn'), activeSeat: n(event, 'activeSeat') };

@@ -33,3 +33,11 @@ export const PHASE_LABEL: Readonly<Record<Phase, string>> = {
   battle: '战斗',
   end: '结束',
 };
+
+/**
+ * 关键词注释 —— 卡牌详情浮层用（Era 2026-10-18：卡牌携带效果必须可查看）。
+ * 文案照抄 `docs/06` A7 表的已填行；新增关键词 = A7 表 + 本表各加一行。
+ */
+export const KEYWORD_NOTE: Readonly<Record<string, string>> = {
+  taunt: '嘲讽：对手随从攻击时必须优先选择此目标',
+};

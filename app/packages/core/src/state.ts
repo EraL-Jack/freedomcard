@@ -81,6 +81,7 @@ export function createInitialState(opts: InitialStateOptions): GameState {
     seats: [...opts.seats],
     activeSeat: 0,
     phase: 'charge',
+    drawnThisPhase: false,
     turn: 1,
     started: false,
     winner: null,

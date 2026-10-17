@@ -2,12 +2,14 @@
  * 阶段流转 —— `docs/06` A4-1 / A4-2 / A9 补充 1 / A10-3。
  *
  * 六阶段顺序固定、均不可跳过。这里把「进入某阶段的自动效果」也放在本文件：
- * 重置阶段清休眠、抽牌阶段抽牌 —— 它们是阶段定义的一部分，不是独立机制。
+ * 重置阶段清休眠 —— 它是阶段定义的一部分，不是独立机制。
+ *
+ * ⚠️ **抽牌不再是自动效果**（Era 2026-10-18）：进入抽牌阶段只重置
+ * `drawnThisPhase`，抽牌由玩家点击卡组触发（`draw.ts`）；未抽牌时
+ * 玩家不得推进到下一阶段。
  */
 
 import {
-  DRAW_PER_TURN,
-  FIRST_TURN_DRAW,
   MAX_COST_CURVE,
   RULE_ERRORS,
   type GameEvent,
@@ -20,7 +22,8 @@ import {
   type RuleContext,
 } from '@app/shared';
 
-import { drawCards, ev, maxCostChanged, phaseChanged, turnChanged } from '../ops.js';
+import { ev, maxCostChanged, phaseChanged, turnChanged } from '../ops.js';
+import { reduce } from '../reducer.js';
 import { activePlayer } from '../state.js';
 import { growCommander } from './commander-growth.js';
 
@@ -57,21 +60,17 @@ export function advanceOnce(state: GameState, ctx: RuleContext): GameEvent[] {
       if (to === 'reset') {
         events.push(ev(at, 'units:reset', { playerId: active }));
       }
-      // A9 补充 1：抽牌阶段抽 2 张；A10-3：先攻方第一回合仅抽 1 张
-      if (to === 'draw') {
-        const count = state.turn === 1 && state.activeSeat === 0 ? FIRST_TURN_DRAW : DRAW_PER_TURN;
-        const p = state.players[active];
-        if (p) {
-          const drawn = drawCards(
-            at,
-            active,
-            { deck: p.zones.deck, graveyard: p.zones.graveyard },
-            count,
-            state.rngCursor,
-          );
-          events.push(...drawn.events);
-        }
-      }
+      // 抽牌阶段**不自动抽**（Era 2026-10-18）：抽牌 = 玩家点击卡组（`draw.ts`）。
+      // reducer 在进入 draw 阶段时把 `drawnThisPhase` 重置为 false。
+    }
+
+    // Era 2026-10-18：**重置阶段自动运行、自动推进，不需要手动点**。
+    // 实现为状态机瞬穿：进入 reset 后立刻继续推进到下一阶段，
+    // 事件流完整保留（phase:changed ×2 + units:reset，A4-2 不破），
+    // 「停顿一下 + 动画展示」由客户端的事件播放节奏呈现，不进状态机。
+    if (to === 'reset') {
+      const s2 = events.reduce(reduce, state);
+      events.push(...advanceOnce(s2, ctx));
     }
     return events;
   }
@@ -106,6 +105,15 @@ export const phaseRule = (
   }
   if (intent.actor === 'player' && activePlayer(state) !== intent.playerId) {
     return { ok: false, error: { code: RULE_ERRORS.NOT_YOUR_TURN, message: '不是你的回合' } };
+  }
+  // Era 2026-10-18：抽牌必须点击卡组完成 —— 未抽牌的抽牌阶段**禁止推进**
+  // （阶段不可跳过的含义随手动抽牌延伸到「阶段动作不可跳过」）。
+  // 系统 Intent（超时）不受此限：由 `turn-end.ts` 兜底自动抽牌。
+  if (intent.actor === 'player' && state.phase === 'draw' && !state.drawnThisPhase) {
+    return {
+      ok: false,
+      error: { code: RULE_ERRORS.WRONG_PHASE, message: '请先点击卡组抽牌' },
+    };
   }
   return { ok: true, value: advanceOnce(state, ctx) };
 };

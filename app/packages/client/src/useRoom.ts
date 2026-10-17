@@ -4,6 +4,7 @@ import * as core from '@app/core';
 import { SOCKET_EVENTS, type GameEvent, type GameState, type Intent, type PlayerId } from '@app/shared';
 
 import { describeEvent } from './log.js';
+import { PHASE_LABEL } from './labels.js';
 import { socket } from './socket.js';
 import type { Ack, RoomView } from './types.js';
 
@@ -18,6 +19,40 @@ import type { Ack, RoomView } from './types.js';
  */
 
 export type LinkState = 'connecting' | 'online' | 'offline';
+
+/**
+ * 事件播放节奏（Era 2026-10-18 三条指令的公共地基）：
+ *  - 「过阶段反馈很差」→ 阶段/回合切换要有**横幅**与停顿；
+ *  - 「重置阶段自动推进，但动画要展示、停顿一下」→ 状态机瞬穿 + 客户端按节奏播放；
+ *  - 「对战详情过程在卡牌动画中体现」→ 裁决/受伤/破坏各有独立的呈现节拍。
+ *
+ * 服务端事件不一次性 reduce 完，而是进队列**逐条播放**：每条事件先应用到状态，
+ * 再按其类型停顿对应时长（横幅停留时间），让眼睛跟得上发生了什么。
+ */
+export interface Fx {
+  id: number;
+  kind: 'phase' | 'turn' | 'reset' | 'draw' | 'combat' | 'damage' | 'destroy' | 'ended';
+  /** 主文案（如「战斗阶段」「裁决 2 ⚔ 1」）。 */
+  text: string;
+  /** 副文案（如「防守方破坏」「轮到你行动」）。 */
+  sub?: string;
+}
+
+/** 各事件类型的播放停顿（毫秒）—— 0 = 不打断节奏。 */
+const FX_MS: Readonly<Record<string, number>> = {
+  'phase:changed': 750,
+  'turn:changed': 1100,
+  'units:reset': 550,
+  'draw:completed': 550,
+  'combat:resolved': 900,
+  'commander:damaged': 800,
+  'game:ended': 1600,
+};
+
+/** 破坏（移入弃牌区）单独停一拍。 */
+const DESTROY_MS = 450;
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 export interface LogEntry {
   id: number;
@@ -54,6 +89,8 @@ export interface RoomSession {
   /** 本回合的计时截止时刻（服务端时钟）；未计时为 `null`。 */
   turnDeadline: number | null;
   log: LogEntry[];
+  /** 正在播放的呈现事件（横幅/飘字）；无则 `null`。 */
+  fx: Fx | null;
   notice: string;
   create(nickname: string, capacity: number): void;
   join(code: string, nickname: string): void;
@@ -68,6 +105,8 @@ export interface RoomSession {
   endTurn(): void;
   charge(uids: string[]): void;
   play(uid: string): void;
+  /** 手动抽牌（Era 2026-10-18）：抽牌阶段点击卡组触发。 */
+  draw(): void;
   attack(attackerUid: string, targetUid: string): void;
   mulligan(returns: string[]): void;
   dismiss(): void;
@@ -112,6 +151,72 @@ export function useRoom(): RoomSession {
   const meRef = useRef<PlayerId | null>(null);
   const namesRef = useRef<Record<string, string>>({});
   const stateRef = useRef<GameState | null>(null);
+  // 事件播放队列（见 FX_MS 注释）：服务端事件逐条播放而非瞬时 reduce 完。
+  const queueRef = useRef<GameEvent[]>([]);
+  const pumpingRef = useRef(false);
+  const fxIdRef = useRef(0);
+  const [fx, setFx] = useState<Fx | null>(null);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  /** 从单条事件提取呈现信息（横幅/飘字文案）。 */
+  const fxOf = (e: GameEvent, next: GameState): { fx: Omit<Fx, 'id'>; ms: number } | null => {
+    const meNow = meRef.current;
+    switch (e.type) {
+      case 'phase:changed': {
+        const to = e.payload?.['to'] as keyof typeof PHASE_LABEL;
+        return { fx: { kind: 'phase', text: `${PHASE_LABEL[to] ?? to}阶段` }, ms: FX_MS['phase:changed']! };
+      }
+      case 'turn:changed': {
+        const turn = Number(e.payload?.['turn'] ?? 0);
+        const mine = next.seats[next.activeSeat] === meNow;
+        return {
+          fx: { kind: 'turn', text: `第 ${turn} 回合`, sub: mine ? '轮到你行动' : '对手行动中' },
+          ms: FX_MS['turn:changed']!,
+        };
+      }
+      case 'units:reset':
+        return { fx: { kind: 'reset', text: '随从已重置', sub: '休眠解除' }, ms: FX_MS['units:reset']! };
+      case 'draw:completed':
+        return { fx: { kind: 'draw', text: '抽牌完成' }, ms: FX_MS['draw:completed']! };
+      case 'combat:resolved': {
+        const atk = Number(e.payload?.['atkPower'] ?? 0);
+        const def = Number(e.payload?.['defPower'] ?? 0);
+        const outcome = String(e.payload?.['outcome'] ?? '');
+        const sub =
+          outcome === 'defender' ? '防守方破坏' : outcome === 'attacker' ? '攻击方破坏' : '同归于尽';
+        return { fx: { kind: 'combat', text: `裁决 ${atk} ⚔ ${def}`, sub }, ms: FX_MS['combat:resolved']! };
+      }
+      case 'commander:damaged': {
+        const amount = Number(e.payload?.['amount'] ?? 0);
+        const mine = e.payload?.['playerId'] === meNow;
+        return {
+          fx: { kind: 'damage', text: `-${amount}`, sub: mine ? '我方指挥官受伤' : '对方指挥官受伤' },
+          ms: FX_MS['commander:damaged']!,
+        };
+      }
+      case 'card:moved':
+        if (e.payload?.['to'] === 'graveyard') {
+          return { fx: { kind: 'destroy', text: '破坏' }, ms: DESTROY_MS };
+        }
+        return null;
+      case 'game:ended': {
+        const winner = e.payload?.['winner'];
+        return {
+          fx: { kind: 'ended', text: winner === meNow ? '胜利' : '败北', sub: '对局结束' },
+          ms: FX_MS['game:ended']!,
+        };
+      }
+      default:
+        return null;
+    }
+  };
+
 
   /** playerId → 昵称。服务端视图里带了昵称，不必本地再维护一份。 */
   const names = useMemo(() => {
@@ -130,6 +235,42 @@ export function useRoom(): RoomSession {
     setLog((prev) => [...prev, { id: prev.length + 1, at, text }].slice(-200));
   }, []);
 
+  /** 逐条播放队列里的事件：先应用到状态，再按节奏停顿（横幅停留时间）。 */
+  const pump = useCallback(async (): Promise<void> => {
+    if (pumpingRef.current) return;
+    pumpingRef.current = true;
+    try {
+      while (queueRef.current.length > 0) {
+        const e = queueRef.current.shift()!;
+        const prev = stateRef.current;
+        if (!prev) continue; // 还没有起点状态 —— 等服务端补发快照
+        const next = core.reduce(prev, e);
+        stateRef.current = next;
+        if (mountedRef.current) setState(next);
+        // 用**reduce 后**的状态翻译：卡刚移动完，才能按 uid 反查到卡名。
+        const text = describeEvent(e, namesRef.current, next);
+        if (text) appendLog(text, e.at);
+
+        const hit = fxOf(e, next);
+        if (hit) {
+          fxIdRef.current += 1;
+          if (mountedRef.current) setFx({ ...hit.fx, id: fxIdRef.current });
+          await sleep(hit.ms);
+        }
+      }
+    } finally {
+      if (mountedRef.current) setFx(null);
+      pumpingRef.current = false;
+    }
+  }, [appendLog]);
+
+  // 提示条自动消退（Era 2026-10-18：提示要醒目但不该常驻）—— 4s 后自动消失。
+  useEffect(() => {
+    if (!notice) return;
+    const id = setTimeout(() => setNotice(''), 4000);
+    return () => clearTimeout(id);
+  }, [notice]);
+
   useEffect(() => {
     const onConnect = (): void => setLink('online');
     const onDisconnect = (): void => setLink('offline');
@@ -137,6 +278,9 @@ export function useRoom(): RoomSession {
     const onRoomState = (view: RoomView): void => setRoom(view);
 
     const onSnapshot = (snap: SnapshotOut): void => {
+      // 快照是新的起点：播放队列作废（重连场景下队列里的事件已被快照覆盖）。
+      queueRef.current = [];
+      setFx(null);
       stateRef.current = snap.state;
       setState(snap.state);
       setHash(snap.hash);
@@ -156,18 +300,11 @@ export function useRoom(): RoomSession {
         );
         return;
       }
-      let next = stateRef.current;
-      if (!next) return; // 还没有起点状态 —— 等服务端补发快照
-
-      for (const e of out.events ?? []) {
-        next = core.reduce(next, e);
-        // 用**reduce 后**的状态翻译：卡刚移动完，才能按 uid 反查到卡名。
-        const text = describeEvent(e, namesRef.current, next);
-        if (text) appendLog(text, e.at);
-      }
-      stateRef.current = next;
-      setState(next);
+      if (!stateRef.current) return; // 还没有起点状态 —— 等服务端补发快照
+      // 事件进播放队列，逐条 reduce + 按节奏停顿（见 FX_MS）。
+      queueRef.current.push(...(out.events ?? []));
       setHash(out.hash ?? null);
+      void pump();
     };
 
     socket.on('connect', onConnect);
@@ -185,7 +322,7 @@ export function useRoom(): RoomSession {
       socket.off(SOCKET_EVENTS.gameSnapshot, onSnapshot);
       socket.off(SOCKET_EVENTS.gameEvents, onGameEvents);
     };
-  }, [appendLog]);
+  }, [appendLog, pump]);
 
   /** 发一条玩家 Intent。`seq` 单调递增，重连后由快照纠正。 */
   const send = useCallback((type: string, payload?: Record<string, unknown>): void => {
@@ -297,6 +434,7 @@ export function useRoom(): RoomSession {
     foe,
     turnDeadline,
     log,
+    fx,
     notice,
     create,
     join,
@@ -306,6 +444,7 @@ export function useRoom(): RoomSession {
     endTurn: () => send(core.INTENTS.turnEnd),
     charge: (uids) => send(core.INTENTS.charge, { uids }),
     play: (uid) => send(core.INTENTS.play, { uid }),
+    draw: () => send(core.INTENTS.draw),
     attack: (attackerUid, targetUid) => send(core.INTENTS.attack, { attackerUid, targetUid }),
     mulligan: (returns) => send(core.INTENTS.mulligan, { returns }),
     dismiss,
