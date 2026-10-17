@@ -81,3 +81,25 @@ test('推进阶段 → 充能 → 出牌 → 结束回合', async ({ browser }) 
   await expect.poll(() => turnNo(p), { timeout: 15_000 }).toBe(turn0 + 1);
   await expect(p.getByText('对手回合')).toBeVisible({ timeout: 10_000 });
 });
+
+test('起手换牌：第一回合充能阶段可换，换完补满 5 张且只能换一次（A8-3 / A10-1）', async ({ browser }) => {
+  const { host, guest } = await startGame(browser);
+  const p = await activePage([host, guest]);
+  await expect.poll(() => phaseText(p)).toContain('阶段 充能');
+
+  // 换牌窗口内按钮可用；进入换牌模式 → 多选两张 → 确认
+  await expect(p.getByTestId('mulligan')).toBeEnabled({ timeout: 10_000 });
+  await p.getByTestId('mulligan').click();
+  const cards = p.getByTestId('hand').locator('[data-testid="card"]');
+  await cards.nth(0).click();
+  await cards.nth(1).click();
+  await expect(p.getByTestId('mulligan-confirm')).toContainText('2');
+  await p.getByTestId('mulligan-confirm').click();
+
+  // 返回 2 张 + 抽满：手牌仍是 5 张（A10-1）；换牌完成横幅经播放队列到达
+  await expect(p.getByTestId('hand').locator('[data-testid="card"]')).toHaveCount(5, {
+    timeout: 15_000,
+  });
+  // 每人一次（mulliganDone）—— 按钮置灰
+  await expect(p.getByTestId('mulligan')).toBeDisabled({ timeout: 10_000 });
+});

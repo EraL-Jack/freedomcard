@@ -197,6 +197,8 @@ export function useRoom(): RoomSession {
         return { fx: { kind: 'reset', text: '随从已重置', sub: '休眠解除' }, ms: FX_MS['units:reset']! };
       case 'draw:completed':
         return { fx: { kind: 'draw', text: '抽牌完成' }, ms: FX_MS['draw:completed']! };
+      case 'mulligan:done':
+        return { fx: { kind: 'draw', text: '换牌完成' }, ms: FX_MS['draw:completed']! };
       case 'combat:resolved': {
         const atk = Number(e.payload?.['atkPower'] ?? 0);
         const def = Number(e.payload?.['defPower'] ?? 0);

@@ -386,6 +386,13 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   const [attacker, setAttacker] = useState<string | null>(null);
   /** 详情浮层里正在查看的卡（Era 2026-10-18：卡牌携带效果必须可查看）。 */
   const [detailCard, setDetailCard] = useState<CardInstance | null>(null);
+  /**
+   * 起手换牌模式（A8-3/A10-1，D-120 补 UI 入口）。
+   * 换牌是**多目标**操作（returns 数组）—— 进入模式后手牌恢复多选，
+   * 不影响非多目标场景的排他纪律（Era 2026-10-18）。
+   */
+  const [mulliganMode, setMulliganMode] = useState(false);
+  const [mulliganPicks, setMulliganPicks] = useState<string[]>([]);
   const [now, setNow] = useState(() => Date.now());
 
   /**
@@ -399,6 +406,11 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   const suppressClickRef = useRef(false);
   const [dragging, setDragging] = useState<{ uid: string; kind: 'hand' | 'minion' } | null>(null);
   const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
+  /** 日志框引用 —— 新日志到达时自动滚到底（战斗截图实测：新日志沉底看不见）。 */
+  const logRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
+  }, [log.length]);
 
   // 每秒刷新一次，用于显示回合倒计时。
   useEffect(() => {
@@ -415,6 +427,8 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   const myTurnNow = !!state && !!me && state.seats[state.activeSeat] === me;
   const canPickHand = myTurnNow && (phaseNow === 'charge' || phaseNow === 'main');
   const canBattle = myTurnNow && phaseNow === 'battle';
+  /** 起手换牌窗口（A8-3/A10-1）：第一回合充能阶段、我方回合。 */
+  const mulliganWindow = myTurnNow && phaseNow === 'charge' && state?.turn === 1;
 
   // 离开可操作阶段时清掉残留选中 —— 否则置灰后取消不了，卡在「看着被选中却动不了」。
   useEffect(() => {
@@ -423,6 +437,13 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   useEffect(() => {
     if (!canBattle) setAttacker(null);
   }, [canBattle]);
+  // 换牌窗口一过就退出换牌模式。
+  useEffect(() => {
+    if (!mulliganWindow && mulliganMode) {
+      setMulliganMode(false);
+      setMulliganPicks([]);
+    }
+  }, [mulliganWindow, mulliganMode]);
 
   if (!me || !room) {
     return <p className="p-4 text-slate-400">请从主界面创建或加入房间。</p>;
@@ -438,6 +459,8 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   }
 
   const myTurn = state.seats[state.activeSeat] === me;
+  /** 换牌可用 = 换牌窗口内且本局还没换过（mulliganDone 每人一次，A8-3）。 */
+  const canMulligan = mulliganWindow && !mine.mulliganDone;
   /** 抽牌阶段且未抽：我方卡组区变为「点击抽牌」发光动作（Era 2026-10-18 手动抽牌）。 */
   const canDraw = myTurn && state.phase === 'draw' && !state.drawnThisPhase;
   // ⚠️ 客户端时钟与服务端未必同步，这里的倒计时是**示意**；权威判定在服务端（ADR-0017）。
@@ -450,6 +473,11 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
       return;
     }
     setPicked((prev) => (prev === uid ? null : uid));
+  };
+
+  /** 换牌模式下的多选切换（换牌是多目标操作，排他纪律不适用）。 */
+  const toggleMulliganPick = (uid: string): void => {
+    setMulliganPicks((prev) => (prev.includes(uid) ? prev.filter((x) => x !== uid) : [...prev, uid]));
   };
 
   /** 打开卡牌详情浮层 —— 任何可见卡都可查（信息查看不是操作，不受置灰约束）。 */
@@ -766,9 +794,9 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
                 <div
                   key={c.uid}
                   className="relative"
-                  {...(canPickHand ? { 'data-drag-kind': 'hand', 'data-drag-uid': c.uid } : {})}
+                  {...(canPickHand && !mulliganMode ? { 'data-drag-kind': 'hand', 'data-drag-uid': c.uid } : {})}
                 >
-                  {picked === c.uid ? (
+                  {picked === c.uid && !mulliganMode ? (
                     <div className="absolute -top-8 left-1/2 z-10 flex -translate-x-1/2 gap-1">
                       <button
                         type="button"
@@ -799,11 +827,11 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
                   <CardOf
                     card={c}
                     state={state}
-                    selected={picked === c.uid}
+                    selected={mulliganMode ? mulliganPicks.includes(c.uid) : picked === c.uid}
                     disabled={!canPickHand}
-                    glow={canPickHand && picked !== c.uid}
+                    glow={mulliganMode || (canPickHand && picked !== c.uid)}
                     onDetail={() => openDetail(c)}
-                    onClick={() => togglePick(c.uid)}
+                    onClick={() => (mulliganMode ? toggleMulliganPick(c.uid) : togglePick(c.uid))}
                   />
                 </div>
               ))}
@@ -817,6 +845,7 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
         {/* 右侧一列：日志框 + 对话框分开展示（B2-5） */}
         <aside className="hidden w-40 shrink-0 flex-col gap-1 sm:flex md:w-56">
           <div
+            ref={logRef}
             className="min-h-0 flex-1 overflow-y-auto rounded border border-slate-700 bg-slate-900/60 p-1 text-[11px]"
             data-testid="log"
           >
@@ -854,6 +883,49 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
         >
           结束回合
         </button>
+        {/* 起手换牌（A8-3/A10-1）：第一回合充能阶段可用，每人一次。
+            换牌是多目标操作 —— 进入换牌模式后手牌恢复多选（排他纪律不适用）。 */}
+        {!mulliganMode ? (
+          <button
+            type="button"
+            className="rounded bg-violet-800 px-3 py-2 text-xs disabled:opacity-40 sm:text-sm"
+            onClick={() => {
+              setMulliganMode(true);
+              setPicked(null);
+            }}
+            disabled={!canMulligan}
+            data-testid="mulligan"
+          >
+            换牌
+          </button>
+        ) : (
+          <>
+            <button
+              type="button"
+              className="rounded bg-violet-700 px-3 py-2 text-xs disabled:opacity-40 sm:text-sm"
+              onClick={() => {
+                session.mulligan(mulliganPicks);
+                setMulliganMode(false);
+                setMulliganPicks([]);
+              }}
+              disabled={mulliganPicks.length === 0}
+              data-testid="mulligan-confirm"
+            >
+              确认换牌（{mulliganPicks.length}）
+            </button>
+            <button
+              type="button"
+              className="rounded bg-slate-700 px-3 py-2 text-xs sm:text-sm"
+              onClick={() => {
+                setMulliganMode(false);
+                setMulliganPicks([]);
+              }}
+              data-testid="mulligan-cancel"
+            >
+              取消换牌
+            </button>
+          </>
+        )}
         <button
           type="button"
           className="rounded bg-rose-800 px-3 py-2 text-xs disabled:opacity-40 sm:text-sm"
