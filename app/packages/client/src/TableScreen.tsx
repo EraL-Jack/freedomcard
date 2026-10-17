@@ -126,12 +126,16 @@ function CardOf(props: {
   glow?: boolean;
   /** 查看卡牌详情（Era 2026-10-18：卡牌携带效果必须可查看）。 */
   onDetail?: () => void;
+  /** 战斗呈现类名（攻击冲撞 / 受击抖动）—— 由调用方按播放中的裁决事件注入。 */
+  fxClass?: string;
+  /** 区域内紧凑尺寸（格子内卡片比手牌小一号，避免压排 —— D-118 截图实测）。 */
+  compact?: boolean;
   onClick?: () => void;
 }): React.JSX.Element {
   const def = CARD_POOL[props.card.defId];
   const power = core.unitPower(props.state, CARD_POOL, props.card.uid) ?? def?.power ?? 0;
   return (
-    <div className="w-16 shrink-0 sm:w-20">
+    <div className={`${props.compact ? 'w-14 sm:w-16' : 'w-16 sm:w-20'} shrink-0`}>
       <CardTile
         name={def?.name ?? props.card.defId}
         cost={def?.cost ?? 0}
@@ -142,6 +146,7 @@ function CardOf(props: {
         selected={props.selected}
         disabled={props.disabled}
         glow={props.glow}
+        fxClass={props.fxClass}
         onDetail={props.onDetail}
         onSelect={props.onClick}
       />
@@ -175,6 +180,8 @@ function ZoneBox(props: {
   highlight?: boolean;
   /** 区域内卡的详情查看入口。 */
   onCardDetail?: (card: CardInstance) => void;
+  /** 区域内卡的战斗呈现（裁决播放中给目标卡注入抖动类名）。 */
+  fxFor?: (uid: string) => string | undefined;
   /**
    * 区域级动作 —— 目前只用于抽牌阶段的我方卡组区（Era 2026-10-18：
    * 抽牌需要玩家点击牌组）。存在时区域边框发光并显示动作按钮。
@@ -238,7 +245,9 @@ function ZoneBox(props: {
               state={props.state}
               selected={props.selected}
               glow={props.glow}
+              compact
               onDetail={props.onCardDetail ? () => props.onCardDetail?.(c) : undefined}
+              fxClass={props.fxFor?.(c.uid)}
               onClick={props.onCardClick ? () => props.onCardClick?.(c.uid) : undefined}
             />
           ))}
@@ -265,6 +274,8 @@ function BoardSlot(props: {
   dropUid?: string;
   /** 拖拽悬停提示。 */
   highlight?: boolean;
+  /** 战斗呈现类名。 */
+  fxClass?: string;
   /** 查看卡详情。 */
   onDetail?: (card: CardInstance) => void;
   onClick?: () => void;
@@ -286,7 +297,9 @@ function BoardSlot(props: {
           selected={props.selected}
           disabled={props.disabled}
           glow={props.glow}
+          compact
           onDetail={props.onDetail ? () => props.onDetail?.(props.card!) : undefined}
+          fxClass={props.fxClass}
           onClick={props.onClick}
         />
       ) : (
@@ -430,6 +443,17 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   /** 打开卡牌详情浮层 —— 任何可见卡都可查（信息查看不是操作，不受置灰约束）。 */
   const openDetail = (c: CardInstance): void => setDetailCard(c);
 
+  /**
+   * 裁决播放中（fx.kind === 'combat'，播放队列停 900ms）：攻击方冲撞、目标抖动。
+   * 冲撞方向按半场：我方在下往上撞、对方在上往下撞。
+   */
+  const combatClass = (uid: string, side: 'me' | 'foe'): string | undefined => {
+    if (fx?.kind !== 'combat') return undefined;
+    if (fx.attackerUid === uid) return side === 'me' ? 'anim-lunge-up' : 'anim-lunge-down';
+    if (fx.targetUid === uid) return 'anim-shake';
+    return undefined;
+  };
+
   /* ---------------- 拖拽（B3-1「点选+拖拽都要」/ Era 2026-10-18「模拟现实操作的卡牌」） ----------------
    *  pointer events 实现（移动端单指兼容，B5-3）。拖拽源只在**可操作**时才挂标记
    *  （与置灰/发光同一份判定）。拖回原位或无效区域 = 取消（B3-4）。
@@ -501,7 +525,8 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   const slots = [0, 1, 2];
 
   return (
-    <div className="flex h-dvh flex-col gap-1 p-1 sm:p-2" onPointerDown={onTablePointerDown}>
+    // D-118 桌面氛围：深色毛毡底 + 中线分隔 + 我方回合时我方半场微光（docs/11 R2）。
+    <div className="flex h-dvh flex-col gap-1 bg-[#151b26] p-1 sm:p-2" onPointerDown={onTablePointerDown}>
       {/* 阶段进度条常显（Era 2026-10-18：过阶段反馈差）—— 六阶段一排，当前阶段高亮。
           与横幅分工：进度条回答「我在哪」，横幅回答「刚发生了什么」。 */}
       <nav className="flex items-center justify-center gap-1" data-testid="phase-track">
@@ -579,6 +604,7 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
               dropUid={theirs.zones.commander[0]?.uid}
               highlight={dragging?.kind === 'minion'}
               onCardDetail={openDetail}
+              fxFor={(uid) => combatClass(uid, 'foe')}
               onCardClick={
                 attacker && myTurn
                   ? (uid) => {
@@ -606,6 +632,7 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
                 glow={attacker !== null && !!theirs.zones.board[i]}
                 dropUid={theirs.zones.board[i]?.uid}
                 highlight={dragging?.kind === 'minion' && !!theirs.zones.board[i]}
+                fxClass={theirs.zones.board[i] ? combatClass(theirs.zones.board[i]!.uid, 'foe') : undefined}
                 onDetail={openDetail}
                 onClick={
                   attacker && myTurn
@@ -620,13 +647,16 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
             ))}
           </section>
 
+          {/* 中场线 —— 双方半场的分界（桌面感）；我方回合时我方半场微光。 */}
+          <div className="mx-4 border-t border-slate-600/50" />
+
           {/* ④ 我方随从区 1·2·3 + 费用区 —— flex-1 平分桌高。
               随从仅在我方战斗阶段且未休眠时可点选为攻击方（其余时候置灰，Era 2026-10-18）。
               整排是拖拽落点（data-drop="board"）：拖手牌到此 = 出牌（B3-1）。 */}
           <section
             className={`grid min-h-0 flex-1 auto-rows-fr grid-cols-4 gap-1 rounded ${
               dragging?.kind === 'hand' && state.phase === 'main' ? 'ring-2 ring-cyan-400/70' : ''
-            }`}
+            } ${myTurn ? 'shadow-[0_0_14px_rgba(52,211,153,0.12)]' : ''}`}
             data-drop="board"
           >
             {slots.map((i) => {
@@ -644,6 +674,7 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
                   glow={canBattle && !(mc?.sleeping ?? false) && attacker !== mc?.uid && !!mc}
                   dragKind={minionOperable ? 'minion' : undefined}
                   dragUid={minionOperable ? mc?.uid : undefined}
+                  fxClass={mc ? combatClass(mc.uid, 'me') : undefined}
                   onClick={() => {
                     if (suppressClickRef.current) {
                       suppressClickRef.current = false;
@@ -683,6 +714,7 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
               badge={`血 ${mine.health}`}
               badgeTestId="hp-me"
               onCardDetail={openDetail}
+              fxFor={(uid) => combatClass(uid, 'me')}
             />
             <ZoneBox label="法术区" zone="spell" cards={mine.zones.spell} expandable state={state} onCardDetail={openDetail} />
             {/* 抽牌阶段未抽时，卡组区变为发光动作「点击抽牌」（Era 2026-10-18 手动抽牌） */}

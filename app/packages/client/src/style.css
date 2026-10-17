@@ -79,3 +79,39 @@ input:-webkit-autofill {
 .fx-pop {
   animation: fx-pop 0.22s ease-out;
 }
+
+/*
+ * 战斗卡牌动画（Era 2026-10-18：对战详情过程在卡牌动画中体现）。
+ * 播放队列播到「裁决」事件时，攻击方/目标卡牌各自播一次（时长由队列停顿兜底）。
+ */
+@keyframes anim-lunge-up {
+  0% { transform: translateY(0); }
+  35% { transform: translateY(-16px) scale(1.06); }
+  100% { transform: translateY(0); }
+}
+
+@keyframes anim-lunge-down {
+  0% { transform: translateY(0); }
+  35% { transform: translateY(16px) scale(1.06); }
+  100% { transform: translateY(0); }
+}
+
+@keyframes anim-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-5px); }
+  40% { transform: translateX(5px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(3px); }
+}
+
+.anim-lunge-up {
+  animation: anim-lunge-up 0.5s ease-out;
+}
+
+.anim-lunge-down {
+  animation: anim-lunge-down 0.5s ease-out;
+}
+
+.anim-shake {
+  animation: anim-shake 0.45s ease-in-out;
+}

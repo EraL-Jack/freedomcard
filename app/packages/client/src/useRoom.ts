@@ -36,6 +36,9 @@ export interface Fx {
   text: string;
   /** 副文案（如「防守方破坏」「轮到你行动」）。 */
   sub?: string;
+  /** 战斗事件的攻击方/目标 uid —— 卡片位移动画（Era：对战详情在卡牌动画中体现）。 */
+  attackerUid?: string;
+  targetUid?: string;
 }
 
 /** 各事件类型的播放停顿（毫秒）—— 0 = 不打断节奏。 */
@@ -190,7 +193,16 @@ export function useRoom(): RoomSession {
         const outcome = String(e.payload?.['outcome'] ?? '');
         const sub =
           outcome === 'defender' ? '防守方破坏' : outcome === 'attacker' ? '攻击方破坏' : '同归于尽';
-        return { fx: { kind: 'combat', text: `裁决 ${atk} ⚔ ${def}`, sub }, ms: FX_MS['combat:resolved']! };
+        return {
+          fx: {
+            kind: 'combat',
+            text: `裁决 ${atk} ⚔ ${def}`,
+            sub,
+            attackerUid: String(e.payload?.['attackerUid'] ?? ''),
+            targetUid: String(e.payload?.['targetUid'] ?? ''),
+          },
+          ms: FX_MS['combat:resolved']!,
+        };
       }
       case 'commander:damaged': {
         const amount = Number(e.payload?.['amount'] ?? 0);
