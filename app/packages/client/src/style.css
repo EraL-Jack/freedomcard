@@ -115,3 +115,14 @@ input:-webkit-autofill {
 .anim-shake {
   animation: anim-shake 0.45s ease-in-out;
 }
+
+/* 破坏残影（D-119）：亮起→收缩淡出。B4 原填「爆炸」，素材（B7-3）到位前用 CSS 呈现。 */
+@keyframes anim-destroy {
+  0% { opacity: 1; transform: scale(1); filter: brightness(1); }
+  35% { opacity: 1; transform: scale(1.12); filter: brightness(2.2); }
+  100% { opacity: 0; transform: scale(0.35) rotate(10deg); filter: brightness(0.6); }
+}
+
+.anim-destroy {
+  animation: anim-destroy 0.58s ease-in forwards;
+}

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import * as core from '@app/core';
-import { SOCKET_EVENTS, type GameEvent, type GameState, type Intent, type PlayerId } from '@app/shared';
+import { SOCKET_EVENTS, type CardInstance, type GameEvent, type GameState, type Intent, type PlayerId } from '@app/shared';
 
 import { describeEvent } from './log.js';
 import { PHASE_LABEL } from './labels.js';
@@ -39,6 +39,8 @@ export interface Fx {
   /** 战斗事件的攻击方/目标 uid —— 卡片位移动画（Era：对战详情在卡牌动画中体现）。 */
   attackerUid?: string;
   targetUid?: string;
+  /** 破坏呈现：被破坏卡的快照与位置（事件 reduce 后卡已离场，幽灵卡靠它渲染淡出）。 */
+  destroyed?: { card: CardInstance; side: 'me' | 'foe'; slotIndex: number | null };
 }
 
 /** 各事件类型的播放停顿（毫秒）—— 0 = 不打断节奏。 */
@@ -52,8 +54,8 @@ const FX_MS: Readonly<Record<string, number>> = {
   'game:ended': 1600,
 };
 
-/** 破坏（移入弃牌区）单独停一拍。 */
-const DESTROY_MS = 450;
+/** 破坏（战斗导致的移入弃牌区）单独停一拍。 */
+const DESTROY_MS = 600;
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -167,8 +169,16 @@ export function useRoom(): RoomSession {
     };
   }, []);
 
-  /** 从单条事件提取呈现信息（横幅/飘字文案）。 */
-  const fxOf = (e: GameEvent, next: GameState): { fx: Omit<Fx, 'id'>; ms: number } | null => {
+  /** 从单条事件提取呈现信息（横幅/飘字文案）。
+   *  `prev` 是 reduce 前的状态 —— 破坏幽灵卡要从里面捞「离场前的卡与位置」。
+   *  `combatTick`：本批内最近一条裁决事件的时间戳 —— 只有**战斗上下文**的
+   *  移入弃牌区才算「破坏」；出牌支付（费用区→弃牌区）同型事件不该播破坏动画。 */
+  const fxOf = (
+    e: GameEvent,
+    prev: GameState,
+    next: GameState,
+    combatTick: number | null,
+  ): { fx: Omit<Fx, 'id'>; ms: number } | null => {
     const meNow = meRef.current;
     switch (e.type) {
       case 'phase:changed': {
@@ -212,11 +222,33 @@ export function useRoom(): RoomSession {
           ms: FX_MS['commander:damaged']!,
         };
       }
-      case 'card:moved':
-        if (e.payload?.['to'] === 'graveyard') {
-          return { fx: { kind: 'destroy', text: '破坏' }, ms: DESTROY_MS };
-        }
-        return null;
+      case 'card:moved': {
+        if (e.payload?.['to'] !== 'graveyard') return null;
+        // 仅战斗上下文的破坏（同批裁决事件的 at 相同）；支付过牌不播破坏动画
+        if (combatTick === null || e.at !== combatTick) return null;
+        const uid = String(e.payload?.['uid'] ?? '');
+        const pid = String(e.payload?.['playerId'] ?? '');
+        const owner = prev.players[pid];
+        const slotIndex = owner ? owner.zones.board.findIndex((x) => x.uid === uid) : -1;
+        const card = owner
+          ? (owner.zones.board.find((x) => x.uid === uid) ??
+            owner.zones.commander.find((x) => x.uid === uid) ??
+            null)
+          : null;
+        if (!card) return null;
+        return {
+          fx: {
+            kind: 'destroy',
+            text: '破坏',
+            destroyed: {
+              card,
+              side: pid === meNow ? 'me' : 'foe',
+              slotIndex: slotIndex >= 0 ? slotIndex : null,
+            },
+          },
+          ms: DESTROY_MS,
+        };
+      }
       case 'game:ended': {
         const winner = e.payload?.['winner'];
         return {
@@ -251,6 +283,8 @@ export function useRoom(): RoomSession {
   const pump = useCallback(async (): Promise<void> => {
     if (pumpingRef.current) return;
     pumpingRef.current = true;
+    // 战斗上下文标记：同一批内（相同 at）的「移入弃牌区」才算战斗破坏。
+    let combatTick: number | null = null;
     try {
       while (queueRef.current.length > 0) {
         const e = queueRef.current.shift()!;
@@ -263,7 +297,8 @@ export function useRoom(): RoomSession {
         const text = describeEvent(e, namesRef.current, next);
         if (text) appendLog(text, e.at);
 
-        const hit = fxOf(e, next);
+        if (e.type === 'combat:resolved') combatTick = e.at;
+        const hit = fxOf(e, prev, next, combatTick);
         if (hit) {
           fxIdRef.current += 1;
           if (mountedRef.current) setFx({ ...hit.fx, id: fxIdRef.current });

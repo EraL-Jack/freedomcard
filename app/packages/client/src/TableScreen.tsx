@@ -276,6 +276,8 @@ function BoardSlot(props: {
   highlight?: boolean;
   /** 战斗呈现类名。 */
   fxClass?: string;
+  /** 破坏幽灵卡（D-119）：格子已空但破坏动画还在播 —— 渲染淡出中的残影。 */
+  ghost?: CardInstance;
   /** 查看卡详情。 */
   onDetail?: (card: CardInstance) => void;
   onClick?: () => void;
@@ -302,6 +304,16 @@ function BoardSlot(props: {
           fxClass={props.fxClass}
           onClick={props.onClick}
         />
+      ) : props.ghost ? (
+        <div className="w-14 sm:w-16">
+          <CardTile
+            name={CARD_POOL[props.ghost.defId]?.name ?? props.ghost.defId}
+            cost={CARD_POOL[props.ghost.defId]?.cost ?? 0}
+            power={CARD_POOL[props.ghost.defId]?.power ?? 0}
+            kind={CARD_POOL[props.ghost.defId]?.type ?? 'minion'}
+            fxClass="anim-destroy"
+          />
+        </div>
       ) : (
         <span className="text-[10px] text-slate-600">{props.index + 1}</span>
       )}
@@ -442,6 +454,9 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
 
   /** 打开卡牌详情浮层 —— 任何可见卡都可查（信息查看不是操作，不受置灰约束）。 */
   const openDetail = (c: CardInstance): void => setDetailCard(c);
+
+  /** 破坏幽灵卡（D-119）：破坏事件播放期间，在离空格子上渲染淡出残影。 */
+  const destroyGhost = fx?.kind === 'destroy' ? (fx.destroyed ?? null) : null;
 
   /**
    * 裁决播放中（fx.kind === 'combat'，播放队列停 900ms）：攻击方冲撞、目标抖动。
@@ -633,6 +648,11 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
                 dropUid={theirs.zones.board[i]?.uid}
                 highlight={dragging?.kind === 'minion' && !!theirs.zones.board[i]}
                 fxClass={theirs.zones.board[i] ? combatClass(theirs.zones.board[i]!.uid, 'foe') : undefined}
+                ghost={
+                  destroyGhost && destroyGhost.side === 'foe' && destroyGhost.slotIndex === i
+                    ? destroyGhost.card
+                    : undefined
+                }
                 onDetail={openDetail}
                 onClick={
                   attacker && myTurn
@@ -675,6 +695,11 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
                   dragKind={minionOperable ? 'minion' : undefined}
                   dragUid={minionOperable ? mc?.uid : undefined}
                   fxClass={mc ? combatClass(mc.uid, 'me') : undefined}
+                  ghost={
+                    destroyGhost && destroyGhost.side === 'me' && destroyGhost.slotIndex === i
+                      ? destroyGhost.card
+                      : undefined
+                  }
                   onClick={() => {
                     if (suppressClickRef.current) {
                       suppressClickRef.current = false;
