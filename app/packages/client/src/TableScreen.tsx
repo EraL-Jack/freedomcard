@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import * as core from '@app/core';
-import type { CardInstance, GameState, PlayerState, Zone } from '@app/shared';
+import type { CardInstance, GameState, PlayerId, PlayerState, Zone } from '@app/shared';
 
 import { CARD_POOL } from '@app/shared/cards';
 
@@ -135,7 +135,12 @@ function CardOf(props: {
   const def = CARD_POOL[props.card.defId];
   const power = core.unitPower(props.state, CARD_POOL, props.card.uid) ?? def?.power ?? 0;
   return (
-    <div className={`${props.compact ? 'w-14 sm:w-16' : 'w-16 sm:w-20'} shrink-0`}>
+    // compact（区域/格子内）：高由格子决定、宽按 5:7 反算，不出框（Era 2026-10-18 截图实测）
+    <div
+      className={
+        props.compact ? 'flex h-full min-h-0 items-center justify-center' : 'w-16 shrink-0 sm:w-20'
+      }
+    >
       <CardTile
         name={def?.name ?? props.card.defId}
         cost={def?.cost ?? 0}
@@ -147,6 +152,7 @@ function CardOf(props: {
         disabled={props.disabled}
         glow={props.glow}
         fxClass={props.fxClass}
+        fitHeight={props.compact}
         onDetail={props.onDetail}
         onSelect={props.onClick}
       />
@@ -201,7 +207,7 @@ function ZoneBox(props: {
     // testid 挂在**容器**上而非按钮：这样断言能看到展开的卡片内容，
     // 断言的是「这个区域有什么」而不是「这个按钮写了什么」。
     <div
-      className={`rounded border p-1 ${
+      className={`flex h-full min-h-0 flex-col rounded border p-1 ${
         props.action
           ? 'border-emerald-400 bg-emerald-950/40 ring-2 ring-emerald-400/70'
           : props.highlight
@@ -237,7 +243,7 @@ function ZoneBox(props: {
         </button>
       ) : null}
       {shown.length > 0 ? (
-        <div className="mt-1 flex flex-wrap gap-0.5">
+        <div className="mt-1 flex min-h-0 flex-1 flex-wrap content-start gap-0.5">
           {shown.map((c) => (
             <CardOf
               key={c.uid}
@@ -284,7 +290,7 @@ function BoardSlot(props: {
 }): React.JSX.Element {
   return (
     <div
-      className={`flex min-h-[44px] flex-col items-center justify-center rounded border border-dashed bg-slate-900/40 p-1 ${
+      className={`flex h-full min-h-[44px] min-w-0 flex-col items-center justify-center overflow-hidden rounded border border-dashed bg-slate-900/40 p-1 ${
         props.highlight ? 'border-cyan-400 ring-2 ring-cyan-400/70' : 'border-slate-700'
       }`}
       data-testid={`slot-${props.index}`}
@@ -321,9 +327,39 @@ function BoardSlot(props: {
   );
 }
 
+/**
+ * 对局结束面板 —— D-122（Era 2026-10-18：一方离开后另一方卡在空白页）。
+ * 正常分出胜负或对手中途离开（系统代认输）都落到这里，给出明确结果与出口。
+ */
+function GameOverPanel(props: {
+  state: GameState;
+  me: PlayerId;
+  onBack: () => void;
+}): React.JSX.Element {
+  const won = props.state.winner === props.me;
+  return (
+    <div className="flex h-dvh flex-col items-center justify-center gap-4 p-6 text-center">
+      <p
+        className={`text-4xl font-bold ${won ? 'text-amber-300' : 'text-slate-300'}`}
+        data-testid="game-result"
+      >
+        {won ? '胜利' : '败北'}
+      </p>
+      <p className="text-sm text-slate-400">对局结束</p>
+      <button
+        type="button"
+        className="rounded bg-slate-700 px-6 py-2 text-sm"
+        onClick={props.onBack}
+        data-testid="back-home"
+      >
+        返回主界面
+      </button>
+    </div>
+  );
+}
+
 /** 未开局时的等待界面 —— B1 补充 3：双方加入并准备后即开始游戏。 */
-function WaitingRoom({ session }: { session: RoomSession }): React.JSX.Element {
-  const { room, me, ready, notice, leave } = session;
+function WaitingRoom({ session }: { session: RoomSession }): React.JSX.Element {  const { room, me, ready, notice, leave } = session;
   const meReady = room?.seats.find((s) => s && s.playerId === me)?.ready ?? false;
 
   return (
@@ -450,6 +486,13 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   }
   if (!state || !state.started) {
     return <WaitingRoom session={session} />;
+  }
+
+  // 对局已结束（含对手中途离开由系统代认输）—— 必须放在「等待对手加入」之前：
+  // 对手离场后 state.players 里仍有其数据，但席位已空，若先判对手缺失会把
+  // 结束面板永远挡住（Era 2026-10-18：一方离开后另一方卡在空白页）。
+  if (state.winner !== null) {
+    return <GameOverPanel state={state} me={me} onBack={session.leave} />;
   }
 
   const mine: PlayerState | undefined = me ? state.players[me] : undefined;

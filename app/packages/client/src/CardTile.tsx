@@ -55,6 +55,12 @@ export interface CardTileProps {
   glow?: boolean;
   /** 战斗呈现类名（如攻击冲撞 / 受击抖动），由 TableScreen 按正在播放的裁决事件注入。 */
   fxClass?: string;
+  /**
+   * 高度适配模式（Era 2026-10-18 出框修复）：五区/随从格的行高被 grid 压缩时，
+   * 卡高必须由**格子高度**决定（宽按 5:7 反算），否则 aspect 按宽算出的高会溢出格框。
+   * 手牌等横向滚动行不用它 —— 那里宽度驱动即可。
+   */
+  fitHeight?: boolean;
   /** 查看详情入口（Era 2026-10-18：卡牌携带效果必须可查看）—— 存在时右上角挂「?」按钮。 */
   onDetail?: () => void;
   onSelect?: () => void;
@@ -83,11 +89,13 @@ export default function CardTile(props: CardTileProps): React.JSX.Element {
   return (
     // 休眠横置作用在整个包装层（徽章随卡一起转），transition 让重置阶段「立回来」可见。
     <div
-      className={`relative transition-transform duration-300 ${props.sleeping ? 'rotate-90 opacity-70' : ''}`}
+      className={`relative transition-transform duration-300 ${props.fitHeight ? 'flex h-full min-h-0 justify-center' : ''} ${props.sleeping ? 'rotate-90 opacity-70' : ''}`}
     >
       <button
         type="button"
-        className={`relative flex aspect-[5/7] w-full flex-col overflow-hidden rounded-lg border-2 p-1 text-left ${frame} ${state} ${props.fxClass ?? ''}`}
+        className={`relative flex flex-col overflow-hidden rounded-lg border-2 p-1 text-left ${
+          props.fitHeight ? 'h-full max-w-full aspect-[5/7]' : 'aspect-[5/7] w-full'
+        } ${frame} ${state} ${props.fxClass ?? ''}`}
         onClick={props.onSelect}
         disabled={greyed}
         title={props.text ?? props.name}

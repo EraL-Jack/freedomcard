@@ -443,6 +443,35 @@ io.on('connection', (socket) => {
     const r = roomManager.leave(playerId);
     if (!r.ok) return ack?.({ ok: false, error: r.error, message: r.message });
     if (before) void socket.leave(before.room.id);
+
+    // 对局进行中离场 = 系统代为认输（Era 2026-10-18：一方离开后另一方卡在空白页）。
+    // 走系统 Intent 而非直接改状态 —— 结算仍由引擎产出标准 game:ended 事件，
+    // 留下的玩家按正常事件流收到「对局结束」，不需要客户端特例。
+    if (before) {
+      const rt = runtimes.get(before.room.id);
+      if (rt && rt.state.started && rt.state.winner === null && playerId in rt.state.players) {
+        const intent: Intent = {
+          type: core.INTENTS.concede,
+          actor: 'system',
+          playerId,
+          seq: rt.serverSeq + 1,
+          reason: 'opponent-left',
+        };
+        const result = submitSystemIntent(rt.state, intent, {
+          engine,
+          replay: rt.replay,
+          now: () => Date.now(),
+          cards: CARD_POOL,
+          emit: (out) => emitGameOut(before.room.id, rt, out),
+        });
+        rt.state = result.state;
+        if (rt.state.winner !== null) {
+          before.room.phase = 'ended';
+          rt.timer.clear();
+        }
+      }
+    }
+
     if (r.value.room) broadcastRoom(r.value.room.id);
     else sweepRuntimes();
     ack?.({ ok: true });
