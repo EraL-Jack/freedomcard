@@ -42,10 +42,10 @@ test('推进阶段 → 充能 → 出牌 → 结束回合', async ({ browser }) 
   const chargeCount = await chargeMinions(p);
   expect(await zoneCount(p, 'cost', 1)).toBe(chargeCount);
 
-  // ③ 推进阶段 —— 六阶段不可跳过（A4-2）；重置瞬穿 + 抽牌手动（Era 2026-10-18）：
-  //    充能 →（重置瞬穿）→ 抽牌（点卡组）→ 主要
+  // ③ 推进阶段 —— 六阶段不可跳过（A4-2）；重置瞬穿 + 抽牌手动（Era 2026-10-18）+
+  //    抽完自动推进（Era 2026-10-19）：充能 →（重置瞬穿）→ 抽牌（点卡组）→ 自动到主要
   await advancePhase(p, '抽牌');
-  await advancePhase(p, '主要');
+  await expect.poll(() => phaseText(p)).toContain('阶段 主要');
 
   // ④ 出牌 —— 抽牌阶段抽过牌，手牌序号已变，必须重读
   const hand1 = await readHand(p);
@@ -87,8 +87,8 @@ test('起手换牌：第一回合充能阶段可换，换完补满 5 张且只�
   const p = await activePage([host, guest]);
   await expect.poll(() => phaseText(p)).toContain('阶段 充能');
 
-  // 换牌窗口内按钮可用；进入换牌模式 → 多选两张 → 确认
-  await expect(p.getByTestId('mulligan')).toBeEnabled({ timeout: 10_000 });
+  // 换牌窗口内按钮可见（不可操作的按钮不展示，Era 2026-10-19）；进入换牌模式 → 多选两张 → 确认
+  await expect(p.getByTestId('mulligan')).toBeVisible({ timeout: 10_000 });
   await p.getByTestId('mulligan').click();
   const cards = p.getByTestId('hand').locator('[data-testid="card"]');
   await cards.nth(0).click();
@@ -100,6 +100,6 @@ test('起手换牌：第一回合充能阶段可换，换完补满 5 张且只�
   await expect(p.getByTestId('hand').locator('[data-testid="card"]')).toHaveCount(5, {
     timeout: 15_000,
   });
-  // 每人一次（mulliganDone）—— 按钮置灰
-  await expect(p.getByTestId('mulligan')).toBeDisabled({ timeout: 10_000 });
+  // 每人一次（mulliganDone）—— 按钮直接不再展示（Era 2026-10-19，废止置灰）
+  await expect(p.getByTestId('mulligan')).toHaveCount(0, { timeout: 10_000 });
 });

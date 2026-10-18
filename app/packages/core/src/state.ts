@@ -86,6 +86,7 @@ export function createInitialState(opts: InitialStateOptions): GameState {
     drawnThisPhase: false,
     turn: 1,
     started: false,
+    startedAt: null,
     winner: null,
     pendingChoice: null,
   };

@@ -33,6 +33,14 @@ export const SOCKET_EVENTS = {
 export const RECONNECT_GRACE_MS = 60_000;
 export const TURN_TIMEOUT_MS = 30_000;
 
+/**
+ * 开局换牌时间窗 —— Era 2026-10-19：「开局换牌需要加一个时间窗，时间窗过了隐藏换牌按钮」。
+ *
+ * 从 `game:started` 事件时间戳起算；窗口过后服务端拒绝换牌、客户端隐藏按钮。
+ * ⚠️ 时长取值 Era 未给，暂取 30s（与回合时限同量级），已登记 docs/09 假设 H25。
+ */
+export const MULLIGAN_WINDOW_MS = 30_000;
+
 /** 房间错误码 —— 传输层统一口径，客户端据此提示。 */
 export const ROOM_ERRORS = {
   ROOM_NOT_FOUND: 'ROOM_NOT_FOUND',
@@ -127,6 +135,8 @@ export const RULE_ERRORS = {
   MUST_ATTACK_TAUNT: 'MUST_ATTACK_TAUNT',
   GAME_OVER: 'GAME_OVER',
   MULLIGAN_DONE: 'MULLIGAN_DONE',
+  /** 开局换牌时间窗已过（Era 2026-10-19：换牌加时间窗，窗口外禁止换牌）。 */
+  MULLIGAN_EXPIRED: 'MULLIGAN_EXPIRED',
   /** 本抽牌阶段已抽过牌（抽牌为手动点击卡组，Era 2026-10-18）。 */
   DRAW_DONE: 'DRAW_DONE',
   /** 卡组构成不合法（主卡组张数、同名上限、指挥官缺失或类型错）。 */

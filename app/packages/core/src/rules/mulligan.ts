@@ -3,10 +3,14 @@
  *
  * 原文顺序：选任意数量返回卡组底 → 从卡组顶抽满 5 张 → 再洗牌。
  * 三步严格照做，不调换顺序 —— 顺序变了「不会换到返回去的牌」这个性质就不成立。
+ *
+ * 时间窗（Era 2026-10-19）：开局换牌只在 `game:started` 后 `MULLIGAN_WINDOW_MS`
+ * 内可用；窗口过后服务端拒绝（客户端同时隐藏按钮，双保险）。
  */
 
 import {
   INITIAL_HAND,
+  MULLIGAN_WINDOW_MS,
   RULE_ERRORS,
   type CardInstance,
   type GameEvent,
@@ -43,6 +47,10 @@ export const mulliganRule = (
       : null,
     state.players[intent.playerId]?.mulliganDone
       ? { code: RULE_ERRORS.MULLIGAN_DONE, message: '起手换牌只能进行一次' }
+      : null,
+    // 时间窗（Era 2026-10-19）：以 game:started 的事件时间戳为基准
+    state.startedAt !== null && ctx.now - state.startedAt > MULLIGAN_WINDOW_MS
+      ? { code: RULE_ERRORS.MULLIGAN_EXPIRED, message: '开局换牌时间窗已过' }
       : null,
   );
   if (guard) return { ok: false, error: guard };

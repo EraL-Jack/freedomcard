@@ -173,19 +173,21 @@ export async function phaseText(page: Page): Promise<string> {
 /**
  * 推进一个阶段并断言到位。
  *
- * ⚠️ 2026-10-18 两条 Era 指令改变了推进链：
+ * ⚠️ 2026-10-18/19 三条 Era 指令改变了推进链：
  *  - **重置阶段瞬穿**：从充能推进一次直接落在抽牌阶段（重置自动运行自动推进，
  *    停顿与动画由客户端播放节奏呈现，不占用阶段停留）；
  *  - **抽牌手动化**：推进**进入**抽牌阶段后必须点击我方卡组（`draw-deck`，
- *    发光动作按钮）完成抽牌 —— 未抽牌时服务端拒绝继续推进。
+ *    发光动作按钮）完成抽牌 —— 未抽牌时服务端拒绝继续推进；
+ *  - **抽完自动推进**（2026-10-19）：点完卡组直接落在主要阶段，不用再点推进。
  */
 export async function advancePhase(page: Page, expectPhase: string): Promise<void> {
   await page.getByTestId('advance').click();
   await expect.poll(() => phaseText(page)).toContain(`阶段 ${expectPhase}`);
   if (expectPhase === '抽牌') {
     await page.getByTestId('draw-deck').click();
-    // 抽牌完成后动作按钮消失（drawnThisPhase = true）
-    await expect(page.getByTestId('draw-deck')).toHaveCount(0, { timeout: 10_000 });
+    // 抽牌完成后自动推进到主要阶段（Era 2026-10-19）；动作按钮随阶段离开而消失
+    await expect.poll(() => phaseText(page), { timeout: 10_000 }).toContain('阶段 主要');
+    await expect(page.getByTestId('draw-deck')).toHaveCount(0);
   }
 }
 
@@ -203,10 +205,9 @@ export async function playOneMinion(page: Page): Promise<void> {
   // ① 充能：逐张充能（D-112 排他选中），留一张随从准备出牌
   const charged = await chargeMinions(page);
 
-  // ② 推进到主要阶段（六阶段不可跳过；重置阶段瞬穿自动推进、抽牌阶段需点击卡组
-  //    —— 均为 Era 2026-10-18 指令）
+  // ② 推进到主要阶段（六阶段不可跳过；重置阶段瞬穿、抽牌手动点击且抽完自动推进
+  //    —— 均为 Era 2026-10-18/19 指令；`advancePhase(p,'抽牌')` 走完已落在主要）
   await advancePhase(page, '抽牌');
-  await advancePhase(page, '主要');
 
   // ③ 出一张**随从**。抽牌阶段抽过牌，手牌序号已变，必须重读。
   const hand1 = await readHand(page);

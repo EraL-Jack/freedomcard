@@ -232,7 +232,8 @@ export function reduce(state: GameState, event: GameEvent): GameState {
 
     case 'game:started': {
       const seats = list(event, 'seats');
-      return { ...state, seats, activeSeat: 0, started: true };
+      // startedAt = 换牌时间窗的计时基准（Era 2026-10-19，MULLIGAN_WINDOW_MS）
+      return { ...state, seats, activeSeat: 0, started: true, startedAt: event.at };
     }
 
     // 战斗的**纯记录**事件（ADR-0013）：破坏由随后的 `card:moved` 承载，
