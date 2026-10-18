@@ -128,7 +128,10 @@ function runtimeOf(roomId: string): RoomRuntime {
     rt.timer = new TurnTimer({
       now: () => Date.now(),
       scheduler: hostScheduler,
-      timeoutMs: TURN_TIMEOUT_MS,
+      // 测试可经环境变量放宽时限（与 GAME_SEED 同先例，ADR-0021）：全量并发下
+      // 30s 墙钟可能被播放队列 + 慢速渲染吃掉，超时兜底会抢在测试动作前结束回合。
+      // 生产不得设置。
+      timeoutMs: Number(process.env['TURN_TIMEOUT_MS'] ?? TURN_TIMEOUT_MS),
       onTimeout: () => handleTurnTimeout(roomId),
     });
     runtimes.set(roomId, rt);

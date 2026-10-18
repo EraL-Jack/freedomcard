@@ -28,6 +28,11 @@ test('拖拽手牌到费用区 = 充能；拖拽手牌到随从区 = 出牌', as
 
   // ① 充能阶段：拖一张随从到**我方费用区**（zone-cost nth(1)，B2 镜像）
   await expect.poll(() => phaseOf(p)).toContain('阶段 充能');
+  // ⚠️ 拖拽标记只在「可操作」时才挂（与置灰同一份判定）；播放队列未播完时标记未渲染，
+  //   必须等标记出现再拖，否则 pointerdown 找不到拖拽源 = 静默无效（全量并发下偶发超时的根因）。
+  await expect
+    .poll(() => p.getByTestId('hand').locator('[data-drag-uid]').count(), { timeout: 15_000 })
+    .toBeGreaterThan(0);
   const hand0 = await readHand(p);
   const minion = hand0.filter((c) => c.kind === '随从')[0];
   expect(minion, '起手应有可充能的随从').toBeDefined();
@@ -83,6 +88,12 @@ test('拖拽我方随从到对方随从 = 发起攻击', async ({ browser }) => 
   const second = await activePage(pages);
   await playOneMinion(second);
   await advancePhase(second, '战斗');
+  // 等拖拽标记挂上（战斗阶段 + 未休眠 → minionOperable 才渲染 data-drag-uid）。
+  // ⚠️ 标记在格子**自身**（BoardSlot 根元素），不是后代 —— 必须用属性交集选择器，
+  //   写成 `.locator('[data-drag-uid]')` 会永远数到 0（2026-10-18 实测）。
+  await expect
+    .poll(() => second.locator('[data-testid="slot-0"][data-drag-uid]').count(), { timeout: 15_000 })
+    .toBe(1);
 
   const foeGraveBefore = await zoneCount(second, 'graveyard', 0);
   const myGraveBefore = await zoneCount(second, 'graveyard', 1);
