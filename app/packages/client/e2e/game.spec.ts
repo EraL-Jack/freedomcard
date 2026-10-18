@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import { startGame } from './helpers.js';
+import { startGame, activePage } from './helpers.js';
 
 /**
  * 联机开局端到端验证（真界面）。
@@ -34,4 +34,48 @@ test('双方准备后开局，对战桌按 B2 布局渲染', async ({ browser })
 
   // 费用区按 B2-3 直接显示数量
   await expect(host.getByTestId('zone-cost').first()).toBeVisible({ timeout: 10_000 });
+});
+
+test('卡牌详情：点「?」按钮可查看完整效果文本（Era 2026-10-18）', async ({ browser }) => {
+  const { host } = await startGame(browser);
+
+  // 指挥官区固定是炎刃军统领（卡面文本长、含多段效果），用它验证详情浮层。
+  // 开局事件经播放队列逐条呈现，等指挥官区渲染出来。
+  const commander = host.getByTestId('zone-commander').nth(1); // 镜像布局，nth(1) = 我方
+  await expect(commander).toContainText('炎刃军统领', { timeout: 15_000 });
+
+  await commander.locator('[data-testid="card-detail"]').click();
+  const overlay = host.getByTestId('card-detail-overlay');
+  await expect(overlay).toBeVisible();
+  // 完整效果文本必须可见（不只是卡面摘要）—— 取统领效果 Ⅱ 的原文片段
+  await expect(overlay).toContainText('可以将一张手牌除外');
+  await expect(overlay).toContainText('成长档位');
+
+  await host.getByTestId('card-detail-close').click();
+  await expect(overlay).toHaveCount(0);
+});
+
+test('统领效果Ⅱ：发动 → 选择手牌 → 除外（ADR-0023 / X-16）', async ({ browser }) => {
+  const { host, guest } = await startGame(browser);
+  // 效果发动要求是我的回合 —— 先找到行动方
+  const p = await activePage([host, guest]);
+
+  const handBefore = await p.getByTestId('hand').locator('[data-testid="card"]').count();
+
+  // 打开我方指挥官详情 → 发动效果Ⅱ
+  const commander = p.getByTestId('zone-commander').nth(1);
+  await expect(commander).toContainText('炎刃军统领', { timeout: 15_000 });
+  await commander.locator('[data-testid="card-detail"]').click();
+  await p.getByTestId('effect-2').click();
+
+  // 待定选择浮层：列出全部手牌供选择
+  const overlay = p.getByTestId('choice-overlay');
+  await expect(overlay).toBeVisible({ timeout: 10_000 });
+  await overlay.getByTestId('choice-card').first().click();
+
+  // 手牌少一张，除外区 +1
+  await expect(p.getByTestId('hand').locator('[data-testid="card"]')).toHaveCount(handBefore - 1, {
+    timeout: 10_000,
+  });
+  await expect(p.getByTestId('zone-exile').nth(1)).toContainText('1', { timeout: 10_000 });
 });

@@ -72,6 +72,32 @@ test('满员后第三人加入被拒', async ({ browser }) => {
   await expect(c.getByTestId('notice')).toContainText('房间已满', { timeout: 10_000 });
 });
 
+test('对局中一方离开：另一方看到对局结束并可返回主界面（D-122）', async ({ browser }) => {
+  const host = await newClient(browser, 'Host');
+  await host.getByTestId('create').click();
+  const codeEl = host.getByTestId('room-code');
+  await expect(codeEl).toBeVisible({ timeout: 10_000 });
+  const code = ((await codeEl.textContent()) ?? '').trim();
+
+  const guest = await newClient(browser, 'Guest');
+  await guest.getByTestId('code').fill(code);
+  await guest.getByTestId('join').click();
+  await expect(guest.getByText('2/2 人')).toBeVisible({ timeout: 10_000 });
+
+  // 双方准备 → 开局
+  await host.getByTestId('ready').click();
+  await guest.getByTestId('ready').click();
+  await expect(host.getByTestId('turn')).toBeVisible({ timeout: 15_000 });
+
+  // 一方中途离开 → 服务端系统代认输，另一方应看到「对局结束」面板而非空白页
+  await guest.getByTestId('leave').click();
+  await expect(host.getByTestId('game-result')).toHaveText('胜利', { timeout: 15_000 });
+
+  // 结束面板提供出口：返回主界面
+  await host.getByTestId('back-home').click();
+  await expect(host.getByTestId('nickname')).toBeVisible({ timeout: 10_000 });
+});
+
 test('三档视口下占位界面不溢出', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByText('服务端已连接')).toBeVisible({ timeout: 15_000 });

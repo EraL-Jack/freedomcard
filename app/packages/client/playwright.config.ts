@@ -26,7 +26,7 @@ export default defineConfig({
     // ADR-0021：固定随机种子，使牌序与先后手确定，E2E 才能写确定断言。
     // 用 `env` 而非命令前缀，是因为 WebServer 在 Windows 下走 cmd.exe，
     // `VAR=x pnpm dev` 这种 shell 语法在那里不成立。
-    env: { GAME_SEED: '20261013' },
+    env: { GAME_SEED: '20261013', TURN_TIMEOUT_MS: '120000' },
     // 实测（2026-10-13，Windows 11 / pnpm 12.11.2）：webServer 自行拉起
     // `pnpm -r --parallel dev` 时收不到就绪信号，会卡到 timeout；但服务本身能起来。
     // 因此本机 Windows 上改为先手动 `pnpm dev`，靠 reuseExistingServer 复用，已验证 3/3 通过。

@@ -13,6 +13,8 @@ export type {
   CardDef,
   CardInstance,
   PlayerState,
+  TurnTrigger,
+  PendingChoice,
 } from './types.js';
 
 export {

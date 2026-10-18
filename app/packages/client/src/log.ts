@@ -131,6 +131,31 @@ export function describeEvent(
     case 'turn:changed':
       return `—— 第 ${num('turn') ?? '?'} 回合 ——`;
 
+    /* ---- 效果系统（ADR-0023）：内部记账事件不进日志，玩家可见的给中文 ---- */
+    case 'choice:pending':
+    case 'choice:cleared':
+      return null; // 选择的挂起/清除由浮层呈现，日志不需要
+
+    case 'effect:used':
+      return `${who(names, str('playerId'))} 发动效果`;
+
+    case 'unit:modified': {
+      const name = cardName(defIdOf(state, str('uid')));
+      const tp = num('tempPower');
+      const td = num('tempDamage');
+      if (tp) return `${name} 本回合力量 ${tp > 0 ? '+' : ''}${tp}`;
+      if (td) return `${name} 本回合对指挥官伤害 ${td > 0 ? '+' : ''}${td}`;
+      if (p['attackRefresh'] === true) return `${name} 获得「一回合一次，攻击后重置」`;
+      if (p['attackRefresh'] === false) return `${name} 攻击后重置已生效（本回合已用完）`;
+      return null;
+    }
+
+    case 'trigger:added':
+      return `${who(names, str('playerId'))} 的军师效果生效中（本回合）`;
+
+    case 'trigger:spent':
+      return null; // 触发消耗已由 unit:modified 的那行表达
+
     case 'game:ended':
       return `对局结束，胜者：${who(names, str('winner'))}`;
 

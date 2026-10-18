@@ -37,7 +37,8 @@ test('出随从 → 战斗阶段发起攻击 → 力量值裁决并结算', asyn
 
   const turn0 = await turnNo(first);
   await first.getByTestId('end-turn').click();
-  await expect.poll(() => turnNo(first)).toBe(turn0 + 1);
+  // 事件播放队列（FX 节奏）会让回合切换晚几秒到达客户端 —— poll 超时放宽到 15s
+  await expect.poll(() => turnNo(first), { timeout: 15_000 }).toBe(turn0 + 1);
 
   // ② 后攻方：出随从 → 推进到战斗阶段
   const second = await activePage(pages);
@@ -85,7 +86,8 @@ test('攻击对方指挥官 → 对方掉血（ADR-0022）', async ({ browser })
   // 也就不会触发 A7 的「嘲讽必须优先」限制，攻击指挥官这条路才走得通。
   const first = await activePage(pages);
   await first.getByTestId('end-turn').click();
-  await expect.poll(() => turnNo(first)).toBe(2);
+  // 事件播放队列（FX 节奏）会让回合切换晚几秒到达客户端 —— poll 超时放宽到 15s
+  await expect.poll(() => turnNo(first), { timeout: 15_000 }).toBe(2);
 
   const second = await activePage(pages);
   await playOneMinion(second);

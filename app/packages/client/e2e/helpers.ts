@@ -111,10 +111,36 @@ export async function readHand(page: Page): Promise<HandCard[]> {
   return out;
 }
 
-/** 选中手牌中的若干张（多选，索引基于调用时刻的手牌快照）。 */
+/** 选中手牌中的一张（D-112 起选中**排他**：点一张即选中，再点取消或换选）。 */
 export async function pick(page: Page, indices: readonly number[]): Promise<void> {
   const cards = page.getByTestId('hand').locator('[data-testid="card"]');
   for (const i of indices) await cards.nth(i).click();
+}
+
+/**
+ * 在充能阶段**逐张**充能随从。
+ *
+ * D-112 起选中排他 + 操作按钮挂在卡旁（Era 2026-10-18），「多张充能」
+ * 在界面上 = 多次「点一张 → 点卡旁的充能按钮」（规则侧 X-2 允许任意数量，
+ * 协议支持逐张发，二者等价）。
+ *
+ * 每充一张手牌就变化，故每轮重读手牌；留一张随从不出（供后续出牌测试）。
+ * 返回实际充能张数。
+ */
+export async function chargeMinions(page: Page): Promise<number> {
+  // 从**当前**费用区张数起算（调用前可能已有拖拽充能，drag.spec 2026-10-18）。
+  // 返回充能完成后费用区的总张数。
+  let total = await zoneCount(page, 'cost', 1);
+  for (;;) {
+    const hand = await readHand(page);
+    const minions = hand.filter((c) => c.kind === '随从');
+    if (minions.length <= 1) break; // 留一张随从供出牌；极端牌序（起手仅 1 随从）则充 0 张
+    await pick(page, [minions[0]!.index]);
+    await page.getByTestId('charge').click();
+    total += 1;
+    await expect.poll(() => zoneCount(page, 'cost', 1)).toBe(total);
+  }
+  return total;
 }
 
 /**
@@ -145,6 +171,25 @@ export async function phaseText(page: Page): Promise<string> {
 }
 
 /**
+ * 推进一个阶段并断言到位。
+ *
+ * ⚠️ 2026-10-18 两条 Era 指令改变了推进链：
+ *  - **重置阶段瞬穿**：从充能推进一次直接落在抽牌阶段（重置自动运行自动推进，
+ *    停顿与动画由客户端播放节奏呈现，不占用阶段停留）；
+ *  - **抽牌手动化**：推进**进入**抽牌阶段后必须点击我方卡组（`draw-deck`，
+ *    发光动作按钮）完成抽牌 —— 未抽牌时服务端拒绝继续推进。
+ */
+export async function advancePhase(page: Page, expectPhase: string): Promise<void> {
+  await page.getByTestId('advance').click();
+  await expect.poll(() => phaseText(page)).toContain(`阶段 ${expectPhase}`);
+  if (expectPhase === '抽牌') {
+    await page.getByTestId('draw-deck').click();
+    // 抽牌完成后动作按钮消失（drawnThisPhase = true）
+    await expect(page.getByTestId('draw-deck')).toHaveCount(0, { timeout: 10_000 });
+  }
+}
+
+/**
  * 在**当前行动方的回合**里走完「充能 → 推进到主要 → 出一张随从」。
  *
  * 攻击链路要用它造出**攻击方与靶子**，故只出**随从**（法术进法术区，不能攻击）。
@@ -155,30 +200,13 @@ export async function phaseText(page: Page): Promise<string> {
  * ⚠️ 前置：调用时该页面必须是行动方，且处于充能阶段。
  */
 export async function playOneMinion(page: Page): Promise<void> {
-  // ① 充能：留一张随从准备出牌，其余随从进费用区（X-2：只有随从可充能）
-  const hand0 = await readHand(page);
-  const minions0 = hand0.filter((c) => c.kind === '随从');
-  expect(minions0.length, '手牌应有可充能的随从').toBeGreaterThan(0);
+  // ① 充能：逐张充能（D-112 排他选中），留一张随从准备出牌
+  const charged = await chargeMinions(page);
 
-  const target = [...hand0]
-    .sort((a, b) => a.cost - b.cost)
-    .find((c) => c.cost <= minions0.filter((m) => m.index !== c.index).length);
-  expect(target).toBeDefined();
-
-  const chargeable = minions0.filter((m) => m.index !== target!.index);
-  // 至少充 1 张：若目标费用为 0，只按费用算会充 0 张，就测不到充能了。
-  const chargeCount = Math.min(chargeable.length, Math.max(1, target!.cost));
-  await pick(page, chargeable.slice(0, chargeCount).map((m) => m.index));
-  await page.getByTestId('charge').click();
-  await expect.poll(() => zoneCount(page, 'cost', 1)).toBe(chargeCount);
-
-  // ② 推进到主要阶段（六阶段不可跳过）
-  await page.getByTestId('advance').click();
-  await expect.poll(() => phaseText(page)).toContain('阶段 重置');
-  await page.getByTestId('advance').click();
-  await expect.poll(() => phaseText(page)).toContain('阶段 抽牌');
-  await page.getByTestId('advance').click();
-  await expect.poll(() => phaseText(page)).toContain('阶段 主要');
+  // ② 推进到主要阶段（六阶段不可跳过；重置阶段瞬穿自动推进、抽牌阶段需点击卡组
+  //    —— 均为 Era 2026-10-18 指令）
+  await advancePhase(page, '抽牌');
+  await advancePhase(page, '主要');
 
   // ③ 出一张**随从**。抽牌阶段抽过牌，手牌序号已变，必须重读。
   const hand1 = await readHand(page);
@@ -187,7 +215,7 @@ export async function playOneMinion(page: Page): Promise<void> {
     .filter((c) => c.kind === '随从')
     .filter((c) => c.cost <= costZone)
     .sort((a, b) => a.cost - b.cost)[0];
-  expect(chosen, `费用区 ${costZone} 张，应存在支付得起的随从`).toBeDefined();
+  expect(chosen, `费用区 ${costZone} 张（充能 ${charged}），应存在支付得起的随从`).toBeDefined();
 
   await pick(page, [chosen!.index]);
   await page.getByTestId('play').click();

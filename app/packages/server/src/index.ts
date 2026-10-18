@@ -128,7 +128,10 @@ function runtimeOf(roomId: string): RoomRuntime {
     rt.timer = new TurnTimer({
       now: () => Date.now(),
       scheduler: hostScheduler,
-      timeoutMs: TURN_TIMEOUT_MS,
+      // 测试可经环境变量放宽时限（与 GAME_SEED 同先例，ADR-0021）：全量并发下
+      // 30s 墙钟可能被播放队列 + 慢速渲染吃掉，超时兜底会抢在测试动作前结束回合。
+      // 生产不得设置。
+      timeoutMs: Number(process.env['TURN_TIMEOUT_MS'] ?? TURN_TIMEOUT_MS),
       onTimeout: () => handleTurnTimeout(roomId),
     });
     runtimes.set(roomId, rt);
@@ -443,6 +446,35 @@ io.on('connection', (socket) => {
     const r = roomManager.leave(playerId);
     if (!r.ok) return ack?.({ ok: false, error: r.error, message: r.message });
     if (before) void socket.leave(before.room.id);
+
+    // 对局进行中离场 = 系统代为认输（Era 2026-10-18：一方离开后另一方卡在空白页）。
+    // 走系统 Intent 而非直接改状态 —— 结算仍由引擎产出标准 game:ended 事件，
+    // 留下的玩家按正常事件流收到「对局结束」，不需要客户端特例。
+    if (before) {
+      const rt = runtimes.get(before.room.id);
+      if (rt && rt.state.started && rt.state.winner === null && playerId in rt.state.players) {
+        const intent: Intent = {
+          type: core.INTENTS.concede,
+          actor: 'system',
+          playerId,
+          seq: rt.serverSeq + 1,
+          reason: 'opponent-left',
+        };
+        const result = submitSystemIntent(rt.state, intent, {
+          engine,
+          replay: rt.replay,
+          now: () => Date.now(),
+          cards: CARD_POOL,
+          emit: (out) => emitGameOut(before.room.id, rt, out),
+        });
+        rt.state = result.state;
+        if (rt.state.winner !== null) {
+          before.room.phase = 'ended';
+          rt.timer.clear();
+        }
+      }
+    }
+
     if (r.value.room) broadcastRoom(r.value.room.id);
     else sweepRuntimes();
     ack?.({ ok: true });

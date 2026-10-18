@@ -110,6 +110,63 @@ export function reduce(state: GameState, event: GameEvent): GameState {
         p.zones.board = p.zones.board.map((c) => ({ ...c, sleeping: false }));
       });
 
+    /** 临时修正写入（ADR-0023 §3）：统领 3/7/9 档与军师触发器的载体。 */
+    case 'unit:modified': {
+      const id = s(event, 'playerId');
+      const uid = s(event, 'uid');
+      return withPlayer(state, id, (p) => {
+        const patch = (c: CardInstance): CardInstance => {
+          if (c.uid !== uid) return c;
+          const next = { ...c };
+          const tp = event.payload?.['tempPower'];
+          if (typeof tp === 'number') next.tempPower = (next.tempPower ?? 0) + tp;
+          const td = event.payload?.['tempDamage'];
+          if (typeof td === 'number') next.tempDamage = (next.tempDamage ?? 0) + td;
+          const ar = event.payload?.['attackRefresh'];
+          if (ar === true) next.attackRefresh = true;
+          // H23：「一回合一次，攻击后重置」生效后由 attack.ts 发 false 消耗
+          if (ar === false) delete next.attackRefresh;
+          return next;
+        };
+        p.zones.board = p.zones.board.map(patch);
+        p.zones.commander = p.zones.commander.map(patch);
+      });
+    }
+
+    /** 「每回合一次」记帐（ADR-0023 §3）。 */
+    case 'effect:used':
+      return withPlayer(state, s(event, 'playerId'), (p) => {
+        const key = s(event, 'key');
+        if (key && !p.effectsUsed.includes(key)) p.effectsUsed = [...p.effectsUsed, key];
+      });
+
+    /** 回合触发器登记（军师）。 */
+    case 'trigger:added':
+      return withPlayer(state, s(event, 'playerId'), (p) => {
+        const t = event.payload?.['trigger'];
+        if (t && typeof t === 'object') {
+          p.turnTriggers = [...p.turnTriggers, t as unknown as (typeof p.turnTriggers)[number]];
+        }
+      });
+
+    /** 触发器消耗一次（军师：炎刃随从登场 +1 已结算）。 */
+    case 'trigger:spent':
+      return withPlayer(state, s(event, 'playerId'), (p) => {
+        const sourceUid = s(event, 'sourceUid');
+        p.turnTriggers = p.turnTriggers
+          .map((t) => (t.sourceUid === sourceUid ? { ...t, remaining: t.remaining - 1 } : t))
+          .filter((t) => t.remaining > 0);
+      });
+
+    /** 待定选择挂起 / 清除（ADR-0023 §2）—— 选择是状态的一部分，必须走事件。 */
+    case 'choice:pending': {
+      const choice = event.payload?.['choice'];
+      if (!choice || typeof choice !== 'object') return state;
+      return { ...state, pendingChoice: choice as unknown as GameState['pendingChoice'] };
+    }
+    case 'choice:cleared':
+      return { ...state, pendingChoice: null };
+
     case 'unit:asleep': {
       const id = s(event, 'playerId');
       const uid = s(event, 'uid');
@@ -128,11 +185,50 @@ export function reduce(state: GameState, event: GameEvent): GameState {
         p.maxCost = n(event, 'value');
       });
 
-    case 'phase:changed':
-      return { ...state, phase: s(event, 'to') as GameState['phase'] };
+    case 'phase:changed': {
+      const to = s(event, 'to') as GameState['phase'];
+      // 进入抽牌阶段 → 重置「已抽」标记（Era 2026-10-18：抽牌改为手动点击卡组）。
+      let next: GameState = { ...state, phase: to, ...(to === 'draw' ? { drawnThisPhase: false } : {}) };
+      // 「每回合一次」在自己回合重置（Era 2026-10-18 口径，ADR-0023 §3）：
+      // 进入**己方充能阶段**时清空记帐 —— 与指挥官成长同一接线点。
+      if (to === 'charge') {
+        const active = next.seats[next.activeSeat];
+        if (active) {
+          next = withPlayer(next, active, (p) => {
+            p.effectsUsed = [];
+          });
+        }
+      }
+      return next;
+    }
 
-    case 'turn:changed':
-      return { ...state, turn: n(event, 'turn'), activeSeat: n(event, 'activeSeat') };
+    /** 手动抽牌完成（`draw.ts`）—— 标记本阶段已抽，允许推进到下一阶段。 */
+    case 'draw:completed':
+      return { ...state, drawnThisPhase: true };
+
+    case 'turn:changed': {
+      // 回合切换 = 「本回合」词缀的边界（ADR-0023 §3）：
+      // 清空全场卡的临时修正与双方触发器。
+      const players: GameState['players'] = {};
+      for (const [id, p] of Object.entries(state.players)) {
+        players[id] = {
+          ...p,
+          turnTriggers: [],
+          zones: {
+            ...p.zones,
+            board: p.zones.board.map((c) => {
+              const { tempPower: _tp, tempDamage: _td, attackRefresh: _ar, ...rest } = c;
+              return rest;
+            }),
+            commander: p.zones.commander.map((c) => {
+              const { tempPower: _tp, tempDamage: _td, attackRefresh: _ar, ...rest } = c;
+              return rest;
+            }),
+          },
+        };
+      }
+      return { ...state, players, turn: n(event, 'turn'), activeSeat: n(event, 'activeSeat') };
+    }
 
     case 'game:started': {
       const seats = list(event, 'seats');

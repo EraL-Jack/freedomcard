@@ -127,8 +127,16 @@ export const RULE_ERRORS = {
   MUST_ATTACK_TAUNT: 'MUST_ATTACK_TAUNT',
   GAME_OVER: 'GAME_OVER',
   MULLIGAN_DONE: 'MULLIGAN_DONE',
+  /** 本抽牌阶段已抽过牌（抽牌为手动点击卡组，Era 2026-10-18）。 */
+  DRAW_DONE: 'DRAW_DONE',
   /** 卡组构成不合法（主卡组张数、同名上限、指挥官缺失或类型错）。 */
   INVALID_DECK: 'INVALID_DECK',
+  /** 有待定选择挂起，须先由该玩家回答（ADR-0023 §2 全局守卫）。 */
+  PENDING_CHOICE: 'PENDING_CHOICE',
+  /** 效果当前不可发动（次数已用 / 条件不满足 / 支付不足）。 */
+  EFFECT_UNAVAILABLE: 'EFFECT_UNAVAILABLE',
+  /** 回答的不是待定选择的合法选项。 */
+  INVALID_CHOICE: 'INVALID_CHOICE',
 } as const;
 
 export type RuleErrorCode = (typeof RULE_ERRORS)[keyof typeof RULE_ERRORS];

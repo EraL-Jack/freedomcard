@@ -60,3 +60,69 @@ input:-webkit-autofill {
   -webkit-text-fill-color: #e2e8f0;
   transition: background-color 9999s ease-out;
 }
+
+/*
+ * 事件呈现层（横幅/飘字）入场动画 —— Era 2026-10-18：过阶段与对战过程要有可见反馈。
+ * 只播入场；退场由播放队列切换到下一条事件时直接替换（每条事件横幅停留时长见 useRoom FX_MS）。
+ */
+@keyframes fx-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.85) translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.fx-pop {
+  animation: fx-pop 0.22s ease-out;
+}
+
+/*
+ * 战斗卡牌动画（Era 2026-10-18：对战详情过程在卡牌动画中体现）。
+ * 播放队列播到「裁决」事件时，攻击方/目标卡牌各自播一次（时长由队列停顿兜底）。
+ */
+@keyframes anim-lunge-up {
+  0% { transform: translateY(0); }
+  35% { transform: translateY(-16px) scale(1.06); }
+  100% { transform: translateY(0); }
+}
+
+@keyframes anim-lunge-down {
+  0% { transform: translateY(0); }
+  35% { transform: translateY(16px) scale(1.06); }
+  100% { transform: translateY(0); }
+}
+
+@keyframes anim-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-5px); }
+  40% { transform: translateX(5px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(3px); }
+}
+
+.anim-lunge-up {
+  animation: anim-lunge-up 0.5s ease-out;
+}
+
+.anim-lunge-down {
+  animation: anim-lunge-down 0.5s ease-out;
+}
+
+.anim-shake {
+  animation: anim-shake 0.45s ease-in-out;
+}
+
+/* 破坏残影（D-119）：亮起→收缩淡出。B4 原填「爆炸」，素材（B7-3）到位前用 CSS 呈现。 */
+@keyframes anim-destroy {
+  0% { opacity: 1; transform: scale(1); filter: brightness(1); }
+  35% { opacity: 1; transform: scale(1.12); filter: brightness(2.2); }
+  100% { opacity: 0; transform: scale(0.35) rotate(10deg); filter: brightness(0.6); }
+}
+
+.anim-destroy {
+  animation: anim-destroy 0.58s ease-in forwards;
+}

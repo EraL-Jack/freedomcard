@@ -13,6 +13,8 @@ import { register } from '../registry.js';
 import { attackRule } from './attack.js';
 import { chargeRule } from './charge.js';
 import { concedeRule } from './concede.js';
+import { drawRule } from './draw.js';
+import { effectActivateRule, effectChooseRule } from './effect.js';
 import { mulliganRule } from './mulligan.js';
 import { phaseRule } from './phase.js';
 import { playRule } from './play.js';
@@ -27,6 +29,11 @@ export const INTENTS = {
   charge: 'charge:put',
   play: 'card:play',
   attack: 'attack:declare',
+  /** 手动抽牌 —— Era 2026-10-18：抽牌阶段点击牌组触发。 */
+  draw: 'card:draw',
+  /** 效果系统（ADR-0023）：发动卡面效果 / 回答待定选择。 */
+  effectActivate: 'effect:activate',
+  effectChoose: 'effect:choose',
   turnEnd: 'turn:end',
   concede: 'game:concede',
 } as const;
@@ -39,8 +46,12 @@ register(INTENTS.phaseAdvance, phaseRule);
 register(INTENTS.charge, chargeRule);
 register(INTENTS.play, playRule);
 register(INTENTS.attack, attackRule);
+register(INTENTS.draw, drawRule);
+register(INTENTS.effectActivate, effectActivateRule);
+register(INTENTS.effectChoose, effectChooseRule);
 register(INTENTS.turnEnd, turnEndRule);
 register(INTENTS.concede, concedeRule);
 
-export { attackRule, chargeRule, concedeRule, mulliganRule, phaseRule, playRule, startRule, turnEndRule };
+export { attackRule, chargeRule, concedeRule, drawRule, mulliganRule, phaseRule, playRule, startRule, turnEndRule };
+export { drawCountFor, drawForPhase } from './draw.js';
 export { PHASE_ORDER, maxCostForTurn } from './phase.js';
