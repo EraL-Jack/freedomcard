@@ -812,6 +812,15 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
       {state.pendingChoice && state.pendingChoice.playerId === me ? (
         <ChoiceOverlay choice={state.pendingChoice} state={state} onChoose={(c) => session.chooseEffect(c)} />
       ) : null}
+      {/* 对方在选择中 —— 给个明确指示，否则对面停着不动像掉线（Era：提示要明显） */}
+      {state.pendingChoice && state.pendingChoice.playerId !== me ? (
+        <div
+          className="fixed left-1/2 top-16 z-40 -translate-x-1/2 rounded-lg border border-cyan-600/50 bg-slate-900/90 px-4 py-2 text-xs text-cyan-200"
+          data-testid="foe-choosing"
+        >
+          对方正在选择…
+        </div>
+      ) : null}
       {/* 回合数 / 计时居中（B2-5） */}
       <header className="flex items-center justify-center gap-3 text-xs sm:text-sm">
         <span data-testid="turn">第 {state.turn} 回合</span>

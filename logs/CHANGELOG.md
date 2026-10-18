@@ -1771,3 +1771,12 @@ UI 按现行规则放行；是否放开后攻方换牌待 Era 拍板。
   playwright webServer env 注入 120s。
 - 验证：组合负载（drag+combat+turn）与全量各跑一遍，15 passed 全绿。
 - 破坏性：**否**
+
+## D-126 效果事件日志人话化 + 对方选择指示（D-124 跟进）
+
+- 新事件类型的日志翻译：`effect:used`（谁发动效果）、`unit:modified`（力量/伤害加成、
+  攻击后重置）、`trigger:added`（军师效果生效中）；`choice:pending/cleared`、`trigger:spent`
+  为内部记账事件不进日志。
+- 对方的待定选择挂起时显示「对方正在选择…」（否则对面停着不动像掉线）。
+- 回归：typecheck 0 / lint 0 / 单测 92+51 / E2E 15 passed。
+- 破坏性：**否**
