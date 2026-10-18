@@ -45,10 +45,10 @@ test('拖拽手牌到费用区 = 充能；拖拽手牌到随从区 = 出牌', as
   );
   await expect.poll(() => zoneCount(p, 'cost', 1)).toBe(costBefore + 1);
 
-  // ② 推进到主要阶段（重置瞬穿 + 点卡组抽牌），再拖一张支付得起的手牌到随从区
+  // ② 推进到主要阶段（重置瞬穿 + 点卡组抽牌 + 抽完自动推进，Era 2026-10-19），
+  //    再拖一张支付得起的手牌到随从区
   await chargeMinions(p); // 继续充能凑费用（逐张，排他选中兼容）
-  await advancePhase(p, '抽牌');
-  await advancePhase(p, '主要');
+  await advancePhase(p, '抽牌'); // 抽完自动落在主要阶段（helper 内断言）
 
   const hand1 = await readHand(p);
   const costZone = await zoneCount(p, 'cost', 1);

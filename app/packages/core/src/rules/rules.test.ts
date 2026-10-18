@@ -8,6 +8,7 @@ import {
   INITIAL_HEALTH,
   KEYWORD_TAUNT,
   MAIN_DECK_SIZE,
+  MULLIGAN_WINDOW_MS,
   RULE_ERRORS,
   type CardDef,
   type CardInstance,
@@ -301,15 +302,35 @@ describe('起手换牌 mulliganRule', () => {
       if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.CARD_NOT_IN_ZONE);
     }
   });
+
+  it('时间窗（Era 2026-10-19）：开局后 MULLIGAN_WINDOW_MS 内可换，过后拒绝 MULLIGAN_EXPIRED', () => {
+    const s = started(); // game:started at = CTX.now = 1000 → startedAt = 1000
+    const active = s.seats[0]!;
+
+    // 窗口边缘（恰好 30s）仍可用
+    const edge = applyIntent(s, intent(active, INTENTS.mulligan, { returns: [] }), {
+      ...CTX,
+      now: 1000 + MULLIGAN_WINDOW_MS,
+    });
+    expect(edge.ok).toBe(true);
+
+    // 超过窗口 → 拒绝
+    const late = applyIntent(s, intent(active, INTENTS.mulligan, { returns: [] }), {
+      ...CTX,
+      now: 1000 + MULLIGAN_WINDOW_MS + 1,
+    });
+    expect(late.ok).toBe(false);
+    if (!late.ok) expect(late.error.code).toBe(RULE_ERRORS.MULLIGAN_EXPIRED);
+  });
 });
 
 /* ------------------------------ 阶段流转 ------------------------------ */
 
 describe('阶段流转 phaseRule', () => {
-  it('六阶段顺序固定，逐档推进不跳步（重置阶段事件完整但瞬穿自动推进，Era 2026-10-18）', () => {
+  it('六阶段顺序固定，逐档推进不跳步（重置瞬穿 + 抽完自动推进，Era 2026-10-18/19）', () => {
     const s0 = craft({ phase: 'charge', turn: 2 });
-    // 从充能推进 4 次：抽牌（经重置瞬穿）→ 主要 → 战斗 → 结束
-    const r = advance(s0, 4);
+    // 从充能推进 3 次：抽牌（经重置瞬穿，helper 内补抽牌动作并自动进入主要）→ 战斗 → 结束
+    const r = advance(s0, 3);
     const chain = r.events.filter((e) => e.type === 'phase:changed').map((e) => e.payload?.['to']);
     expect(chain).toEqual(['reset', 'draw', 'main', 'battle', 'end']);
   });
@@ -324,7 +345,7 @@ describe('阶段流转 phaseRule', () => {
     expect(after.players['p1']!.zones.board.every((x) => x.sleeping !== true)).toBe(true);
   });
 
-  it('抽牌不再自动：进入抽牌阶段手牌不变，点击卡组才抽；未抽禁止推进（Era 2026-10-18）', () => {
+  it('抽牌不再自动：进入抽牌阶段手牌不变，点击卡组才抽；抽完自动推进（Era 2026-10-18/19）', () => {
     // 充能 →（重置瞬穿）→ 抽牌：一次推进即达抽牌阶段，且**不自动抽**
     let s = run(craft({ phase: 'charge', turn: 2 }), intent('p1', INTENTS.phaseAdvance));
     expect(s.phase).toBe('draw');
@@ -336,19 +357,19 @@ describe('阶段流转 phaseRule', () => {
     expect(blocked.ok).toBe(false);
     if (!blocked.ok) expect(blocked.error.message).toContain('抽牌');
 
-    // 点击卡组 → 抽 2 张（A9 补充 1）
+    // 点击卡组 → 抽 2 张（A9 补充 1）并**自动推进到主要阶段**（Era 2026-10-19）
     s = run(s, intent('p1', INTENTS.draw));
     expect(s.players['p1']!.zones.hand.length).toBe(2);
-    expect(s.drawnThisPhase).toBe(true);
+    expect(s.phase).toBe('main');
 
-    // 重复抽牌被拒
+    // 重复抽牌被拒（已不在抽牌阶段）
     const again = applyIntent(s, intent('p1', INTENTS.draw), CTX);
     expect(again.ok).toBe(false);
-    if (!again.ok) expect(again.error.code).toBe(RULE_ERRORS.DRAW_DONE);
+    if (!again.ok) expect(again.error.code).toBe(RULE_ERRORS.WRONG_PHASE);
 
-    // 抽过之后可以推进
+    // 主要阶段正常推进
     s = run(s, intent('p1', INTENTS.phaseAdvance));
-    expect(s.phase).toBe('main');
+    expect(s.phase).toBe('battle');
   });
 
   it('第一回合先攻方点击卡组只抽 1 张（A10-3）', () => {
@@ -359,8 +380,8 @@ describe('阶段流转 phaseRule', () => {
 
   it('结束阶段之后进入下一回合：换行动方、回合 +1、最高费用按曲线增长', () => {
     let s = craft({ phase: 'charge', turn: 1, activeSeat: 0 });
-    // 重置瞬穿后，一回合只需 5 次推进：抽牌→主要→战斗→结束→下一回合充能
-    s = advance(s, 5).state;
+    // 重置瞬穿 + 抽完自动推进后，一回合只需 4 次推进：抽牌（抽完自动进主要）→战斗→结束→下一回合充能
+    s = advance(s, 4).state;
     expect(s.turn).toBe(2);
     expect(s.activeSeat).toBe(1);
     expect(s.phase).toBe('charge');
@@ -836,7 +857,7 @@ describe('指挥官力量值曲线（X-7 / ADR-0016）', () => {
   it('后攻方在自己的第一个充能阶段才成长到 1', () => {
     const { state: s0 } = startWithCurve();
     const second = s0.seats[1]!;
-    const s1 = advance(s0, 6).state; // 先攻方走完六阶段 → 后攻方第一回合充能阶段
+    const s1 = advance(s0, 4).state; // 先攻方走完一回合（抽完自动推进后每回合 4 次）→ 后攻方第一回合充能阶段
     expect(s1.turn).toBe(2);
     expect(s1.players[second]!.commanderPowerIndex).toBe(1);
     expect(unitPower(s1, CARDS, `${second}#commander`)).toBe(1);
@@ -847,15 +868,15 @@ describe('指挥官力量值曲线（X-7 / ADR-0016）', () => {
     const uid = `${s0.seats[0]!}#commander`;
     const powers = [
       unitPower(s0, CARDS, uid),
-      unitPower(advance(s0, 12).state, CARDS, uid),
-      unitPower(advance(s0, 24).state, CARDS, uid),
+      unitPower(advance(s0, 8).state, CARDS, uid), // 第 3 回合充能（先攻方第二次）
+      unitPower(advance(s0, 16).state, CARDS, uid), // 第 5 回合充能（先攻方第三次）
     ];
     expect(powers).toEqual([1, 3, 5]);
   });
 
   it('走到末档后封顶：第 4 回合仍为 5，且不再产出成长事件', () => {
     const { state: s0 } = startWithCurve();
-    const a = advance(s0, 36);
+    const a = advance(s0, 28); // 7 个完整回合（4 次/回合）—— 无论 p1 先后手都经历 4 次充能
     expect(a.state.players['p1']!.commanderPowerIndex).toBe(3);
     expect(unitPower(a.state, CARDS, 'p1#commander')).toBe(5);
     // 先攻方共经历 4 次充能，但只有前 3 次推进了档位 → 3 条事件

@@ -4,6 +4,7 @@ import * as core from '@app/core';
 import type { CardInstance, GameState, PlayerId, PlayerState, Zone } from '@app/shared';
 
 import { CARD_POOL } from '@app/shared/cards';
+import { MULLIGAN_WINDOW_MS } from '@app/shared/constants';
 
 import CardTile from './CardTile.js';
 import { KEYWORD_NOTE, PHASE_LABEL } from './labels.js';
@@ -57,8 +58,8 @@ function FxOverlay({ fx }: { fx: Fx | null }): React.JSX.Element | null {
 function CardDetail(props: {
   card: CardInstance;
   state: GameState;
-  /** 可发动的效果列表（仅我方回合、未用次数时由调用方给出）。 */
-  effects?: { id: string; label: string; disabled?: boolean; reason?: string }[];
+  /** 可发动的效果列表（仅我方回合、未用次数时由调用方给出；不可用的已被过滤掉，见 effectsFor）。 */
+  effects?: { id: string; label: string }[];
   onActivate?: (effectId: string) => void;
   onClose: () => void;
 }): React.JSX.Element {
@@ -98,16 +99,15 @@ function CardDetail(props: {
         <p className="mt-3 whitespace-pre-wrap rounded bg-slate-950/60 p-2 text-xs leading-relaxed text-slate-200">
           {def?.text ?? '（占位卡：无效果文本 —— 正式卡表到位后整批替换，ADR-0018）'}
         </p>
-        {/* 效果发动入口（ADR-0023）—— 发动按钮长在详情里，不在桌上另占位置 */}
+        {/* 效果发动入口（ADR-0023）—— 发动按钮长在详情里，不在桌上另占位置；
+            不可发动的不展示（Era 2026-10-19），卡面文本本身仍可读。 */}
         {props.effects && props.effects.length > 0 ? (
           <div className="mt-3 space-y-1">
             {props.effects.map((ef) => (
               <button
                 key={ef.id}
                 type="button"
-                className="w-full rounded bg-emerald-800 py-2 text-xs font-medium text-emerald-50 disabled:opacity-40"
-                disabled={ef.disabled}
-                title={ef.reason}
+                className="w-full rounded bg-emerald-800 py-2 text-xs font-medium text-emerald-50"
                 onClick={() => {
                   props.onActivate?.(ef.id);
                   props.onClose();
@@ -115,7 +115,6 @@ function CardDetail(props: {
                 data-testid={`effect-${ef.id}`}
               >
                 {ef.label}
-                {ef.disabled && ef.reason ? `（${ef.reason}）` : ''}
               </button>
             ))}
           </div>
@@ -243,20 +242,32 @@ function ZoneBox(props: {
       {...(props.dropKey ? { 'data-drop': props.dropKey } : {})}
       {...(props.dropUid ? { 'data-drop-uid': props.dropUid } : {})}
     >
-      <button
-        type="button"
-        className="flex w-full items-center justify-between gap-1 text-[10px] text-slate-400"
-        onClick={() => setOpen((v) => !v)}
-        disabled={!props.expandable}
-      >
-        <span className="truncate">{props.label}</span>
-        {props.badge ? (
-          <span className="shrink-0 font-mono text-rose-300" data-testid={props.badgeTestId}>
-            {props.badge}
-          </span>
-        ) : null}
-        <span className="shrink-0 text-slate-200">{props.cards.length}</span>
-      </button>
+      {/* 标题行：可展开时是按钮，不可展开时是纯文本（不可操作的按钮不展示，Era 2026-10-19） */}
+      {props.expandable ? (
+        <button
+          type="button"
+          className="flex w-full items-center justify-between gap-1 text-[10px] text-slate-400"
+          onClick={() => setOpen((v) => !v)}
+        >
+          <span className="truncate">{props.label}</span>
+          {props.badge ? (
+            <span className="shrink-0 font-mono text-rose-300" data-testid={props.badgeTestId}>
+              {props.badge}
+            </span>
+          ) : null}
+          <span className="shrink-0 text-slate-200">{props.cards.length}</span>
+        </button>
+      ) : (
+        <div className="flex w-full items-center justify-between gap-1 text-[10px] text-slate-400">
+          <span className="truncate">{props.label}</span>
+          {props.badge ? (
+            <span className="shrink-0 font-mono text-rose-300" data-testid={props.badgeTestId}>
+              {props.badge}
+            </span>
+          ) : null}
+          <span className="shrink-0 text-slate-200">{props.cards.length}</span>
+        </div>
+      )}
       {props.action ? (
         <button
           type="button"
@@ -523,15 +534,21 @@ function WaitingRoom({ session }: { session: RoomSession }): React.JSX.Element {
           </li>
         ))}
       </ul>
-      <button
-        type="button"
-        className="rounded bg-emerald-700 px-6 py-3 text-base disabled:opacity-50"
-        onClick={ready}
-        disabled={meReady}
-        data-testid="ready"
-      >
-        {meReady ? '已准备，等待对手…' : '准备'}
-      </button>
+      {/* 已准备后按钮不展示（Era 2026-10-19），状态用纯文本呈现 */}
+      {meReady ? (
+        <p className="text-sm text-emerald-300" data-testid="ready-done">
+          已准备，等待对手…
+        </p>
+      ) : (
+        <button
+          type="button"
+          className="rounded bg-emerald-700 px-6 py-3 text-base"
+          onClick={ready}
+          data-testid="ready"
+        >
+          准备
+        </button>
+      )}
 
       <button
         type="button"
@@ -602,6 +619,13 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   const canBattle = myTurnNow && phaseNow === 'battle';
   /** 起手换牌窗口（A8-3/A10-1）：第一回合充能阶段、我方回合。 */
   const mulliganWindow = myTurnNow && phaseNow === 'charge' && state?.turn === 1;
+  /**
+   * 换牌时间窗（Era 2026-10-19）：开局后 MULLIGAN_WINDOW_MS 内可换，过后按钮隐藏。
+   * ⚠️ 客户端时钟与服务端可能不同步，这里只做**展示**；权威判定在服务端 mulligan.ts。
+   */
+  const mulliganTimeOpen =
+    !state || state.startedAt === null || now - state.startedAt <= MULLIGAN_WINDOW_MS;
+  const mulliganOpen = mulliganWindow && mulliganTimeOpen;
 
   // 离开可操作阶段时清掉残留选中 —— 否则置灰后取消不了，卡在「看着被选中却动不了」。
   useEffect(() => {
@@ -610,13 +634,13 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   useEffect(() => {
     if (!canBattle) setAttacker(null);
   }, [canBattle]);
-  // 换牌窗口一过就退出换牌模式。
+  // 换牌窗口（阶段窗口或时间窗）一过就退出换牌模式。
   useEffect(() => {
-    if (!mulliganWindow && mulliganMode) {
+    if (!mulliganOpen && mulliganMode) {
       setMulliganMode(false);
       setMulliganPicks([]);
     }
-  }, [mulliganWindow, mulliganMode]);
+  }, [mulliganOpen, mulliganMode]);
 
   if (!me || !room) {
     return <p className="p-4 text-slate-400">请从主界面创建或加入房间。</p>;
@@ -639,8 +663,8 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   }
 
   const myTurn = state.seats[state.activeSeat] === me;
-  /** 换牌可用 = 换牌窗口内且本局还没换过（mulliganDone 每人一次，A8-3）。 */
-  const canMulligan = mulliganWindow && !mine.mulliganDone;
+  /** 换牌可用 = 窗口内（阶段 + 时间窗）且本局还没换过（mulliganDone 每人一次，A8-3）。 */
+  const canMulligan = mulliganOpen && !mine.mulliganDone;
   /** 抽牌阶段且未抽：我方卡组区变为「点击抽牌」发光动作（Era 2026-10-18 手动抽牌）。 */
   const canDraw = myTurn && state.phase === 'draw' && !state.drawnThisPhase;
   // ⚠️ 客户端时钟与服务端未必同步，这里的倒计时是**示意**；权威判定在服务端（ADR-0017）。
@@ -670,28 +694,23 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
    * 详情浮层里的效果发动列表（ADR-0023）。
    * ⚠️ 只做**展示门槛**（读状态），能不能发动由服务端裁决（ADR-0002）。
    */
-  const effectsFor = (
-    card: CardInstance,
-  ): { id: string; label: string; disabled?: boolean; reason?: string }[] | undefined => {
+  const effectsFor = (card: CardInstance): { id: string; label: string }[] | undefined => {
     const used = mine.effectsUsed;
+    // Era 2026-10-19：不可发动的效果**不展示**（取代此前的置灰+原因）。
     const mk = (id: string, label: string) => {
-      const reason = !myTurn
-        ? '不是你的回合'
-        : state.pendingChoice
-          ? '先完成当前选择'
-          : used.includes(`${card.uid}:${id}`)
-            ? '每回合一次'
-            : undefined;
-      return { id, label, disabled: reason !== undefined, reason };
+      const unavailable = !myTurn || !!state.pendingChoice || used.includes(`${card.uid}:${id}`);
+      return unavailable ? null : { id, label };
     };
+    const pick = (list: ({ id: string; label: string } | null)[]) =>
+      list.filter((x): x is { id: string; label: string } => x !== null);
     if (card.defId === 'bladeLord' && mine.zones.commander.some((x) => x.uid === card.uid)) {
-      return [
+      return pick([
         mk('1', '发动 效果Ⅰ：付 2 张费用，按除外区「炎刃」数执行至多 3 项'),
         mk('2', '发动 效果Ⅱ：将一张手牌除外'),
-      ];
+      ]);
     }
     if (card.defId === 'bladeTactician' && mine.zones.board.some((x) => x.uid === card.uid)) {
-      return [mk('1', '发动：本回合己方炎刃随从登场时力量 +1（次数=除外区炎刃数）')];
+      return pick([mk('1', '发动：本回合己方炎刃随从登场时力量 +1（次数=除外区炎刃数）')]);
     }
     return undefined;
   };
@@ -1031,30 +1050,33 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
                 >
                   {picked === c.uid && !mulliganMode ? (
                     <div className="absolute -top-8 left-1/2 z-10 flex -translate-x-1/2 gap-1">
-                      <button
-                        type="button"
-                        className="rounded bg-cyan-800 px-2 py-1 text-[11px] whitespace-nowrap disabled:opacity-40"
-                        disabled={state.phase !== 'main'}
-                        onClick={() => {
-                          session.play(c.uid);
-                          setPicked(null);
-                        }}
-                        data-testid="play"
-                      >
-                        出牌
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded bg-amber-800 px-2 py-1 text-[11px] whitespace-nowrap disabled:opacity-40"
-                        disabled={state.phase !== 'charge'}
-                        onClick={() => {
-                          session.charge([c.uid]);
-                          setPicked(null);
-                        }}
-                        data-testid="charge"
-                      >
-                        充能
-                      </button>
+                      {/* 不可操作的按钮不展示（Era 2026-10-19）：出牌只在主要阶段、充能只在充能阶段出现 */}
+                      {state.phase === 'main' ? (
+                        <button
+                          type="button"
+                          className="rounded bg-cyan-800 px-2 py-1 text-[11px] whitespace-nowrap"
+                          onClick={() => {
+                            session.play(c.uid);
+                            setPicked(null);
+                          }}
+                          data-testid="play"
+                        >
+                          出牌
+                        </button>
+                      ) : null}
+                      {state.phase === 'charge' ? (
+                        <button
+                          type="button"
+                          className="rounded bg-amber-800 px-2 py-1 text-[11px] whitespace-nowrap"
+                          onClick={() => {
+                            session.charge([c.uid]);
+                            setPicked(null);
+                          }}
+                          data-testid="charge"
+                        >
+                          充能
+                        </button>
+                      ) : null}
                     </div>
                   ) : null}
                   <CardOf
@@ -1096,78 +1118,86 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
 
       {/* 操作条 —— 只发 Intent，不做本地裁决。
           「出牌 / 充能」不在此处 —— Era 2026-10-18：卡牌的操作按钮挂在卡的附近，
-          选中手牌后浮现在卡的上方（见第 ⑥ 排）。 */}
+          选中手牌后浮现在卡的上方（见第 ⑥ 排）。
+          Era 2026-10-19：**不可操作的按钮不展示**（废止置灰方案）——
+          推进/结束回合只在己方回合出现；抽牌阶段不出现推进（未抽被拒、抽完自动推进）。 */}
       <footer className="flex flex-wrap items-center gap-1">
-        <button
-          type="button"
-          className="rounded bg-slate-700 px-3 py-2 text-xs disabled:opacity-40 sm:text-sm"
-          onClick={session.advance}
-          disabled={!myTurn}
-          data-testid="advance"
-        >
-          推进阶段
-        </button>
-        <button
-          type="button"
-          className="rounded bg-slate-700 px-3 py-2 text-xs disabled:opacity-40 sm:text-sm"
-          onClick={session.endTurn}
-          disabled={!myTurn}
-          data-testid="end-turn"
-        >
-          结束回合
-        </button>
-        {/* 起手换牌（A8-3/A10-1）：第一回合充能阶段可用，每人一次。
-            换牌是多目标操作 —— 进入换牌模式后手牌恢复多选（排他纪律不适用）。 */}
-        {!mulliganMode ? (
+        {myTurn && state.phase !== 'draw' ? (
           <button
             type="button"
-            className="rounded bg-violet-800 px-3 py-2 text-xs disabled:opacity-40 sm:text-sm"
-            onClick={() => {
-              setMulliganMode(true);
-              setPicked(null);
-            }}
-            disabled={!canMulligan}
-            data-testid="mulligan"
+            className="rounded bg-slate-700 px-3 py-2 text-xs sm:text-sm"
+            onClick={session.advance}
+            data-testid="advance"
           >
-            换牌
+            推进阶段
           </button>
-        ) : (
-          <>
-            <button
-              type="button"
-              className="rounded bg-violet-700 px-3 py-2 text-xs disabled:opacity-40 sm:text-sm"
-              onClick={() => {
-                session.mulligan(mulliganPicks);
-                setMulliganMode(false);
-                setMulliganPicks([]);
-              }}
-              disabled={mulliganPicks.length === 0}
-              data-testid="mulligan-confirm"
-            >
-              确认换牌（{mulliganPicks.length}）
-            </button>
-            <button
-              type="button"
-              className="rounded bg-slate-700 px-3 py-2 text-xs sm:text-sm"
-              onClick={() => {
-                setMulliganMode(false);
-                setMulliganPicks([]);
-              }}
-              data-testid="mulligan-cancel"
-            >
-              取消换牌
-            </button>
-          </>
-        )}
-        <button
-          type="button"
-          className="rounded bg-rose-800 px-3 py-2 text-xs disabled:opacity-40 sm:text-sm"
-          onClick={() => setAttacker(null)}
-          disabled={attacker === null}
-          data-testid="cancel-attack"
-        >
-          取消攻击
-        </button>
+        ) : null}
+        {myTurn ? (
+          <button
+            type="button"
+            className="rounded bg-slate-700 px-3 py-2 text-xs sm:text-sm"
+            onClick={session.endTurn}
+            data-testid="end-turn"
+          >
+            结束回合
+          </button>
+        ) : null}
+        {/* 起手换牌（A8-3/A10-1）：第一回合充能阶段 + 时间窗内可用，每人一次。
+            换牌是多目标操作 —— 进入换牌模式后手牌恢复多选（排他纪律不适用）。
+            不可用时不展示（Era 2026-10-19）。 */}
+        {!mulliganMode
+          ? canMulligan && (
+              <button
+                type="button"
+                className="rounded bg-violet-800 px-3 py-2 text-xs sm:text-sm"
+                onClick={() => {
+                  setMulliganMode(true);
+                  setPicked(null);
+                }}
+                data-testid="mulligan"
+              >
+                换牌
+              </button>
+            )
+          : mulliganOpen && (
+              <>
+                {mulliganPicks.length > 0 ? (
+                  <button
+                    type="button"
+                    className="rounded bg-violet-700 px-3 py-2 text-xs sm:text-sm"
+                    onClick={() => {
+                      session.mulligan(mulliganPicks);
+                      setMulliganMode(false);
+                      setMulliganPicks([]);
+                    }}
+                    data-testid="mulligan-confirm"
+                  >
+                    确认换牌（{mulliganPicks.length}）
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="rounded bg-slate-700 px-3 py-2 text-xs sm:text-sm"
+                  onClick={() => {
+                    setMulliganMode(false);
+                    setMulliganPicks([]);
+                  }}
+                  data-testid="mulligan-cancel"
+                >
+                  取消换牌
+                </button>
+              </>
+            )}
+        {attacker !== null ? (
+          <button
+            type="button"
+            className="rounded bg-rose-800 px-3 py-2 text-xs sm:text-sm"
+            onClick={() => setAttacker(null)}
+            data-testid="cancel-attack"
+          >
+            取消攻击
+          </button>
+        ) : null}
         <button
           type="button"
           className="rounded bg-slate-800 px-3 py-2 text-xs sm:text-sm"

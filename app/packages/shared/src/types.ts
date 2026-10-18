@@ -177,6 +177,12 @@ export interface GameState {
   turn: number;
   /** 是否已开局（完成洗牌、发牌、掷骰）。 */
   started: boolean;
+  /**
+   * 开局时刻（`game:started` 事件时间戳）—— 换牌时间窗（MULLIGAN_WINDOW_MS，
+   * Era 2026-10-19）的计时基准。未开局时为 null。必须入 state：
+   * 快照/回放都要能复现「窗口还剩多久」。
+   */
+  startedAt: number | null;
   /** 胜负：血空（A3-1）或认输（A3-4）后写入；平局按 A3-3 不存在。 */
   winner: PlayerId | null;
   /** 待定选择（ADR-0023）—— 非空时阻塞除回答/认输外的所有玩家 Intent。 */

@@ -47,6 +47,7 @@ export {
   DEFAULT_DAMAGE,
   INITIAL_COMMANDER_POWER_INDEX,
   KEYWORD_TAUNT,
+  MULLIGAN_WINDOW_MS,
   RULE_ERRORS,
 } from './constants.js';
 export type { RuleErrorCode } from './constants.js';
