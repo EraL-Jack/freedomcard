@@ -139,7 +139,8 @@ export const attackRule = (
   if (atkPower === null || defPower === null) {
     return reject(RULE_ERRORS.CARD_NOT_FOUND, '无法确定该单位的力量值');
   }
-  const atkDamage = damageOf(atkDef);
+  // 伤害值 = 卡面伤害（缺省 1，X-5）+ 本回合临时加成（统领 7 档，ADR-0023 §3）
+  const atkDamage = damageOf(atkDef) + (atk.card.tempDamage ?? 0);
 
   const outcome = resolveCombat(atkPower, defPower);
   const at = ctx.now;
@@ -186,7 +187,10 @@ export const attackRule = (
   if (attackerDies) events.push(moved(at, me, attackerUid, 'board', 'graveyard'));
 
   // A9-2：攻击后休眠。已被破坏的单位不再标记 —— 对死掉的单位标休眠没有意义。
-  if (!attackerDies) events.push(ev(at, 'unit:asleep', { playerId: me, uid: attackerUid }));
+  // 例外：统领 9 档授予的「本回合攻击后重置」（attackRefresh）置位时不休眠（ADR-0023 §3）。
+  if (!attackerDies && !atk.card.attackRefresh) {
+    events.push(ev(at, 'unit:asleep', { playerId: me, uid: attackerUid }));
+  }
 
   return { ok: true, value: events };
 };

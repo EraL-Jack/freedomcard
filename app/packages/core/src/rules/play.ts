@@ -26,6 +26,9 @@ import {
 } from '@app/shared';
 
 import { baseGuard, firstRejection, locate, moved, playerOf, strArg } from '../ops.js';
+import { reduce } from '../reducer.js';
+import { bladeSummonTriggerEvents } from '../effects/index.js';
+import { bladeOrderResolution } from '../effects/blade-order.js';
 
 export const playRule = (
   state: GameState,
@@ -80,5 +83,17 @@ export const playRule = (
     events.push(moved(at, intent.playerId, p.zones.cost[i]!.uid, 'cost', 'graveyard'));
   }
   events.push(moved(at, intent.playerId, uid, 'hand', dest));
+
+  // ADR-0023 §7：登场触发器 —— 炎刃随从登场时结算军师的「本回合 +1」。
+  // 注意先推演移动事件再判触发（触发器读的是登场后的场面）。
+  if (dest === 'board') {
+    const next = events.reduce(reduce, state);
+    events.push(...bladeSummonTriggerEvents(at, next, intent.playerId, uid, ctx.cards));
+  }
+  // ADR-0023 §6：号令法术出牌即结算 —— 展示卡组顶 7 张并挂起待定选择。
+  if (def.defId === 'bladeOrder') {
+    const next = events.reduce(reduce, state);
+    events.push(...bladeOrderResolution(at, next, ctx, intent.playerId, uid));
+  }
   return { ok: true, value: events };
 };

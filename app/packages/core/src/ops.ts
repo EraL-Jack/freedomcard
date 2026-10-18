@@ -149,11 +149,12 @@ export function unitPower(state: GameState, cards: Record<string, CardDef>, uid:
   if (!loc) return null;
   const def = defOf(cards, loc.card.defId);
   if (!def) return null;
-  if (loc.zone === 'commander') {
-    const p = state.players[loc.playerId];
-    return commanderPowerAt(def, p?.commanderPowerIndex ?? INITIAL_COMMANDER_POWER_INDEX);
-  }
-  return def.power;
+  const base =
+    loc.zone === 'commander'
+      ? commanderPowerAt(def, state.players[loc.playerId]?.commanderPowerIndex ?? INITIAL_COMMANDER_POWER_INDEX)
+      : def.power;
+  // ADR-0023 §3：本回合临时力量修正叠加在基础值上（统领 3 档 / 军师触发器）。
+  return base + (loc.card.tempPower ?? 0);
 }
 
 /* ------------------------------ 拒绝 ------------------------------ */

@@ -493,3 +493,67 @@ E2E 里先后手由掷骰决定、起手牌由洗牌决定，两者都是随机�
 - `TableScreen.tsx`：`ZoneBox` 增加可选 `onCardClick` / `selected`，
   对方指挥官区在可攻击时挂上回调
 - `e2e/combat.spec.ts`：新增「攻击对方指挥官 → 对方血量下降」
+
+---
+
+## ADR-0023 卡牌效果系统：发动 Intent、待定选择与回合内临时态（2026-10-18）
+
+- 日期：2026-10-18 13:55（动工前写就）
+- 背景：样例卡的 `text` 早已转录入卡池（ADR-0015），但按「不发明需求」一律不结算，
+  导致 Era 实测「指挥官效果没法发动」。Era 2026-10-18 授权：
+  **「所有有效果的卡牌，你直接补充需要的规则即可，不需要我来填写」**，
+  并给定三条口径——`【2】`= 支付费用区 2 张卡；「每回合一次」**在自己回合开始时重置**；
+  「选择一个随从」类效果需要目标选择，引入 `pendingChoice`。
+- 决策：
+  1. **两个新 Intent**：
+     - `effect:activate`（payload `{ uid, effect }`）——发动卡面效果，`uid` 是效果来源卡，
+       `effect` 是效果编号（如统领的 `'1'`/`'2'`）。
+     - `effect:choose`（payload `{ choice }`）——回答待定选择，`choice` 是选项 id
+       （卡 uid / 子效果编号 / `'pass'`）。
+  2. **`GameState.pendingChoice`**：效果需要玩家选择时挂起，含
+     `{ playerId, kind, sourceUid, options: string[], meta? }`。
+     挂起期间**只允许**该玩家的 `effect:choose` 与任意时刻的认输/离开，
+     其余 Intent 一律拒绝（`PENDING_CHOICE`）——与「超时回合」同级的全局守卫，
+     加在引擎入口而非各规则里。超时系统链路的兜底动作（自动抽牌/结束回合）
+     不受影响：系统 Intent 不受 pendingChoice 阻塞。
+  3. **回合内临时态**（「本回合」词缀的统一实现）：
+     - `CardInstance` 新增 `tempPower` / `tempDamage` / `attackRefresh`（均为可选），
+       `unitPower` 在定值/曲线基础上**叠加** `tempPower`；`attack.ts` 的伤害 =
+       `(def.damage ?? 1) + (tempDamage ?? 0)`；`attackRefresh` 置位时攻击后不进入休眠。
+     - `PlayerState` 新增 `effectsUsed: string[]`（每回合一次记帐，键 `${uid}:${effect}`）与
+       `turnTriggers: TurnTrigger[]`（军师类「本回合获得效果」的触发器）。
+     - **清理时机**：临时态与触发器在**回合切换**（`turn:changed`）时清空；
+       `effectsUsed` 在进入**己方充能阶段**时清空（Era 口径：自己回合重置，
+       与指挥官成长同一接线点）。
+  4. **效果注册表** `core/src/effects/`：一卡一文件（`blade-lord.ts` 等），
+     注册表按 `defId` 派发；新增带效果的卡不动既有文件（与规则注册表同纪律）。
+  5. **统领效果 Ⅰ 的分步结算**：支付【2】→ 按除外区「炎刃」数量解锁档位
+     （1/3/5/7/9）→ 弹出效果菜单（`pendingChoice.kind='blade-lord-1'`），
+     每选一项目最多 3 项、每项一次；需目标的子效果再链一层目标选择。
+     任何时候可选 `pass` 提前结束。
+  6. **号令法术**：出牌结算时展示卡组顶 7 张（`cards:revealed` 事件），
+     若其中有斥候先问「是否除外斥候」（其卡面触发），再让玩家从
+     力量值 ≤ 除外区炎刃数的随从中选一个召唤（随从区满则无可选项，只能 pass），
+     未选中的**洗回卡组**（假设 H21，卡面未说去处，取卡牌游戏通行做法）。
+  7. **军师（bladeTactician）**：每回合一次发动 → 挂 `on-blade-summon` 触发器，
+     本回合内每当己方「炎刃」随从登场（出牌或效果召唤），该随从 `tempPower+1`，
+     触发次数上限 = 发动时除外区炎刃数。
+  8. **斥候（bladeScout）**：仅在「从卡组展示」时机出现可选除外（目前唯一来源是号令）；
+     「本应置入伤害区」分支暂不触发（当前机制里没有把展示卡置入伤害区的路径，
+     登记为留白，不发明）。
+- 理由：
+  1. **pendingChoice 全局守卫**而非各规则自查 —— 漏一处就可能在选择挂起时
+     推进阶段导致状态机错位；入口拦截一处搞定。
+  2. **临时态挂在卡实例上**而非旁表 —— 事件溯源友好：`unit:modified` 事件
+     带字段即可被客户端 reduce 复现，无需额外索引。
+  3. **效果与规则引擎同层**（纯函数、事件产出），**不进 reducer**：
+     选择分支是 Intent 驱动，不是事件回放能自动展开的。
+- 假设（登记进 `docs/09`）：H21 号令未选中的卡洗回卡组；H22 统领Ⅰ的子效果目标
+  不限阵营（卡面只说「一个随从」）；H23 「本回合攻击后重置」= 本回合内每次攻击后都不休眠；
+  H24 军师离场后其已挂的触发器不回收（卡面未说离场失效），回合末统一清空。
+- 影响：`shared/src/types.ts`（`pendingChoice` / `CardInstance` 临时态 / `TurnTrigger` /
+  `effectsUsed`）、`shared/src/constants.ts`（新错误码）、`core/src/rules/effect.ts`（新）、
+  `core/src/effects/*`（新）、`core/src/rules/play.ts`（号令接线 + 登场触发钩子）、
+  `core/src/rules/attack.ts`（tempDamage / attackRefresh）、`core/src/rules/phase.ts` 与
+  `turn-end.ts`（清理接线）、`core/src/reducer.ts`（新事件）、`core/src/ops.ts`（unitPower 叠加）、
+  `client`（发动按钮 + 选择浮层 + 目标发光）。

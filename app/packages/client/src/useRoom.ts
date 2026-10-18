@@ -96,6 +96,8 @@ export interface RoomSession {
   log: LogEntry[];
   /** 正在播放的呈现事件（横幅/飘字）；无则 `null`。 */
   fx: Fx | null;
+  /** 展示区内容（D-123）：按玩家记的最近一批「从卡组展示」的卡。 */
+  revealed: Record<string, { uid: string; defId: string }[]>;
   notice: string;
   create(nickname: string, capacity: number): void;
   join(code: string, nickname: string): void;
@@ -114,6 +116,10 @@ export interface RoomSession {
   draw(): void;
   attack(attackerUid: string, targetUid: string): void;
   mulligan(returns: string[]): void;
+  /** 发动卡面效果（ADR-0023）—— uid 是效果来源卡，effect 是效果编号。 */
+  activateEffect(uid: string, effect: string): void;
+  /** 回答待定选择（choice 为选项 id 或 'pass'）。 */
+  chooseEffect(choice: string): void;
   dismiss(): void;
 }
 
@@ -161,6 +167,12 @@ export function useRoom(): RoomSession {
   const pumpingRef = useRef(false);
   const fxIdRef = useRef(0);
   const [fx, setFx] = useState<Fx | null>(null);
+  /**
+   * 展示区内容（Era 2026-10-18：效果从卡组展示的卡放展示区）——
+   * 按玩家记最近一批 `card:revealed`；新批次（不同 at）替换，回合切换清空。
+   */
+  const [revealed, setRevealed] = useState<Record<string, { uid: string; defId: string }[]>>({});
+  const revealTickRef = useRef<Record<string, number>>({});
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -300,6 +312,28 @@ export function useRoom(): RoomSession {
         if (text) appendLog(text, e.at);
 
         if (e.type === 'combat:resolved') combatTick = e.at;
+
+        // 展示区（D-123）：收集本批展示的卡（uid + defId），批次以 at 区分
+        if (e.type === 'card:revealed') {
+          const pid = String(e.payload?.['playerId'] ?? '');
+          const uid = String(e.payload?.['uid'] ?? '');
+          const defId =
+            Object.values(next.players)
+              .flatMap((x) => Object.values(x.zones).flat())
+              .find((x) => x.uid === uid)?.defId ?? '';
+          if (pid && uid) {
+            const sameBatch = revealTickRef.current[pid] === e.at;
+            revealTickRef.current[pid] = e.at;
+            setRevealed((prev) => ({
+              ...prev,
+              [pid]: [...(sameBatch ? (prev[pid] ?? []) : []), { uid, defId }],
+            }));
+          }
+        } else if (e.type === 'turn:changed') {
+          setRevealed({});
+          revealTickRef.current = {};
+        }
+
         const hit = fxOf(e, prev, next, combatTick);
         if (hit) {
           fxIdRef.current += 1;
@@ -330,6 +364,8 @@ export function useRoom(): RoomSession {
       // 快照是新的起点：播放队列作废（重连场景下队列里的事件已被快照覆盖）。
       queueRef.current = [];
       setFx(null);
+      setRevealed({});
+      revealTickRef.current = {};
       stateRef.current = snap.state;
       setState(snap.state);
       setHash(snap.hash);
@@ -484,6 +520,7 @@ export function useRoom(): RoomSession {
     turnDeadline,
     log,
     fx,
+    revealed,
     notice,
     create,
     join,
@@ -496,6 +533,8 @@ export function useRoom(): RoomSession {
     draw: () => send(core.INTENTS.draw),
     attack: (attackerUid, targetUid) => send(core.INTENTS.attack, { attackerUid, targetUid }),
     mulligan: (returns) => send(core.INTENTS.mulligan, { returns }),
+    activateEffect: (uid, effect) => send(core.INTENTS.effectActivate, { uid, effect }),
+    chooseEffect: (choice) => send(core.INTENTS.effectChoose, { choice }),
     dismiss,
   };
 }

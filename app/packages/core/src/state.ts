@@ -72,6 +72,8 @@ export function createInitialState(opts: InitialStateOptions): GameState {
       commanderRevealed: false,
       commanderPowerIndex: INITIAL_COMMANDER_POWER_INDEX,
       mulliganDone: false,
+      effectsUsed: [],
+      turnTriggers: [],
     };
   }
   return {
@@ -85,6 +87,7 @@ export function createInitialState(opts: InitialStateOptions): GameState {
     turn: 1,
     started: false,
     winner: null,
+    pendingChoice: null,
   };
 }
 

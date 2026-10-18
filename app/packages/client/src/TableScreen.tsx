@@ -57,6 +57,9 @@ function FxOverlay({ fx }: { fx: Fx | null }): React.JSX.Element | null {
 function CardDetail(props: {
   card: CardInstance;
   state: GameState;
+  /** 可发动的效果列表（仅我方回合、未用次数时由调用方给出）。 */
+  effects?: { id: string; label: string; disabled?: boolean; reason?: string }[];
+  onActivate?: (effectId: string) => void;
   onClose: () => void;
 }): React.JSX.Element {
   const def = CARD_POOL[props.card.defId];
@@ -95,6 +98,28 @@ function CardDetail(props: {
         <p className="mt-3 whitespace-pre-wrap rounded bg-slate-950/60 p-2 text-xs leading-relaxed text-slate-200">
           {def?.text ?? '（占位卡：无效果文本 —— 正式卡表到位后整批替换，ADR-0018）'}
         </p>
+        {/* 效果发动入口（ADR-0023）—— 发动按钮长在详情里，不在桌上另占位置 */}
+        {props.effects && props.effects.length > 0 ? (
+          <div className="mt-3 space-y-1">
+            {props.effects.map((ef) => (
+              <button
+                key={ef.id}
+                type="button"
+                className="w-full rounded bg-emerald-800 py-2 text-xs font-medium text-emerald-50 disabled:opacity-40"
+                disabled={ef.disabled}
+                title={ef.reason}
+                onClick={() => {
+                  props.onActivate?.(ef.id);
+                  props.onClose();
+                }}
+                data-testid={`effect-${ef.id}`}
+              >
+                {ef.label}
+                {ef.disabled && ef.reason ? `（${ef.reason}）` : ''}
+              </button>
+            ))}
+          </div>
+        ) : null}
         <button
           type="button"
           className="mt-3 w-full rounded bg-slate-700 py-2 text-sm"
@@ -359,6 +384,118 @@ function GameOverPanel(props: {
 }
 
 /** 未开局时的等待界面 —— B1 补充 3：双方加入并准备后即开始游戏。 */
+/**
+ * 待定选择浮层（ADR-0023）—— 效果需要选择时弹出，选项即服务端给出的 `options`。
+ * 统领Ⅰ的子效果选项用文案按钮；卡 uid 选项渲染成小卡。`pass`（放弃）恒可选。
+ */
+function ChoiceOverlay(props: {
+  choice: NonNullable<GameState['pendingChoice']>;
+  state: GameState;
+  onChoose: (choice: string) => void;
+}): React.JSX.Element {
+  const { choice } = props;
+  const SUB_LABEL: Readonly<Record<string, string>> = {
+    l1: '1档：从墓地召唤随从（力量 ≤ 炎刃数）',
+    l3: '3档：一个随从本回合力量 +1',
+    l5: '5档：破坏一个随从（力量 ≤ 炎刃数）',
+    l7: '7档：一个随从本回合对指挥官伤害 +1',
+    l9: '9档：一个随从本回合攻击后重置',
+  };
+  const TITLE: Readonly<Record<string, string>> = {
+    'blade-lord-1': '统领效果Ⅰ：选择要执行的效果（可再选，或放弃）',
+    'blade-lord-1-target': '选择目标随从',
+    'blade-lord-2': '统领效果Ⅱ：选择一张要除外的手牌',
+    'blade-scout-exile': '展示到炎刃斥候 —— 是否将其除外？',
+    'blade-order-summon': '号令：选择要召唤的随从',
+  };
+
+  // uid 选项 → 反查卡定义渲染小卡；子效果选项 → 文案按钮
+  const findCard = (uid: string): CardInstance | undefined =>
+    Object.values(props.state.players)
+      .flatMap((p) => Object.values(p.zones).flat())
+      .find((x) => x.uid === uid);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" data-testid="choice-overlay">
+      <div className="w-80 max-w-full rounded-xl border border-emerald-600/60 bg-slate-900 p-4">
+        <p className="text-sm font-medium text-emerald-200">{TITLE[choice.kind] ?? '请选择'}</p>
+        <div className="mt-3 flex max-h-64 flex-wrap justify-center gap-2 overflow-y-auto">
+          {choice.options.map((opt) => {
+            if (SUB_LABEL[opt]) {
+              return (
+                <button
+                  key={opt}
+                  type="button"
+                  className="w-full rounded bg-cyan-800 px-3 py-2 text-left text-xs text-cyan-50"
+                  onClick={() => props.onChoose(opt)}
+                  data-testid={`choice-${opt}`}
+                >
+                  {SUB_LABEL[opt]}
+                </button>
+              );
+            }
+            const inst = findCard(opt);
+            const def = inst ? CARD_POOL[inst.defId] : undefined;
+            return (
+              <button
+                key={opt}
+                type="button"
+                className="w-16 rounded border border-slate-600 bg-slate-800 p-1 text-center hover:border-emerald-400"
+                onClick={() => props.onChoose(opt)}
+                data-testid={`choice-card`}
+              >
+                <span className="block truncate text-[11px] text-slate-100">{def?.name ?? opt}</span>
+                <span className="block text-[10px] text-slate-400">
+                  费 {def?.cost ?? 0} / 力 {def?.power ?? 0}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <button
+          type="button"
+          className="mt-3 w-full rounded bg-slate-700 py-2 text-xs"
+          onClick={() => props.onChoose('pass')}
+          data-testid="choice-pass"
+        >
+          放弃
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** 展示区（D-123，Era 2026-10-18）：效果从卡组展示的卡放这里，双方各一格。 */
+function RevealBox(props: {
+  cards: readonly { uid: string; defId: string }[];
+  state: GameState;
+  onCardDetail?: (card: CardInstance) => void;
+}): React.JSX.Element {
+  return (
+    <div
+      className="flex h-full min-h-0 flex-col rounded border border-dashed border-slate-600 bg-slate-900/40 p-1"
+      data-testid="zone-reveal"
+    >
+      <span className="text-[10px] text-slate-500">展示区</span>
+      <div className="mt-1 flex min-h-0 flex-1 flex-wrap content-start gap-0.5 overflow-y-auto">
+        {props.cards.map((rc) => {
+          const inst: CardInstance = { uid: rc.uid, defId: rc.defId };
+          return (
+            <CardOf
+              key={rc.uid}
+              card={inst}
+              state={props.state}
+              compact
+              onDetail={props.onCardDetail ? () => props.onCardDetail?.(inst) : undefined}
+            />
+          );
+        })}
+        {props.cards.length === 0 ? null : null}
+      </div>
+    </div>
+  );
+}
+
 function WaitingRoom({ session }: { session: RoomSession }): React.JSX.Element {  const { room, me, ready, notice, leave } = session;
   const meReady = room?.seats.find((s) => s && s.playerId === me)?.ready ?? false;
 
@@ -415,7 +552,7 @@ function WaitingRoom({ session }: { session: RoomSession }): React.JSX.Element {
 }
 
 export default function TableScreen({ session }: { session: RoomSession }): React.JSX.Element {
-  const { room, state, me, foe, turnDeadline, log, notice, fx, dismiss } = session;
+  const { room, state, me, foe, turnDeadline, log, notice, fx, revealed, dismiss } = session;
   // 手牌选中 —— Era 2026-10-18：**非多目标场景的选中必须排他**，任何时候最多一张手牌高亮。
   // （充能规则上允许任意数量（X-2），但协议支持逐张发，多张充能 = 连续多次单张操作。）
   const [picked, setPicked] = useState<string | null>(null);
@@ -530,6 +667,36 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   const destroyGhost = fx?.kind === 'destroy' ? (fx.destroyed ?? null) : null;
 
   /**
+   * 详情浮层里的效果发动列表（ADR-0023）。
+   * ⚠️ 只做**展示门槛**（读状态），能不能发动由服务端裁决（ADR-0002）。
+   */
+  const effectsFor = (
+    card: CardInstance,
+  ): { id: string; label: string; disabled?: boolean; reason?: string }[] | undefined => {
+    const used = mine.effectsUsed;
+    const mk = (id: string, label: string) => {
+      const reason = !myTurn
+        ? '不是你的回合'
+        : state.pendingChoice
+          ? '先完成当前选择'
+          : used.includes(`${card.uid}:${id}`)
+            ? '每回合一次'
+            : undefined;
+      return { id, label, disabled: reason !== undefined, reason };
+    };
+    if (card.defId === 'bladeLord' && mine.zones.commander.some((x) => x.uid === card.uid)) {
+      return [
+        mk('1', '发动 效果Ⅰ：付 2 张费用，按除外区「炎刃」数执行至多 3 项'),
+        mk('2', '发动 效果Ⅱ：将一张手牌除外'),
+      ];
+    }
+    if (card.defId === 'bladeTactician' && mine.zones.board.some((x) => x.uid === card.uid)) {
+      return [mk('1', '发动：本回合己方炎刃随从登场时力量 +1（次数=除外区炎刃数）')];
+    }
+    return undefined;
+  };
+
+  /**
    * 裁决播放中（fx.kind === 'combat'，播放队列停 900ms）：攻击方冲撞、目标抖动。
    * 冲撞方向按半场：我方在下往上撞、对方在上往下撞。
    */
@@ -632,7 +799,18 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
       {/* 卡牌详情浮层 —— 信息查看（任何阶段可用，不受回合/阶段置灰约束）。
           B3-2 的「不要弹窗」约束的是**出牌确认**；详情查看按 docs/11 X-13 默认建议用大卡浮层。 */}
       {detailCard ? (
-        <CardDetail card={detailCard} state={state} onClose={() => setDetailCard(null)} />
+        <CardDetail
+          card={detailCard}
+          state={state}
+          effects={effectsFor(detailCard)}
+          onActivate={(effectId) => session.activateEffect(detailCard.uid, effectId)}
+          onClose={() => setDetailCard(null)}
+        />
+      ) : null}
+      {/* 待定选择浮层（ADR-0023）—— 效果选择挂起时只放行回答/认输（引擎守卫），
+          界面上也只给该玩家弹出选项。 */}
+      {state.pendingChoice && state.pendingChoice.playerId === me ? (
+        <ChoiceOverlay choice={state.pendingChoice} state={state} onChoose={(c) => session.chooseEffect(c)} />
       ) : null}
       {/* 回合数 / 计时居中（B2-5） */}
       <header className="flex items-center justify-center gap-3 text-xs sm:text-sm">
@@ -704,10 +882,10 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
             <ZoneBox label="除外区" zone="exile" cards={theirs.zones.exile} expandable state={state} onCardDetail={openDetail} />
           </section>
 
-          {/* ③ 对方费用区 + 随从区 1·2·3 —— flex-1 平分桌高。
-              选中攻击方后对方随从发光提示可攻击（Era 2026-10-18）；
-              嘲讽过滤由引擎裁决（ADR-0022 注释），界面不预判。 */}
-          <section className="grid min-h-0 flex-1 auto-rows-fr grid-cols-4 gap-1">
+          {/* ③ 对方费用区 + 随从区 1·2·3 + 展示区 —— D-123（Era 2026-10-18）：
+              费用区居左、展示区居右，随从 1·2·3 与第 ④ 排**逐格对齐**。
+              选中攻击方后对方随从发光提示可攻击（嘲讽过滤由引擎裁决，界面不预判）。 */}
+          <section className="grid min-h-0 flex-1 auto-rows-fr grid-cols-5 gap-1">
             <ZoneBox label="费用区" zone="cost" cards={theirs.zones.cost} expandable state={state} onCardDetail={openDetail} />
             {slots.map((i) => (
               <BoardSlot
@@ -736,20 +914,32 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
                 }
               />
             ))}
+            <RevealBox cards={foe ? (revealed[foe] ?? []) : []} state={state} onCardDetail={openDetail} />
           </section>
 
           {/* 中场线 —— 双方半场的分界（桌面感）；我方回合时我方半场微光。 */}
           <div className="mx-4 border-t border-slate-600/50" />
 
-          {/* ④ 我方随从区 1·2·3 + 费用区 —— flex-1 平分桌高。
+          {/* ④ 我方费用区 + 随从区 1·2·3 + 展示区 —— 与第 ③ 排逐格对齐（D-123：费用区居左、展示区居右）。
               随从仅在我方战斗阶段且未休眠时可点选为攻击方（其余时候置灰，Era 2026-10-18）。
-              整排是拖拽落点（data-drop="board"）：拖手牌到此 = 出牌（B3-1）。 */}
+              整排是拖拽落点（data-drop="board"）：拖手牌到此 = 出牌（B3-1）；
+              费用区自带 data-drop="cost"，closest() 命中更近的它 = 充能。 */}
           <section
-            className={`grid min-h-0 flex-1 auto-rows-fr grid-cols-4 gap-1 rounded ${
+            className={`grid min-h-0 flex-1 auto-rows-fr grid-cols-5 gap-1 rounded ${
               dragging?.kind === 'hand' && state.phase === 'main' ? 'ring-2 ring-cyan-400/70' : ''
             } ${myTurn ? 'shadow-[0_0_14px_rgba(52,211,153,0.12)]' : ''}`}
             data-drop="board"
           >
+            <ZoneBox
+              label="费用区"
+              zone="cost"
+              cards={mine.zones.cost}
+              expandable
+              state={state}
+              dropKey="cost"
+              highlight={dragging?.kind === 'hand' && state.phase === 'charge'}
+              onCardDetail={openDetail}
+            />
             {slots.map((i) => {
               const mc = mine.zones.board[i];
               const minionOperable = !!mc && canBattle && !mc.sleeping;
@@ -782,16 +972,7 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
                 />
               );
             })}
-            <ZoneBox
-              label="费用区"
-              zone="cost"
-              cards={mine.zones.cost}
-              expandable
-              state={state}
-              dropKey="cost"
-              highlight={dragging?.kind === 'hand' && state.phase === 'charge'}
-              onCardDetail={openDetail}
-            />
+            <RevealBox cards={revealed[me] ?? []} state={state} onCardDetail={openDetail} />
           </section>
 
           {/* ⑤ 我方五区 —— 与第 ② 排（对方五区）**严格镜像**（Era 2026-10-14）。

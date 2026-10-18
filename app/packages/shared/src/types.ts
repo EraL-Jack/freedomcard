@@ -85,6 +85,42 @@ export interface CardInstance {
    * 注意：登场不产生休眠 —— Era 未定义「召唤失调」类机制，不得自行加入。
    */
   sleeping?: boolean;
+  /** 本回合临时力量修正（统领 3 档 / 军师触发器，ADR-0023 §3）—— 回合切换时清空。 */
+  tempPower?: number;
+  /** 本回合「对指挥官伤害」临时加成（统领 7 档）—— 回合切换时清空。 */
+  tempDamage?: number;
+  /** 本回合「攻击后重置」（统领 9 档）：置位时攻击后不进入休眠。 */
+  attackRefresh?: boolean;
+}
+
+/** 回合内触发器（军师类「本回合获得效果」，ADR-0023 §7）。 */
+export interface TurnTrigger {
+  /** 触发器来源卡 uid（军师）。 */
+  sourceUid: string;
+  /** 归属玩家。 */
+  owner: PlayerId;
+  /** 触发类型 —— 目前仅「己方炎刃随从登场」。 */
+  kind: 'on-blade-summon';
+  /** 剩余可触发次数（发动时 = 除外区炎刃数）。 */
+  remaining: number;
+}
+
+/**
+ * 待定选择（ADR-0023 §2）—— 效果需要玩家选择时挂起。
+ * 挂起期间引擎入口只放行该玩家的 `effect:choose` 与认输；
+ * 通过 `choice:pending` / `choice:cleared` 事件进出状态（事件溯源一致）。
+ */
+export interface PendingChoice {
+  /** 应回答的玩家。 */
+  playerId: PlayerId;
+  /** 选择种类 —— 由效果实现自定义（如 `blade-lord-1` / `blade-order-summon`）。 */
+  kind: string;
+  /** 效果来源卡 uid。 */
+  sourceUid: string;
+  /** 可选项 id 列表（卡 uid / 子效果编号），`'pass'` 恒隐含可选。 */
+  options: string[];
+  /** 效果私有上下文（如统领Ⅰ已用子效果 / 号令揭示的 uid 列表）。 */
+  meta?: Record<string, unknown>;
 }
 
 export interface PlayerState {
@@ -113,6 +149,10 @@ export interface PlayerState {
   commanderPowerIndex: number;
   /** 起手换牌只允许一次（A10-1）。 */
   mulliganDone: boolean;
+  /** 本回合已发动的「每回合一次」效果（键 `${uid}:${effect}`，ADR-0023 §3）。 */
+  effectsUsed: string[];
+  /** 本回合生效中的触发器（军师类，回合切换清空）。 */
+  turnTriggers: TurnTrigger[];
 }
 
 /** 对局状态 —— 结构见 ADR-0012。 */
@@ -139,6 +179,8 @@ export interface GameState {
   started: boolean;
   /** 胜负：血空（A3-1）或认输（A3-4）后写入；平局按 A3-3 不存在。 */
   winner: PlayerId | null;
+  /** 待定选择（ADR-0023）—— 非空时阻塞除回答/认输外的所有玩家 Intent。 */
+  pendingChoice: PendingChoice | null;
 }
 
 /**

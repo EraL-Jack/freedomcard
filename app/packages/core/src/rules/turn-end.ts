@@ -36,6 +36,13 @@ export const turnEndRule = (
   let s = state;
   const startTurn = state.turn;
 
+  // ADR-0023 §2：待定选择挂起时，系统链路（超时兜底）视同放弃选择 ——
+  // 先自动 pass（清除挂起）再推进，否则选择会跨回合悬挂、引用已离场对象。
+  if (s.pendingChoice) {
+    events.push({ type: 'choice:cleared', at: ctx.now });
+    s = reduce(s, events[events.length - 1]!);
+  }
+
   for (let i = 0; i < MAX_STEPS; i++) {
     // 抽牌手动化（Era 2026-10-18）的**超时兜底**：玩家链路在「未抽牌的抽牌阶段」
     // 禁止推进（`phase.ts`），但系统链路不能卡死 —— 未抽则先自动补抽再走。

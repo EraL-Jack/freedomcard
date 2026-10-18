@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import { startGame } from './helpers.js';
+import { startGame, activePage } from './helpers.js';
 
 /**
  * 联机开局端到端验证（真界面）。
@@ -53,4 +53,29 @@ test('卡牌详情：点「?」按钮可查看完整效果文本（Era 2026-10-1
 
   await host.getByTestId('card-detail-close').click();
   await expect(overlay).toHaveCount(0);
+});
+
+test('统领效果Ⅱ：发动 → 选择手牌 → 除外（ADR-0023 / X-16）', async ({ browser }) => {
+  const { host, guest } = await startGame(browser);
+  // 效果发动要求是我的回合 —— 先找到行动方
+  const p = await activePage([host, guest]);
+
+  const handBefore = await p.getByTestId('hand').locator('[data-testid="card"]').count();
+
+  // 打开我方指挥官详情 → 发动效果Ⅱ
+  const commander = p.getByTestId('zone-commander').nth(1);
+  await expect(commander).toContainText('炎刃军统领', { timeout: 15_000 });
+  await commander.locator('[data-testid="card-detail"]').click();
+  await p.getByTestId('effect-2').click();
+
+  // 待定选择浮层：列出全部手牌供选择
+  const overlay = p.getByTestId('choice-overlay');
+  await expect(overlay).toBeVisible({ timeout: 10_000 });
+  await overlay.getByTestId('choice-card').first().click();
+
+  // 手牌少一张，除外区 +1
+  await expect(p.getByTestId('hand').locator('[data-testid="card"]')).toHaveCount(handBefore - 1, {
+    timeout: 10_000,
+  });
+  await expect(p.getByTestId('zone-exile').nth(1)).toContainText('1', { timeout: 10_000 });
 });

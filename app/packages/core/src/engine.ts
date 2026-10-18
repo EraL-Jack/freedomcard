@@ -18,6 +18,18 @@ export function applyIntent(
   intent: Intent,
   ctx: RuleContext,
 ): Result<GameEvent[], Rejection> {
+  // ADR-0023 §2 全局守卫：待定选择挂起期间，玩家 Intent 只放行
+  // 「回答选择」与「认输」，其余一律拒绝 —— 防止选择未决时推进阶段导致状态错位。
+  // 系统 Intent（超时兜底等）不受此限。
+  if (state.pendingChoice && intent.actor === 'player') {
+    const allow = intent.type === 'effect:choose' || intent.type === 'game:concede';
+    if (!allow) {
+      return {
+        ok: false,
+        error: { code: RULE_ERRORS.PENDING_CHOICE, message: '请先完成当前选择' },
+      };
+    }
+  }
   const handler = get(intent.type);
   if (!handler) {
     return {
