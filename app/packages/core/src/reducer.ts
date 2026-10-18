@@ -122,7 +122,10 @@ export function reduce(state: GameState, event: GameEvent): GameState {
           if (typeof tp === 'number') next.tempPower = (next.tempPower ?? 0) + tp;
           const td = event.payload?.['tempDamage'];
           if (typeof td === 'number') next.tempDamage = (next.tempDamage ?? 0) + td;
-          if (event.payload?.['attackRefresh'] === true) next.attackRefresh = true;
+          const ar = event.payload?.['attackRefresh'];
+          if (ar === true) next.attackRefresh = true;
+          // H23：「一回合一次，攻击后重置」生效后由 attack.ts 发 false 消耗
+          if (ar === false) delete next.attackRefresh;
           return next;
         };
         p.zones.board = p.zones.board.map(patch);

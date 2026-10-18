@@ -551,6 +551,10 @@ E2E 里先后手由掷骰决定、起手牌由洗牌决定，两者都是随机�
 - 假设（登记进 `docs/09`）：H21 号令未选中的卡洗回卡组；H22 统领Ⅰ的子效果目标
   不限阵营（卡面只说「一个随从」）；H23 「本回合攻击后重置」= 本回合内每次攻击后都不休眠；
   H24 军师离场后其已挂的触发器不回收（卡面未说离场失效），回合末统一清空。
+  **2026-10-19 Era 逐条拍板**：H21 维持（回到卡组并洗牌）；H22 改为**限己方**；
+  H23 修订为**「一回合一次，攻击后重置」**（卡面描述同步改，生效一次即消耗，
+  由 `attack.ts` 在免休眠时发 `unit:modified{attackRefresh:false}` 收回）；H24 维持。
+  落地见 D-127。
 - 影响：`shared/src/types.ts`（`pendingChoice` / `CardInstance` 临时态 / `TurnTrigger` /
   `effectsUsed`）、`shared/src/constants.ts`（新错误码）、`core/src/rules/effect.ts`（新）、
   `core/src/effects/*`（新）、`core/src/rules/play.ts`（号令接线 + 登场触发钩子）、

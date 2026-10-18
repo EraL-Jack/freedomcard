@@ -187,9 +187,14 @@ export const attackRule = (
   if (attackerDies) events.push(moved(at, me, attackerUid, 'board', 'graveyard'));
 
   // A9-2：攻击后休眠。已被破坏的单位不再标记 —— 对死掉的单位标休眠没有意义。
-  // 例外：统领 9 档授予的「本回合攻击后重置」（attackRefresh）置位时不休眠（ADR-0023 §3）。
-  if (!attackerDies && !atk.card.attackRefresh) {
-    events.push(ev(at, 'unit:asleep', { playerId: me, uid: attackerUid }));
+  // 例外：统领 9 档授予的「攻击后重置」（attackRefresh）置位时不休眠，
+  // 但**一回合一次**（H23，Era 2026-10-19 拍板）—— 生效即消耗，本回合第二次攻击照常休眠。
+  if (!attackerDies) {
+    if (atk.card.attackRefresh) {
+      events.push(ev(at, 'unit:modified', { playerId: me, uid: attackerUid, attackRefresh: false }));
+    } else {
+      events.push(ev(at, 'unit:asleep', { playerId: me, uid: attackerUid }));
+    }
   }
 
   return { ok: true, value: events };

@@ -7,15 +7,15 @@
  *    3个：选择一个随从，本回合力量值+1
  *    5个：选择一个力量值在除外区炎刃数量等级以下的随从，破坏
  *    7个：选择一个随从，本回合对指挥官伤害+1
- *    9个：选择一个随从，本回合攻击后重置
+ *    9个：选择一个随从，一回合一次，攻击后重置（Era 2026-10-19 修订描述）
  *  Ⅱ 每回合一次，可以将一张手牌除外。
  *
- * 口径（Era 2026-10-18 授权时给定）：
+ * 口径（Era 2026-10-18 授权时给定，2026-10-19 拍板修订）：
  *  - 【2】 = 从费用区支付 2 张卡（与出牌支付同路径）；
  *  - 「每回合一次」在自己回合开始时重置（reducer 在进入己方充能阶段清 `effectsUsed`）；
- *  - 「选择一个随从」需要目标选择 → `pendingChoice`。
- *
- * 假设（已登记 docs/09）：H21 目标不限阵营；H22 9 档的「攻击后重置」本回合内每次攻击都生效。
+ *  - 「选择一个随从」需要目标选择 → `pendingChoice`；
+ *  - 「选择一个随从」**限己方**（H22，Era 2026-10-19 拍板）；
+ *  - 9 档「攻击后重置」**一回合一次**，生效一次即消耗（H23，Era 2026-10-19 拍板）。
  */
 
 import {
@@ -275,9 +275,8 @@ function targetCandidates(
 ): string[] {
   const p = playerOf(state, me);
   if (!p) return [];
-  const allBoard = Object.values(state.players).flatMap((x) =>
-    x.zones.board.map((c) => ({ uid: c.uid, defId: c.defId })),
-  );
+  // H22（Era 2026-10-19 拍板）：统领Ⅰ的「选择一个随从」**限己方**，对方随从一律不可选。
+  const ownBoard = p.zones.board.map((c) => ({ uid: c.uid, defId: c.defId }));
   switch (sub) {
     case 'l1':
       // 墓地里的随从，力量值 ≤ 除外区炎刃数（墓地卡无临时修正，取卡面值）
@@ -288,8 +287,8 @@ function targetCandidates(
         })
         .map((c) => c.uid);
     case 'l5':
-      // 场上随从，力量值 ≤ 炎刃数（H21：不限阵营）
-      return allBoard
+      // 己方场上随从，力量值 ≤ 炎刃数（H22：限己方）
+      return ownBoard
         .filter((c) => {
           const def = ctx.cards[c.defId];
           return def !== undefined && def.power <= bladeCount;
@@ -298,7 +297,7 @@ function targetCandidates(
     case 'l3':
     case 'l7':
     case 'l9':
-      // 任一随从（H21）
-      return allBoard.map((c) => c.uid);
+      // 己方任一随从（H22）
+      return ownBoard.map((c) => c.uid);
   }
 }

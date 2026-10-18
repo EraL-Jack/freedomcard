@@ -399,7 +399,7 @@ function ChoiceOverlay(props: {
     l3: '3档：一个随从本回合力量 +1',
     l5: '5档：破坏一个随从（力量 ≤ 炎刃数）',
     l7: '7档：一个随从本回合对指挥官伤害 +1',
-    l9: '9档：一个随从本回合攻击后重置',
+    l9: '9档：一个随从一回合一次攻击后重置',
   };
   const TITLE: Readonly<Record<string, string>> = {
     'blade-lord-1': '统领效果Ⅰ：选择要执行的效果（可再选，或放弃）',

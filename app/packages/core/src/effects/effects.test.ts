@@ -131,12 +131,13 @@ describe('统领 Ⅰ：按除外区炎刃数分档', () => {
     expect(s.pendingChoice?.options).toEqual(['l1', 'l3']);
   });
 
-  it('3 档：选择一个随从本回合力量值 +1（双方场上的随从都可选，H21）', () => {
+  it('3 档：选择一个随从本回合力量值 +1（限己方，H22 —— Era 2026-10-19 拍板）', () => {
     let s = base();
     s = run(s, intent('p1', INTENTS.effectActivate, { uid: 'lord1', effect: '1' }));
     s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'l3' }));
     expect(s.pendingChoice?.kind).toBe('blade-lord-1-target');
-    expect(s.pendingChoice?.options).toContain('fb1'); // 对方随从也是合法目标
+    // H22：对方随从 fb1 不再是合法目标，候选只有己方 b1
+    expect(s.pendingChoice?.options).toEqual(['b1']);
 
     s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'b1' }));
     expect(unitPower(s, CARD_POOL, 'b1')).toBe(2); // 1 + 1
@@ -144,6 +145,47 @@ describe('统领 Ⅰ：按除外区炎刃数分档', () => {
     expect(s.pendingChoice?.kind).toBe('blade-lord-1');
     s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'pass' }));
     expect(s.pendingChoice).toBeNull();
+  });
+
+  it('5 档：破坏力量值 ≤ 炎刃数的随从，候选同样限己方（H22）', () => {
+    let s = craft({
+      zones: {
+        commander: [LORD],
+        cost: [c('k1', 'bladeRecruit'), c('k2', 'bladeRecruit')],
+        exile: Array.from({ length: 5 }, (_, i) => c(`x${i}`, 'bladeVanguard')), // 5 张炎刃
+        board: [c('b1', 'bladeRecruit')],
+      },
+      // 对方随从力量 4 ≤ 5，旧口径（不限阵营）下会是候选 —— 钉住它不再出现
+      foeZones: { board: [c('fb1', 'bladeKnight')] },
+    });
+    s = run(s, intent('p1', INTENTS.effectActivate, { uid: 'lord1', effect: '1' }));
+    s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'l5' }));
+    expect(s.pendingChoice?.kind).toBe('blade-lord-1-target');
+    expect(s.pendingChoice?.options).toEqual(['b1']);
+
+    s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'b1' }));
+    expect(s.players['p1']!.zones.board).toHaveLength(0);
+    expect(s.players['p1']!.zones.graveyard.map((x) => x.uid)).toContain('b1');
+    // 对方随从不受影响
+    expect(s.players['p2']!.zones.board.map((x) => x.uid)).toEqual(['fb1']);
+  });
+
+  it('9 档：授予「一回合一次，攻击后重置」，候选限己方（H22/H23）', () => {
+    let s = craft({
+      zones: {
+        commander: [LORD],
+        cost: [c('k1', 'bladeRecruit'), c('k2', 'bladeRecruit')],
+        exile: Array.from({ length: 9 }, (_, i) => c(`x${i}`, 'bladeVanguard')), // 9 张炎刃
+        board: [c('b1', 'bladeRecruit')],
+      },
+      foeZones: { board: [c('fb1', 'bladeKnight')] },
+    });
+    s = run(s, intent('p1', INTENTS.effectActivate, { uid: 'lord1', effect: '1' }));
+    s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'l9' }));
+    expect(s.pendingChoice?.options).toEqual(['b1']); // 对方 fb1 不可选
+
+    s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'b1' }));
+    expect(s.players['p1']!.zones.board[0]!.attackRefresh).toBe(true);
   });
 
   it('1 档：从墓地召唤力量值 ≤ 炎刃数的随从', () => {
@@ -185,6 +227,36 @@ describe('统领 Ⅰ：按除外区炎刃数分档', () => {
     // 模拟回合切换事件（turn:changed 负责清临时态）
     s = reduce(s, { type: 'turn:changed', at: 1001, payload: { turn: 3, activeSeat: 1 } });
     expect(unitPower(s, CARD_POOL, 'b1')).toBe(1); // tempPower 已清
+  });
+});
+
+describe('统领 9 档：「一回合一次，攻击后重置」（H23 —— Era 2026-10-19 拍板）', () => {
+  const battle = () =>
+    craft({
+      phase: 'battle',
+      zones: {
+        commander: [LORD],
+        board: [{ uid: 'a1', defId: 'bladeVanguard', attackRefresh: true }],
+      },
+      foeZones: { board: [c('fb1', 'bladeRecruit'), c('fb2', 'bladeRecruit'), c('fb3', 'bladeRecruit')] },
+    });
+
+  it('置位时第一次攻击不休眠，生效一次即消耗；第二次攻击后照常休眠', () => {
+    let s = battle();
+    // 第一次攻击：2 > 1，防守方破坏；攻击方不休眠，attackRefresh 被消耗
+    s = run(s, intent('p1', INTENTS.attack, { attackerUid: 'a1', targetUid: 'fb1' }));
+    const a1 = s.players['p1']!.zones.board[0]!;
+    expect(a1.sleeping).toBeFalsy();
+    expect(a1.attackRefresh).toBeUndefined();
+
+    // 第二次攻击：允许（未休眠），之后照常休眠
+    s = run(s, intent('p1', INTENTS.attack, { attackerUid: 'a1', targetUid: 'fb2' }));
+    expect(s.players['p1']!.zones.board[0]!.sleeping).toBe(true);
+
+    // 第三次攻击：已休眠，被拒
+    const third = applyIntent(s, intent('p1', INTENTS.attack, { attackerUid: 'a1', targetUid: 'fb3' }), CTX);
+    expect(third.ok).toBe(false);
+    if (!third.ok) expect(third.error.code).toBe(RULE_ERRORS.UNIT_ASLEEP);
   });
 });
 

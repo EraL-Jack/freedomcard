@@ -89,7 +89,7 @@ export interface CardInstance {
   tempPower?: number;
   /** 本回合「对指挥官伤害」临时加成（统领 7 档）—— 回合切换时清空。 */
   tempDamage?: number;
-  /** 本回合「攻击后重置」（统领 9 档）：置位时攻击后不进入休眠。 */
+  /** 「一回合一次，攻击后重置」（统领 9 档，H23）：置位时下一次攻击后不进入休眠，生效一次即消耗。 */
   attackRefresh?: boolean;
 }
 

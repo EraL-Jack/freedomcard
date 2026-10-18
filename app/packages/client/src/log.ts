@@ -145,7 +145,8 @@ export function describeEvent(
       const td = num('tempDamage');
       if (tp) return `${name} 本回合力量 ${tp > 0 ? '+' : ''}${tp}`;
       if (td) return `${name} 本回合对指挥官伤害 ${td > 0 ? '+' : ''}${td}`;
-      if (p['attackRefresh'] === true) return `${name} 获得「攻击后重置」（本回合）`;
+      if (p['attackRefresh'] === true) return `${name} 获得「一回合一次，攻击后重置」`;
+      if (p['attackRefresh'] === false) return `${name} 攻击后重置已生效（本回合已用完）`;
       return null;
     }
 
