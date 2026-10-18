@@ -251,19 +251,18 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
       </header>
 
       <div className="flex min-h-0 flex-1 gap-1">
-        {/* 对战桌主体 —— `justify-between` 让六排**均匀铺满**可用高度：
-            对方手牌贴顶、我方手牌贴近操作条，中间各区随窗口高度均匀分布。
-            此前内容全部堆在顶部，窗口一高底部就剩一大片空白（Era 2026-10-13
-            实机反馈「没有适配」）。内容溢出时 justify-between 自动退化为
-            正常流 + 滚动，不会裁掉顶部。 */}
-        <div className="flex min-h-0 flex-1 flex-col justify-between gap-1 overflow-y-auto">
+        {/* 对战桌主体 —— 四排网格各 `flex-1` **平分**剩余高度，格子随之撑满整桌：
+            此前容器用 justify-between 只把排「拉开」，排本身仍只有内容高，
+            排与排之间全是空白（Era 2026-10-14 实机反馈「格子不铺满」）。
+            两排手牌条保持内容高；内容超出时靠 overflow-y-auto 滚动。 */}
+        <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
           {/* ① 对方手牌 —— 只显示张数，不暴露内容 */}
           <section className="rounded border border-slate-700 bg-slate-900/40 px-2 py-1 text-[11px] text-slate-400">
             对方手牌 {theirs.zones.hand.length} 张
           </section>
 
-          {/* ② 对方五区 */}
-          <section className="grid grid-cols-5 gap-1">
+          {/* ② 对方五区 —— flex-1 平分桌高；auto-rows-fr 让行撑满排高（格子因此铺满） */}
+          <section className="grid min-h-0 flex-1 auto-rows-fr grid-cols-5 gap-1">
             <ZoneBox label="卡组区" zone="deck" cards={theirs.zones.deck} expandable state={state} />
             <ZoneBox label="法术区" zone="spell" cards={theirs.zones.spell} expandable state={state} />
             {/* ADR-0022：指挥官也是合法攻击目标 —— 否则只能互砍随从，永远分不出胜负。
@@ -289,8 +288,8 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
             <ZoneBox label="除外区" zone="exile" cards={theirs.zones.exile} expandable state={state} />
           </section>
 
-          {/* ③ 对方费用区 + 随从区 1·2·3 */}
-          <section className="grid grid-cols-4 gap-1">
+          {/* ③ 对方费用区 + 随从区 1·2·3 —— flex-1 平分桌高 */}
+          <section className="grid min-h-0 flex-1 auto-rows-fr grid-cols-4 gap-1">
             <ZoneBox label="费用区" zone="cost" cards={theirs.zones.cost} expandable state={state} />
             {slots.map((i) => (
               <BoardSlot
@@ -312,8 +311,8 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
             ))}
           </section>
 
-          {/* ④ 我方随从区 1·2·3 + 费用区 */}
-          <section className="grid grid-cols-4 gap-1">
+          {/* ④ 我方随从区 1·2·3 + 费用区 —— flex-1 平分桌高 */}
+          <section className="grid min-h-0 flex-1 auto-rows-fr grid-cols-4 gap-1">
             {slots.map((i) => (
               <BoardSlot
                 key={i}
@@ -333,8 +332,9 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
           {/* ⑤ 我方五区 —— 与第 ② 排（对方五区）**严格镜像**（Era 2026-10-14）。
               ② 卡组/法术/指挥官/弃牌/除外 → ⑤ 除外/弃牌/指挥官/法术/卡组。
               原第 2 格是「费用区」，导致我方**没有弃牌区**（玩家看不到自己的墓地）；
-              费用区在第 ④ 排已有一格，故此处换成弃牌区不丢信息。 */}
-          <section className="grid grid-cols-5 gap-1">
+              费用区在第 ④ 排已有一格，故此处换成弃牌区不丢信息。
+              flex-1 平分桌高。 */}
+          <section className="grid min-h-0 flex-1 auto-rows-fr grid-cols-5 gap-1">
             <ZoneBox label="除外区" zone="exile" cards={mine.zones.exile} expandable state={state} />
             <ZoneBox label="弃牌区" zone="graveyard" cards={mine.zones.graveyard} expandable state={state} />
             <ZoneBox
