@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>炎刃 15 · 霜律 15｜卡牌图鉴</title>
+<style>
+  :root {
+    --bg: #0b0d12;
+    --panel: #11151d;
+    --line: rgba(255,255,255,.09);
+    --text: #e8ecf4;
+    --muted: #8b95a7;
+    --blade: #ff6b35;
+    --blade-2: #ffb347;
+    --blade-deep: #2a0f0c;
+    --frost: #6fd6ff;
+    --frost-2: #b8f0ff;
+    --frost-deep: #0a1a2a;
+    --gold: #e8c06a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background:
+      radial-gradient(900px 500px at 12% -10%, rgba(255,107,53,.12), transparent 60%),
+      radial-gradient(900px 500px at 88% -10%, rgba(111,214,255,.12), transparent 60%),
+      var(--bg);
+    color: var(--text);
+    font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+    min-height: 100vh;
+  }
+  .wrap { max-width: 1440px; margin: 0 auto; padding: 40px 28px 72px; }
+
+  header.hero {
+    display: grid;
+    grid-template-columns: 1.4fr .9fr;
+    gap: 28px;
+    align-items: end;
+    padding-bottom: 26px;
+    border-bottom: 1px solid var(--line);
+  }
+  .kicker {
+    font-size: 12px; letter-spacing: .22em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 12px;
+  }
+  h1 {
+    margin: 0 0 12px;
+    font-size: clamp(28px, 4vw, 46px);
+    line-height: 1.12;
+    letter-spacing: -.02em;
+    font-weight: 800;
+  }
+  h1 .b { color: var(--blade); }
+  h1 .f { color: var(--frost); }
+  .lede { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.75; max-width: 62ch; }
+  .rules {
+    display: grid; gap: 8px;
+    padding: 16px 18px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: rgba(255,255,255,.025);
+    font-size: 12.5px; color: #b9c3d4; line-height: 1.6;
+  }
+  .rules b { color: var(--text); }
+  .rules .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 8px; vertical-align: 1px; }
+
+  .toolbar {
+    position: sticky; top: 0; z-index: 20;
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between;
+    padding: 14px 0;
+    margin: 18px 0 8px;
+    background: linear-gradient(180deg, rgba(11,13,18,.96), rgba(11,13,18,.86) 70%, transparent);
+    backdrop-filter: blur(8px);
+  }
+  .tabs, .filters { display: flex; gap: 8px; flex-wrap: wrap; }
+  button {
+    appearance: none; border: 1px solid var(--line); background: rgba(255,255,255,.03);
+    color: #c9d2e2; padding: 9px 14px; border-radius: 999px; cursor: pointer;
+    font-size: 13px; font-family: inherit; transition: .18s ease;
+  }
+  button:hover { color: #fff; border-color: rgba(255,255,255,.26); transform: translateY(-1px); }
+  button.active { color: #0b0d12; background: #e8ecf4; border-color: #e8ecf4; font-weight: 700; }
+  button[data-faction="blade"].active { background: var(--blade); border-color: var(--blade); color: #1a0b06; }
+  button[data-faction="frost"].active { background: var(--frost); border-color: var(--frost); color: #041018; }
+
+  section.faction { margin-top: 26px; }
+  .faction-head {
+    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+    margin: 0 0 6px;
+  }
+  .faction-head h2 { margin: 0; font-size: 24px; letter-spacing: -.01em; }
+  .faction-head .sub { color: var(--muted); font-size: 13px; }
+  .faction-head .count { margin-left: auto; color: var(--muted); font-size: 12px; letter-spacing: .08em; }
+  .faction-note { margin: 0 0 18px; color: var(--muted); font-size: 13px; line-height: 1.7; max-width: 90ch; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 16px;
+  }
+  @media (max-width: 1180px) { .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+  @media (max-width: 920px) { .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (max-width: 680px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .wrap { padding: 26px 14px 56px; } header.hero { grid-template-columns: 1fr; } }
+
+  .card {
+    position: relative;
+    aspect-ratio: 5 / 7;
+    border-radius: 14px;
+    padding: 10px;
+    display: flex; flex-direction: column;
+    border: 1px solid rgba(255,255,255,.12);
+    background: #0e1219;
+    box-shadow: 0 10px 24px rgba(0,0,0,.35);
+    overflow: hidden;
+    transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease;
+    isolation: isolate;
+  }
+  .card:hover { transform: translateY(-5px); box-shadow: 0 18px 38px rgba(0,0,0,.5); z-index: 5; }
+  .card.blade { border-color: rgba(255,107,53,.28); }
+  .card.blade:hover { border-color: rgba(255,107,53,.7); box-shadow: 0 18px 38px rgba(255,107,53,.16); }
+  .card.frost { border-color: rgba(111,214,255,.26); }
+  .card.frost:hover { border-color: rgba(111,214,255,.7); box-shadow: 0 18px 38px rgba(111,214,255,.16); }
+
+  .card::before {
+    content: ""; position: absolute; inset: 0; z-index: -1; opacity: .9;
+  }
+  .card.blade::before {
+    background:
+      radial-gradient(120% 70% at 50% 0%, rgba(255,107,53,.28), transparent 55%),
+      linear-gradient(180deg, #1b0c08 0%, #0e0908 55%, #0b0d12 100%);
+  }
+  .card.frost::before {
+    background:
+      radial-gradient(120% 70% at 50% 0%, rgba(111,214,255,.24), transparent 55%),
+      linear-gradient(180deg, #07131f 0%, #081019 55%, #0b0d12 100%);
+  }
+
+  .card-top { display: flex; align-items: center; gap: 8px; }
+  .cost {
+    width: 30px; height: 30px; flex: 0 0 30px;
+    border-radius: 50%;
+    display: grid; place-items: center;
+    font-weight: 800; font-size: 15px;
+    color: #081018;
+    background: linear-gradient(145deg, #fff, #b9c6d8);
+    box-shadow: 0 2px 8px rgba(0,0,0,.4), inset 0 0 0 2px rgba(0,0,0,.12);
+  }
+  .card.blade .cost { background: linear-gradient(145deg, #ffd3a3, #ff6b35); }
+  .card.frost .cost { background: linear-gradient(145deg, #d6f7ff, #6fd6ff); }
+  .cost.relic { font-size: 11px; letter-spacing: -.04em; }
+  .type {
+    font-size: 10.5px; letter-spacing: .1em; color: #b9c3d4;
+    padding: 3px 7px; border-radius: 999px; border: 1px solid rgba(255,255,255,.14);
+    background: rgba(0,0,0,.18);
+  }
+  .tag {
+    margin-left: auto; font-size: 9.5px; letter-spacing: .06em;
+    padding: 3px 7px; border-radius: 999px;
+    color: #0b0d12; font-weight: 800;
+    background: #c9d2e2;
+  }
+  .tag.original { background: var(--gold); }
+  .tag.patch { background: #b6a2ff; }
+  .tag.new { background: #7ef0b0; }
+  .tag.vanilla { background: #8b95a7; color: #0b0d12; }
+
+  .art {
+    position: relative;
+    margin: 9px 0 8px;
+    height: 30%;
+    min-height: 64px;
+    border-radius: 9px;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,.09);
+    display: grid; place-items: center;
+  }
+  .card.blade .art {
+    background:
+      radial-gradient(circle at 50% 120%, rgba(255,179,71,.55), transparent 55%),
+      repeating-linear-gradient(115deg, rgba(255,107,53,.10) 0 2px, transparent 2px 9px),
+      linear-gradient(160deg, #3a1409, #160a07);
+  }
+  .card.frost .art {
+    background:
+      radial-gradient(circle at 50% 120%, rgba(184,240,255,.45), transparent 55%),
+      repeating-linear-gradient(65deg, rgba(111,214,255,.10) 0 2px, transparent 2px 10px),
+      linear-gradient(160deg, #0d2a3e, #07131d);
+  }
+  .art .glyph {
+    font-size: 40px; font-weight: 900; line-height: 1;
+    color: rgba(255,255,255,.86);
+    text-shadow: 0 2px 18px rgba(0,0,0,.5);
+    letter-spacing: -.05em;
+  }
+  .card.blade .art .glyph { text-shadow: 0 0 24px rgba(255,107,53,.8); }
+  .card.frost .art .glyph { text-shadow: 0 0 24px rgba(111,214,255,.8); }
+  .art .curve {
+    position: absolute; bottom: 6px; left: 0; right: 0;
+    text-align: center; font-size: 10px; letter-spacing: .12em;
+    color: rgba(255,255,255,.7);
+  }
+
+  .name {
+    margin: 0 0 4px;
+    font-size: 14.5px; font-weight: 800; letter-spacing: -.01em;
+    line-height: 1.25;
+  }
+  .cardtext {
+    margin: 0; flex: 1;
+    font-size: 10.8px; line-height: 1.5; color: #c3cbd9;
+    overflow: hidden;
+  }
+  .cardtext .hl { color: #fff; font-weight: 700; }
+  .card.blade .cardtext .hl { color: #ffc79a; }
+  .card.frost .cardtext .hl { color: #c9f4ff; }
+
+  .bottom {
+    display: flex; align-items: flex-end; justify-content: space-between;
+    margin-top: 7px; padding-top: 7px; border-top: 1px solid rgba(255,255,255,.08);
+  }
+  .role { font-size: 9.5px; color: var(--muted); letter-spacing: .05em; max-width: 60%; line-height: 1.3; }
+  .stats { display: flex; gap: 6px; }
+  .stat {
+    width: 30px; height: 30px; border-radius: 50%;
+    display: grid; place-items: center;
+    font-size: 13px; font-weight: 900;
+    border: 1px solid rgba(255,255,255,.16);
+    background: rgba(0,0,0,.28);
+  }
+  .stat.power { color: #ffd8b8; border-color: rgba(255,179,71,.4); }
+  .stat.damage { color: #ffb3b3; border-color: rgba(255,107,107,.4); }
+  .stat.na { color: var(--muted); border-color: rgba(255,255,255,.08); }
+  .stat.curve {
+    width: auto; padding: 0 10px; border-radius: 999px;
+    font-size: 10.5px; letter-spacing: .04em; color: #ffd8b8;
+    border-color: rgba(255,179,71,.4); white-space: nowrap;
+  }
+
+  .commander {
+    grid-column: span 2;
+    aspect-ratio: auto;
+    min-height: 0;
+    padding: 16px;
+    border-width: 1.5px;
+  }
+  @media (max-width: 680px) { .commander { grid-column: span 2; } }
+  .commander .art { height: 96px; }
+  .commander .name { font-size: 19px; }
+  .commander .cardtext { font-size: 12.2px; line-height: 1.6; }
+  .commander .bottom { margin-top: 10px; }
+  .commander .role { max-width: 70%; font-size: 10.5px; }
+  .cmd-info {
+    display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; padding-top: 10px;
+  }
+  .cmd-info span {
+    font-size: 10px; color: #c3cbd9; padding: 4px 8px; border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.2);
+  }
+  .cmd-badge {
+    font-size: 10px; letter-spacing: .14em; font-weight: 800;
+    color: #0b0d12; background: var(--gold); padding: 3px 8px; border-radius: 999px;
+  }
+
+  .legend {
+    margin: 22px 0 8px;
+    display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px;
+  }
+  @media (max-width: 900px) { .legend { grid-template-columns: 1fr; } }
+  .legend .box {
+    border: 1px solid rgba(111,214,255,.2);
+    border-radius: 14px; padding: 14px 16px;
+    background: rgba(111,214,255,.045);
+    font-size: 12px; line-height: 1.65; color: #b9c3d4;
+  }
+  .legend .box b { color: var(--frost-2); display: block; margin-bottom: 4px; font-size: 12.5px; }
+
+  footer {
+    margin-top: 44px; padding-top: 18px; border-top: 1px solid var(--line);
+    color: var(--muted); font-size: 11.5px; line-height: 1.8;
+  }
+  footer b { color: #c9d2e2; }
+  .hidden { display: none !important; }
+
+  .set-summary {
+    grid-column: span 4;
+    border: 1px dashed rgba(255,255,255,.18);
+    border-radius: 14px;
+    padding: 18px 20px;
+    background: rgba(255,255,255,.022);
+    display: flex; flex-direction: column; justify-content: center; gap: 10px;
+    min-height: 140px;
+  }
+  @media (max-width: 680px) { .set-summary { grid-column: span 2; } }
+  .set-summary.blade { border-color: rgba(255,107,53,.28); }
+  .set-summary.frost { border-color: rgba(111,214,255,.26); }
+  .set-summary .k { font-size: 10px; letter-spacing: .18em; color: var(--muted); text-transform: uppercase; }
+  .set-summary .big { font-size: 18px; font-weight: 800; letter-spacing: -.01em; }
+  .set-summary .big.blade { color: var(--blade-2); }
+  .set-summary .big.frost { color: var(--frost-2); }
+  .set-summary .meta { display: flex; flex-wrap: wrap; gap: 8px; }
+  .set-summary .pill {
+    font-size: 10.5px; color: #c3cbd9; padding: 4px 9px; border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.18);
+  }
+  .set-summary .note { font-size: 11.5px; color: var(--muted); line-height: 1.6; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <div>
+      <div class="kicker">FREEDOM CARD · CARD SET REVIEW</div>
+      <h1><span class="b">炎刃</span> 15 · <span class="f">霜律</span> 15</h1>
+      <p class="lede">
+        炎刃补齐到含指挥官 15 张；霜律是一套全新的「冻结控制」体系。
+        两套都按 30 主卡组 + 1 指挥官的构筑规则设计，卡面数值与完整规则见配套 Markdown 设计稿。
+      </p>
+    </div>
+    <div class="rules">
+      <div><span class="dot" style="background:var(--blade)"></span><b>炎刃</b>：除外计数 → 分档兑现，中速价值。</div>
+      <div><span class="dot" style="background:var(--frost)"></span><b>霜律</b>：冻结拖回合 → 节奏差 → 终结者。</div>
+      <div><span class="dot" style="background:var(--gold)"></span><b>霜冻</b>：立即休眠，跳过 1 次重置，不叠加。</div>
+      <div><span class="dot" style="background:#7ef0b0"></span><b>新增 / 补效果 / 原始 / 白板</b> 四类标签。</div>
+    </div>
+  </header>
+
+  <div class="toolbar">
+    <div class="tabs">
+      <button class="active" data-faction="all">全部 30 张</button>
+      <button data-faction="blade">炎刃 15</button>
+      <button data-faction="frost">霜律 15</button>
+    </div>
+    <div class="filters">
+      <button class="active" data-filter="all">全部</button>
+      <button data-filter="new">新增 / 补效果</button>
+      <button data-filter="original">原始</button>
+      <button data-filter="vanilla">白板</button>
+    </div>
+  </div>
+
+  <section class="faction" id="sec-blade">
+    <div class="faction-head">
+      <h2 style="color:var(--blade)">炎刃</h2>
+      <span class="sub">除外 / 墓地 / 分档 · 指挥官曲线 0→1→3→5</span>
+      <span class="count">15 张</span>
+    </div>
+    <p class="faction-note">
+      指挥官 Ⅱ 每回合把手牌变成除外数，Ⅰ 按 1/3/5/7/9 档兑现。新增的两张牌分别补「稳定除外入口」（焚典）
+      与「顶费终结者」（凤凰）；8 张原白板里有 7 张补了与除外/墓地联动的效果，只留新兵当 0 费充能素材。
+    </p>
+    <div class="grid" id="grid-blade"></div>
+  </section>
+
+  <section class="faction" id="sec-frost">
+    <div class="faction-head">
+      <h2 style="color:var(--frost)">霜律</h2>
+      <span class="sub">冻结 / 休眠 / 控制 · 指挥官曲线 0→1→2→4</span>
+      <span class="count">15 张</span>
+    </div>
+    <p class="faction-note">
+      指挥官用「2 费 + 1 次冻结」换节奏，Ⅱ 把每一次冻结转成一张牌。整套牌不追求身材，而是先把对手的
+      攻击回合按停，再用长枪兵 / 执法者 / 寒域把这次停顿换成场面，最后由审判、终裁与凛冬之刃收尾。
+    </p>
+
+    <div class="legend">
+      <div class="box"><b>霜冻是什么</b>被霜冻的单位立即休眠；其控制者的下一个回合重置阶段不重置它，该回合结束解除。净效果 = 少一次攻击。</div>
+      <div class="box"><b>不是什么</b>不是「不能成为目标」，不是「锁两个回合」，不叠加。被冻单位仍可被攻击、被效果指定、被充能。</div>
+      <div class="box"><b>怎么兑现</b>寒域让冻结单位 −1 力；长枪兵打冻结目标 +2；执法者每次冻结成长；审判/终裁把冻结变成破坏。</div>
+    </div>
+
+    <div class="grid" id="grid-frost"></div>
+  </section>
+
+  <footer>
+    <b>口径</b>：含指挥官共 15 张；允许白板，但绝大多数卡有完整效果；霜冻 = 跳过 1 次重置。
+    卡面文本为展示用精简版，<b>完整规则、边界裁决、数值预算、两套 30 张示例构筑与落地要点以配套 Markdown 设计稿为准</b>。
+    <br />数据基线：主卡组 30 + 指挥官 1，同名上限 3；力量值比较裁决；伤害值默认 1。
+  </footer>
+</div>
+
+<script>
+const BLADE = [
+  { id:'bladeLord', name:'炎刃军统领', type:'指挥官', cost:'—', power:'0→1→3→5', damage:1, tag:'original', role:'除外引擎 / 分档兑现', curve:'0 → 1 → 3 → 5',
+    text:'<span class="hl">Ⅰ 【2】每回合一次</span>：按除外区「炎刃」卡数量（1/3/5/7/9）执行至多 3 项。<br><span class="hl">Ⅱ 每回合一次</span>：可以将一张手牌除外。' },
+  { id:'bladeVanguard', name:'炎刃军先锋', type:'随从', cost:1, power:2, damage:1, tag:'original', role:'1 费基准线', text:'白板。1 费 2 力，充能素材。' },
+  { id:'bladeScout', name:'炎刃斥候', type:'随从', cost:0, power:1, damage:1, tag:'original', role:'展示时 / 可选除外', text:'从卡组展示时，可以被除外；若因此被除外且本应置入伤害区，将卡组顶一张置入伤害区。' },
+  { id:'bladeTactician', name:'炎刃军师', type:'随从', cost:1, power:1, damage:1, tag:'original', role:'登场增益', text:'每回合一次：本回合每当一个炎刃随从登场，该随从力量 +1；次数 = 除外区炎刃数。' },
+  { id:'bladeOrder', name:'炎刃号令', type:'法术', cost:1, power:null, damage:null, tag:'original', role:'展示 → 召唤', text:'展示卡组顶 7 张，选择一张力量 ≤ 除外区炎刃数的随从召唤。' },
+  { id:'bladeRecruit', name:'炎刃新兵', type:'随从', cost:0, power:1, damage:1, tag:'vanilla', role:'0 费充能素材', text:'白板。' },
+  { id:'bladeGuard', name:'炎刃卫士', type:'随从', cost:2, power:2, damage:1, tag:'patch', role:'防御 / 填墓', keywords:['嘲讽'],
+    text:'<span class="hl">嘲讽。</span>登场时：将卡组顶一张置入墓地；若为炎刃卡，你可以将其除外。' },
+  { id:'bladeKnight', name:'炎刃骑士', type:'随从', cost:3, power:4, damage:1, tag:'patch', role:'墓地换力量',
+    text:'攻击时：你可以将墓地一张炎刃卡除外；若如此做，本回合此卡力量 +1。' },
+  { id:'bladeCaptain', name:'炎刃队长', type:'随从', cost:4, power:5, damage:1, tag:'patch', role:'铺场增益',
+    text:'每当你有一个其他炎刃随从登场时，该随从本回合力量 +1。' },
+  { id:'bladeVeteran', name:'炎刃老兵', type:'随从', cost:5, power:6, damage:1, tag:'patch', role:'墓地换牌',
+    text:'登场时：你可以将墓地一张炎刃卡除外；若如此做，抽一张牌。' },
+  { id:'bladeChampion', name:'炎刃勇士', type:'随从', cost:6, power:7, damage:1, tag:'patch', role:'除外计数终结者',
+    text:'登场时：除外区每有 3 张炎刃卡，本回合此卡力量 +1（最多 +3）。' },
+  { id:'bladeTactics', name:'炎刃战术', type:'法术', cost:2, power:null, damage:null, tag:'patch', role:'战斗 trick',
+    text:'选择一个己方随从：本回合力量 +2；若除外区有 3 张以上炎刃卡，改为 +3。' },
+  { id:'bladeBanner', name:'炎刃战旗', type:'持续法术', cost:3, power:null, damage:null, tag:'patch', role:'除外抽牌引擎',
+    text:'每回合一次：当一张炎刃卡被除外时，抽一张牌。' },
+  { id:'bladeCremation', name:'炎刃焚典', type:'法术', cost:2, power:null, damage:null, tag:'new', role:'稳定除外入口',
+    text:'展示卡组顶 4 张；将其中任意数量的炎刃卡除外，其余置入墓地。' },
+  { id:'bladePhoenix', name:'炎刃凤凰', type:'随从', cost:7, power:7, damage:2, tag:'new', role:'顶费终结者',
+    text:'登场时：将墓地所有炎刃卡除外；每除外一张，本回合力量 +1（最多 +5）。' },
+];
+
+const FROST = [
+  { id:'frostAdjudicator', name:'霜律裁决官', type:'指挥官', cost:'—', power:'0→1→2→4', damage:1, tag:'new', role:'冻结引擎 / 补牌', curve:'0 → 1 → 2 → 4',
+    text:'<span class="hl">Ⅰ 【2】每回合一次</span>：霜冻一个敌方随从。<br><span class="hl">Ⅱ 每回合一次</span>：当一个敌方随从被霜冻时，抽一张牌。' },
+  { id:'frostRecruit', name:'霜律新兵', type:'随从', cost:0, power:1, damage:1, tag:'vanilla', role:'0 费充能素材', text:'白板。' },
+  { id:'frostApprentice', name:'霜律学徒', type:'随从', cost:1, power:1, damage:1, tag:'new', role:'冻结入口',
+    text:'登场时：霜冻一个敌方随从。' },
+  { id:'frostWarden', name:'霜律戍卫', type:'随从', cost:1, power:1, damage:1, tag:'new', role:'防御 / 减力', keywords:['嘲讽'],
+    text:'<span class="hl">嘲讽。</span>当此卡被攻击时，攻击者本回合力量 -1。' },
+  { id:'frostBinder', name:'霜律缚锁者', type:'随从', cost:2, power:2, damage:1, tag:'new', role:'冻结 / 补牌',
+    text:'登场时：霜冻一个敌方随从；若其已处于霜冻状态，改为抽一张牌。' },
+  { id:'frostLancer', name:'霜律长枪兵', type:'随从', cost:2, power:2, damage:1, tag:'new', role:'打冻结目标 +2',
+    text:'此卡攻击处于霜冻状态的随从时，力量 +2。' },
+  { id:'frostEnforcer', name:'霜律执法者', type:'随从', cost:3, power:3, damage:1, tag:'new', role:'冻结成长',
+    text:'每当一个敌方随从被霜冻时，本回合此卡力量 +1，每回合最多 +2。' },
+  { id:'frostNightwatch', name:'霜律守夜人', type:'随从', cost:4, power:4, damage:1, tag:'new', role:'双冻结',
+    text:'登场时：霜冻至多两个敌方随从。' },
+  { id:'frostJailer', name:'霜律典狱长', type:'随从', cost:5, power:5, damage:1, tag:'new', role:'全体冻结',
+    text:'登场时：霜冻所有敌方随从。' },
+  { id:'frostWinterblade', name:'霜律凛冬之刃', type:'随从', cost:6, power:6, damage:2, tag:'new', role:'终结者',
+    text:'登场时：霜冻所有敌方随从。伤害 2。' },
+  { id:'frostEdict', name:'霜律律令', type:'法术', cost:1, power:null, damage:null, tag:'new', role:'冻结 / 条件抽',
+    text:'霜冻一个敌方随从；若其力量 ≥ 4，抽一张牌。' },
+  { id:'frostColdSnap', name:'霜律寒流', type:'法术', cost:2, power:null, damage:null, tag:'new', role:'双冻结',
+    text:'霜冻至多两个敌方随从。' },
+  { id:'frostJudgment', name:'霜律审判', type:'法术', cost:3, power:null, damage:null, tag:'new', role:'条件破坏',
+    text:'选择一个敌方随从：若它处于霜冻状态，破坏它；否则霜冻它。' },
+  { id:'frostFinalJudgment', name:'霜律终裁', type:'法术', cost:5, power:null, damage:null, tag:'new', role:'群体破坏 + 烧脸',
+    text:'破坏所有处于霜冻状态的敌方随从；每破坏一个，对敌方指挥官造成 1 点伤害。' },
+  { id:'frostDomain', name:'霜律寒域', type:'持续法术', cost:3, power:null, damage:null, tag:'new', role:'冻结单位 −1 力',
+    text:'敌方处于霜冻状态的随从力量 -1。' },
+];
+
+const TAG_TEXT = { original:'原始', patch:'补效果', new:'新增', vanilla:'白板' };
+
+function summaryHTML(faction) {
+  const isBlade = faction === 'blade';
+  return `
+  <div class="set-summary ${faction}">
+    <div class="k">SET SUMMARY</div>
+    <div class="big ${faction}">${isBlade ? '炎刃' : '霜律'} · 15 张</div>
+    <div class="meta">
+      <span class="pill">指挥官 1</span>
+      <span class="pill">随从 ${isBlade ? 10 : 9}</span>
+      <span class="pill">法术 ${isBlade ? 3 : 4}</span>
+      <span class="pill">持续法术 1</span>
+      <span class="pill">白板 ${isBlade ? 2 : 1}</span>
+    </div>
+    <div class="note">${isBlade
+      ? '费用 0–7。除外计数是唯一资源轴：填除外 → 统领分档 / 勇士成长 / 凤凰收尾。'
+      : '费用 0–6。冻结不是移除，只买一个回合；把这一回合换成场面，再由终裁与凛冬之刃收尾。'}</div>
+  </div>`;
+}
+
+function badge(value, kind) {
+  if (value === null || value === undefined) return '<span class="stat na">—</span>';
+  return `<span class="stat ${kind}">${value}</span>`;
+}
+
+function cardHTML(c, faction) {
+  const isCmd = c.type === '指挥官';
+  const tagClass = c.tag;
+  const stats = isCmd
+    ? `<span class="stat curve">${c.power}</span>${badge(c.damage, 'damage')}`
+    : `${c.power !== null ? badge(c.power, 'power') : ''}${c.damage !== null ? badge(c.damage, 'damage') : ''}`;
+  return `
+  <article class="card ${faction} ${isCmd ? 'commander' : ''}" data-tag="${c.tag}" data-name="${c.name}">
+    <div class="card-top">
+      <div class="cost ${isCmd ? 'relic' : ''}">${c.cost}</div>
+      <div class="type">${c.type}</div>
+      ${isCmd ? '<span class="cmd-badge">COMMANDER</span>' : ''}
+      <span class="tag ${tagClass}">${TAG_TEXT[tagClass]}</span>
+    </div>
+    <div class="art">
+      <span class="glyph">${faction === 'blade' ? '刃' : '霜'}</span>
+      ${isCmd ? `<span class="curve">${c.curve}</span>` : ''}
+    </div>
+    <h3 class="name">${c.name}</h3>
+    <p class="cardtext">${c.text}</p>
+    ${isCmd ? `<div class="cmd-info">
+      <span>生命 15</span>
+      <span>主卡组 30 + 指挥官 1</span>
+      <span>${faction === 'blade' ? '体系：除外计数' : '体系：冻结控制'}</span>
+    </div>` : ''}
+    <div class="bottom">
+      <div class="role">${c.role}${c.keywords ? ' · ' + c.keywords.join(' / ') : ''}</div>
+      <div class="stats">${stats}</div>
+    </div>
+  </article>`;
+}
+
+const gridBlade = document.getElementById('grid-blade');
+const gridFrost = document.getElementById('grid-frost');
+gridBlade.innerHTML = BLADE.map(c => cardHTML(c, 'blade')).join('') + summaryHTML('blade');
+gridFrost.innerHTML = FROST.map(c => cardHTML(c, 'frost')).join('') + summaryHTML('frost');
+
+const tabs = [...document.querySelectorAll('[data-faction]')];
+const filters = [...document.querySelectorAll('[data-filter]')];
+let activeFaction = 'all';
+let activeFilter = 'all';
+
+function apply() {
+  document.getElementById('sec-blade').classList.toggle('hidden', activeFaction === 'frost');
+  document.getElementById('sec-frost').classList.toggle('hidden', activeFaction === 'blade');
+  document.querySelectorAll('.card').forEach(card => {
+    const tag = card.dataset.tag;
+    let show = true;
+    if (activeFilter === 'new') show = (tag === 'new' || tag === 'patch');
+    else if (activeFilter === 'original') show = (tag === 'original');
+    else if (activeFilter === 'vanilla') show = (tag === 'vanilla');
+    card.classList.toggle('hidden', !show);
+  });
+}
+
+tabs.forEach(b => b.addEventListener('click', () => {
+  activeFaction = b.dataset.faction;
+  tabs.forEach(x => x.classList.toggle('active', x === b));
+  apply();
+}));
+filters.forEach(b => b.addEventListener('click', () => {
+  activeFilter = b.dataset.filter;
+  filters.forEach(x => x.classList.toggle('active', x === b));
+  apply();
+}));
+</script>
+</body>
+</html>
