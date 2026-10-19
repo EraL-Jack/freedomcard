@@ -840,14 +840,18 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   /** 换牌可用 = 窗口内（己方首个充能阶段 + 时间窗）且本局还没换过（mulliganDone 每人一次，A8-3）。 */
   const canMulligan = mulliganOpen && mine.chargeCount === 1 && !mine.mulliganDone;
   /** 抽牌阶段且未抽：我方卡组区变为「点击抽牌」发光动作（Era 2026-10-18 手动抽牌）。 */
-  const canDraw = myTurn && state.phase === 'draw' && !state.drawnThisPhase;
+  const canDraw = myTurn && state.phase === 'draw' && !state.drawnThisPhase && !choiceOpen;
   /**
    * 指挥官攻击（docs/16 §6.1）：战斗阶段、本回合未攻击过、非先攻方第一回合。
    * 不可操作时不展示按钮（Era 2026-10-19）。
+   *
+   * `!choiceOpen` 与 D-152 同一口径：待定选择挂起时引擎只放行「回答 + 认输」，
+   * 攻击必然被拒 —— 留着就是「点了没反应」。
    */
   const canCommanderAttack =
     myTurn &&
     state.phase === 'battle' &&
+    !choiceOpen &&
     !mine.commanderAttacked &&
     !(state.turn === 1 && state.activeSeat === 0) &&
     mine.zones.commander.length > 0;
