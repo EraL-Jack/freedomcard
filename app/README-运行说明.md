@@ -125,11 +125,12 @@ app/
 | `room:reconnect` | C→S | `{ playerId, token }` | 断线重连；返回快照（含 `lastSeqByPlayer`） |
 | `room:leave` | C→S | — | 主动离开；房主离开则移交房主 |
 | `room:ready` | C→S | — | 准备；满员且全员 ready → 服务端走系统 `game:start`（ADR-0019） |
-| `room:next-game` | C→S | — | BO3 开下一小局，**仅房主**；第 2 局换先手、第 3 局重掷 |
-| `room:deck` | C→S | `{ deck: string[] }` | 准备页换卡组，**仅未开局**；空数组 = 回到阵营默认（D-141） |
+| `room:next-game` | C→S | — | BO3 开下一小局，**仅房主**；第 2 局换先手、**第 3 局由上一局败者先攻**（H33 / D-145） |
+| `room:deck` | C→S | `{ deck: string[] }` | 准备页换卡组，**仅未开局**（BO3 局间也拒，H37）；空数组 = 回到阵营默认（D-141） |
 | `room:state` | S→C | 房间视图 | 房间变化时广播（**不含 token**；卡组只给 `deckSize`） |
 | `game:intent` | C→S | `Intent` | 走完整处理链：去重 → 引擎 → reduce → 哈希 → 回放 → 广播 |
 | `game:events` | S→C | 处理结果 | `accepted` 广播全房；`rejected` / `dropped` 只回发送方 |
+| `game:snapshot` | S→C | 状态快照 | 重连 / 开局前下发**起点状态**；客户端必须先用它建立起点，否则那一批事件会被丢弃 |
 
 要记住的三条：
 
