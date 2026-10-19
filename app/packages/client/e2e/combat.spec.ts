@@ -25,49 +25,54 @@ import { activePage, playOneMinion, startGame, turnNo, zoneCount } from './helpe
  */
 
 test('出随从 → 战斗阶段发起攻击 → 力量值裁决并结算', async ({ browser }) => {
-  // 跨两个回合，比单回合用例长；回合时限 30s 也不允许无限等。
-  test.setTimeout(60_000);
+  // 跨三个回合（先攻首回合 0 充能，首回合可能无牌可出），比单回合用例长。
+  test.setTimeout(120_000);
 
   const { host, guest } = await startGame(browser);
   const pages: readonly Page[] = [host, guest];
 
-  // ① 先攻方：出一张随从当靶子，然后结束回合
+  // ① 先攻方首回合（0 充能、maxCost 1）可能无牌可出 —— 直接结束回合
   const first = await activePage(pages);
-  await playOneMinion(first);
-
   const turn0 = await turnNo(first);
   await first.getByTestId('end-turn').click();
   // 事件播放队列（FX 节奏）会让回合切换晚几秒到达客户端 —— poll 超时放宽到 15s
   await expect.poll(() => turnNo(first), { timeout: 15_000 }).toBe(turn0 + 1);
 
-  // ② 后攻方：出随从 → 推进到战斗阶段
+  // ② 后攻方（第 2 回合）出一张随从当靶子，然后结束回合
   const second = await activePage(pages);
   expect(second, '结束回合后应换成另一个玩家行动').not.toBe(first);
-
   await playOneMinion(second);
-  await second.getByTestId('advance').click();
-  await expect.poll(() => second.locator('header').innerText()).toContain('阶段 战斗');
+  const turn1 = await turnNo(second);
+  await second.getByTestId('end-turn').click();
+  await expect.poll(() => turnNo(second), { timeout: 15_000 }).toBe(turn1 + 1);
 
-  // ③ 发起攻击：先点我方随从（选定攻击方），再点对方随从（选定目标）
+  // ③ 先攻方第 3 回合（maxCost 3）出随从 → 推进到战斗阶段发起攻击
+  const attackerPage = await activePage(pages);
+  expect(attackerPage).toBe(first);
+  await playOneMinion(attackerPage);
+  await attackerPage.getByTestId('advance').click();
+  await expect.poll(() => attackerPage.locator('header').innerText()).toContain('阶段 战斗');
+
+  // ④ 发起攻击：先点我方随从（选定攻击方），再点对方随从（选定目标）
   //    B2 上下镜像：`slot-0` 出现两次，nth(0) = 对方，nth(1) = 我方
   //
   // 我方弃牌区已与对方**镜像**渲染（Era 2026-10-14），故两侧弃牌区都能观测：
   // `zone-graveyard` 的 nth(0) = 对方（第 ② 排），nth(1) = 我方（第 ⑤ 排）。
-  const foeGraveBefore = await zoneCount(second, 'graveyard', 0);
-  const myGraveBefore = await zoneCount(second, 'graveyard', 1);
+  const foeGraveBefore = await zoneCount(attackerPage, 'graveyard', 0);
+  const myGraveBefore = await zoneCount(attackerPage, 'graveyard', 1);
 
-  await second.getByTestId('slot-0').nth(1).locator('[data-testid="card"]').click();
-  await second.getByTestId('slot-0').nth(0).locator('[data-testid="card"]').click();
+  await attackerPage.getByTestId('slot-0').nth(1).locator('[data-testid="card"]').click();
+  await attackerPage.getByTestId('slot-0').nth(0).locator('[data-testid="card"]').click();
 
   // 战斗结算：至少产出一条「裁决 X vs Y → …」
-  await expect(second.getByTestId('log')).toContainText('裁决', { timeout: 10_000 });
+  await expect(attackerPage.getByTestId('log')).toContainText('裁决', { timeout: 10_000 });
 
   // 无论哪种结局都必然可见（断言由规则保证的不变量，不依赖抽到哪张牌）：
   //   防守方破坏 → 对方弃牌区 +1；攻击方破坏 → 我方弃牌区 +1；双方破坏 → 两者
   await expect
     .poll(async () => {
-      const foeGrave = await zoneCount(second, 'graveyard', 0);
-      const myGrave = await zoneCount(second, 'graveyard', 1);
+      const foeGrave = await zoneCount(attackerPage, 'graveyard', 0);
+      const myGrave = await zoneCount(attackerPage, 'graveyard', 1);
       return foeGrave > foeGraveBefore || myGrave > myGraveBefore;
     })
     .toBe(true);

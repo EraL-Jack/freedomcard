@@ -4,9 +4,12 @@ import {
   activePage,
   advancePhase,
   chargeMinions,
+  costRemaining,
+  payOf,
   pick,
   phaseText,
   readHand,
+  settleChoices,
   startGame,
   turnNo,
   zoneCount,
@@ -32,9 +35,18 @@ import {
 test('推进阶段 → 充能 → 出牌 → 结束回合', async ({ browser }) => {
   const { host, guest } = await startGame(browser);
   const pages: readonly Page[] = [host, guest];
-  const p = await activePage(pages);
 
-  // ① 开局即处于第一回合的充能阶段（ADR-0016：开局不经过「进入」动作）
+  // docs/16 §1.3（D-227）：先攻首回合**自动充能 0 张**，且 maxCost = 1，
+  // 起手可能一张都打不出（例如 1 张 3 费随从 + 4 张 ≥1 费法术）。
+  // 故本用例先让先攻方结束回合，在**后攻方**（起手 6 张 + 充能收入 2 张）身上验证完整操作链。
+  const first = await activePage(pages);
+  await first.getByTestId('end-turn').click();
+  await expect.poll(() => turnNo(first), { timeout: 15_000 }).toBe(2);
+
+  const p = await activePage(pages);
+  expect(p, '回合应移交给另一位玩家').not.toBe(first);
+
+  // ① 现在处于第 2 回合的充能阶段
   await expect.poll(() => phaseText(p)).toContain('阶段 充能');
 
   // ② 充能 —— 逐张充能随从（D-112 选中排他：多张充能 = 多次单张操作），
@@ -50,15 +62,18 @@ test('推进阶段 → 充能 → 出牌 → 结束回合', async ({ browser }) 
   // ④ 出牌 —— 抽牌阶段抽过牌，手牌序号已变，必须重读
   const hand1 = await readHand(p);
   const costZone = await zoneCount(p, 'cost', 1);
+  const budget = await costRemaining(p);
   const playable = hand1
-    .filter((c) => c.cost <= costZone)
-    .sort((a, b) => a.cost - b.cost)[0];
-  expect(playable, `费用区 ${costZone} 张，应存在支付得起的手牌`).toBeDefined();
+    .filter((c) => payOf(c) <= costZone && payOf(c) <= budget)
+    .sort((a, b) => payOf(a) - payOf(b))[0];
+  expect(playable, `费用区 ${costZone} 张、本回合剩余额度 ${budget}，应存在支付得起的手牌`).toBeDefined();
   const pc = playable!;
 
   const before = hand1.length;
   await pick(p, [pc.index]);
   await p.getByTestId('play').click();
+  // 登场效果可能引出待定选择 —— 放掉，避免卡住后续推进
+  await settleChoices(p);
 
   // 出牌 = 手牌 −1，且落到对应区域（随从进随从区，法术进法术区）
   await expect

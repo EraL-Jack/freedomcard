@@ -76,6 +76,8 @@ export function createInitialState(opts: InitialStateOptions): GameState {
       chargeCount: 0,
       effectsUsed: [],
       turnTriggers: [],
+      usedCostThisTurn: 0,
+      commanderAttacked: false,
     };
   }
   return {
@@ -90,6 +92,7 @@ export function createInitialState(opts: InitialStateOptions): GameState {
     started: false,
     startedAt: null,
     winner: null,
+    draw: false,
     pendingChoice: null,
   };
 }

@@ -46,6 +46,8 @@ export interface CardTileProps {
   text?: string;
   /** 休眠态（A9-2：攻击后休眠，重置阶段清除）—— 横置 90°，卡牌游戏通用语言。 */
   sleeping?: boolean;
+  /** 霜冻态（ADR-0025）：跳过下一次重置 —— 冰蓝描边 + 「霜冻」角标。 */
+  frozen?: boolean;
   selected?: boolean;
   disabled?: boolean;
   /**
@@ -95,7 +97,7 @@ export default function CardTile(props: CardTileProps): React.JSX.Element {
         type="button"
         className={`relative flex flex-col overflow-hidden rounded-lg border-2 p-1 text-left ${
           props.fitHeight ? 'h-full max-w-full aspect-[5/7]' : 'aspect-[5/7] w-full'
-        } ${frame} ${state} ${props.fxClass ?? ''}`}
+        } ${frame} ${state} ${props.frozen ? 'ring-2 ring-sky-300 shadow-[0_0_12px_rgba(125,211,252,0.55)]' : ''} ${props.fxClass ?? ''}`}
         onClick={props.onSelect}
         disabled={greyed}
         title={props.text ?? props.name}
@@ -123,6 +125,11 @@ export default function CardTile(props: CardTileProps): React.JSX.Element {
         {props.sleeping ? (
           <span className="absolute inset-x-0 top-1/2 -translate-y-1/2 bg-slate-950/70 text-center text-[9px] text-slate-300">
             休眠
+          </span>
+        ) : null}
+        {props.frozen ? (
+          <span className="absolute left-0.5 top-0.5 rounded bg-sky-800/90 px-1 text-[9px] leading-tight text-sky-100">
+            霜冻
           </span>
         ) : null}
       </button>

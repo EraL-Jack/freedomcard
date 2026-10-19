@@ -8,4 +8,10 @@
  * 本文件仅作 re-export，以免打断既有 import 路径（`./cards.js`）与
  * `cards.test.ts` 的调用点。
  */
-export { CARD_POOL, PLACEHOLDER_CARD_IDS, isBladeCard } from '@app/shared/cards';
+export {
+  CARD_POOL,
+  PLACEHOLDER_CARD_IDS,
+  ACTIVATABLE_EFFECTS,
+  isBladeCard,
+  isFrostCard,
+} from '@app/shared/cards';

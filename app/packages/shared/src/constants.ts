@@ -58,20 +58,53 @@ export type RoomErrorCode = (typeof ROOM_ERRORS)[keyof typeof ROOM_ERRORS];
  * 每条都注明来源，便于日后核对。
  * ------------------------------------------------------------------ */
 
-/** A5-2：最高费用增长序列，第 4 回合达到上限。写成离散表而非公式 —— Era 给的是四个值。 */
+/**
+ * 最高费用增长序列 —— **按各自回合数**取值（docs/16 §3.3）。
+ * 第 4 回合起为 10（实战意义即「不再节流」）。
+ */
 export const MAX_COST_CURVE = [1, 3, 5, 10] as const;
 
 /** B2 布局：随从区 1·2·3，故场上随从上限 3。 */
 export const BOARD_SLOTS = 3;
 
-/** A10-2：初始血量 15。 */
-export const INITIAL_HEALTH = 15;
+/**
+ * 初始血量 —— 8（docs/16 §1，ADR-0024）。9 血与 15 血版的模拟结论见 docs/13~15。
+ */
+export const INITIAL_HEALTH = 8;
 
-/** A10-1：起手 5 张。 */
+/** 起手：先手 5 张（docs/16 §1）。 */
 export const INITIAL_HAND = 5;
+/** 起手：后手 6 张（docs/16 §1，ADR-0024 对先手不抽牌的补偿）。 */
+export const SECOND_PLAYER_HAND = 6;
 
 /** A9 补充 1：每回合抽牌阶段抽 2 张。 */
 export const DRAW_PER_TURN = 2;
+
+/**
+ * 充能阶段强制收入 —— 每次进入己方充能阶段，从卡组顶取 2 张置入费用区
+ * （docs/16 §2.1 / §3.2，ADR-0024）。这是「降低空过」的基础，不是可选动作。
+ */
+export const COST_INCOME_PER_TURN = 2;
+
+/**
+ * 随从减费（docs/16 §4）：实际支付 = max(0, 卡面费用 − 1)。
+ * 只作用于随从；法术与持续法术按卡面值（§4.1）。
+ */
+export const MINION_COST_DISCOUNT = 1;
+
+/** 指挥官攻击的固定伤害（docs/16 §6.1）：不比较力量、不受加成影响。 */
+export const COMMANDER_ATTACK_DAMAGE = 1;
+
+/**
+ * 打脸伤害分档（docs/16 §5.5）：力量 1–3 → 1，4–6 → 2，7+ → 3。
+ * 卡面写了 `damage` 的以卡面为准（例外覆盖）。
+ */
+export const DAMAGE_TIER_MAX_LOW = 3;
+export const DAMAGE_TIER_MAX_MID = 6;
+
+/** 40 轮未分胜负判和（docs/16 §7）；全局回合 = 轮次 × 2。 */
+export const TURN_LIMIT_ROUNDS = 40;
+export const TURN_LIMIT = TURN_LIMIT_ROUNDS * 2;
 
 /**
  * A6-5 / A10-4（2026-10-13 Era 确认）：卡组 31 张 = 主卡组 30 + 指挥官 1。
@@ -87,8 +120,8 @@ export const MAX_COPIES = 3;
 /** A5-2：最高费用初始为 1。 */
 export const INITIAL_MAX_COST = 1;
 
-/** A10-3：先攻方第一回合仅抽 1 张，且不可攻击。 */
-export const FIRST_TURN_DRAW = 1;
+/** A10-3 + docs/16 §1：先攻方第一回合**抽 0 张**（ADR-0024，原为 1 张）。 */
+export const FIRST_TURN_DRAW = 0;
 
 /** A2-4：先后手由 1d6 掷骰决定，较大者先攻。 */
 export const SEQUENCE_DIE = 6;
@@ -133,6 +166,14 @@ export const RULE_ERRORS = {
   CANNOT_ATTACK: 'CANNOT_ATTACK',
   INVALID_TARGET: 'INVALID_TARGET',
   MUST_ATTACK_TAUNT: 'MUST_ATTACK_TAUNT',
+  /** docs/16 §5.2 前排：对方随从区有随从时不能打脸。 */
+  FRONT_LINE: 'FRONT_LINE',
+  /** docs/16 §5.5：攻击者力量低于敌方指挥官当前力量，不能宣告打脸。 */
+  COMMANDER_POWER_TOO_LOW: 'COMMANDER_POWER_TOO_LOW',
+  /** docs/16 §6.1：指挥官本回合已经攻击过（每战斗阶段一次）。 */
+  COMMANDER_ATTACK_USED: 'COMMANDER_ATTACK_USED',
+  /** docs/16 §3.3：本回合已消耗张数触及 maxCost 上限。 */
+  MAX_COST_EXCEEDED: 'MAX_COST_EXCEEDED',
   GAME_OVER: 'GAME_OVER',
   MULLIGAN_DONE: 'MULLIGAN_DONE',
   /** 开局换牌时间窗已过（Era 2026-10-19：换牌加时间窗，窗口外禁止换牌）。 */

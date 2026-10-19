@@ -110,6 +110,15 @@ export function describeEvent(
     case 'unit:asleep':
       return `${cardName(defIdOf(state, str('uid')))} 进入休眠`;
 
+    case 'unit:frozen':
+      return `${cardName(defIdOf(state, str('uid')))} 被霜冻（跳过下次重置）`;
+
+    case 'commander:attacked':
+      return `${who(names, str('playerId'))} 的指挥官发起攻击`;
+
+    case 'cost:spent':
+      return `${who(names, str('playerId'))} 消耗 ${num('amount') ?? 0} 张费用`;
+
     case 'commander:damaged':
       return `指挥官受到 ${num('amount') ?? 1} 点伤害`;
 
@@ -156,8 +165,11 @@ export function describeEvent(
     case 'trigger:spent':
       return null; // 触发消耗已由 unit:modified 的那行表达
 
-    case 'game:ended':
-      return `对局结束，胜者：${who(names, str('winner'))}`;
+    case 'game:ended': {
+      const w = str('winner');
+      if (!w) return '对局结束：平局（40 轮未分胜负）';
+      return `对局结束，胜者：${who(names, w)}`;
+    }
 
     default:
       return e.type;

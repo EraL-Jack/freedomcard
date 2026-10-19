@@ -36,7 +36,15 @@ export {
   BOARD_SLOTS,
   INITIAL_HEALTH,
   INITIAL_HAND,
+  SECOND_PLAYER_HAND,
   DRAW_PER_TURN,
+  COST_INCOME_PER_TURN,
+  MINION_COST_DISCOUNT,
+  COMMANDER_ATTACK_DAMAGE,
+  DAMAGE_TIER_MAX_LOW,
+  DAMAGE_TIER_MAX_MID,
+  TURN_LIMIT_ROUNDS,
+  TURN_LIMIT,
   MAIN_DECK_SIZE,
   COMMANDER_COUNT,
   DECK_SIZE,
@@ -58,4 +66,4 @@ export type { RuleErrorCode } from './constants.js';
  * ⚠️ 客户端必须走**子路径** `@app/shared/cards`，不要从本文件（`.`）导入 ——
  * 本文件会经 `schema.js` 拉入 zod，实测首屏 +24 kB gzip。
  */
-export { CARD_POOL, PLACEHOLDER_CARD_IDS, isBladeCard } from './cards.js';
+export { CARD_POOL, PLACEHOLDER_CARD_IDS, isBladeCard, isFrostCard, ACTIVATABLE_EFFECTS } from './cards.js';

@@ -11,8 +11,10 @@
  */
 
 import {
+  COST_INCOME_PER_TURN,
   MAX_COST_CURVE,
   RULE_ERRORS,
+  TURN_LIMIT,
   type GameEvent,
   type GameState,
   type Intent,
@@ -23,17 +25,18 @@ import {
   type RuleContext,
 } from '@app/shared';
 
-import { ev, maxCostChanged, phaseChanged, turnChanged } from '../ops.js';
+import { ev, maxCostChanged, phaseChanged, takeFromDeck, turnChanged } from '../ops.js';
 import { reduce } from '../reducer.js';
 import { activePlayer } from '../state.js';
-import { growCommander } from './commander-growth.js';
+import { syncCommanderGrowth } from './commander-growth.js';
 
 /** 阶段顺序 —— A4-1，索引即推进顺序。 */
 export const PHASE_ORDER: readonly Phase[] = ['charge', 'reset', 'draw', 'main', 'battle', 'end'];
 
 /**
- * 第 `turn` 回合的最高费用 —— A5-2：1 → 3 → 5 → 10，第 4 回合达上限。
- * 写成查表而非公式，因为 Era 给的是离散的四个值。
+ * 第 `turn` 个**己方回合**的最高费用 —— docs/16 §3.3：1 → 3 → 5 → 10。
+ * 「各自回合数」由调用方传 `chargeCount`（拿到回合即 +1），不能用全局 `turn`，
+ * 否则后手会白拿一档（ADR-0024）。
  */
 export function maxCostForTurn(turn: number): number {
   const idx = Math.min(Math.max(turn, 1), MAX_COST_CURVE.length) - 1;
@@ -81,14 +84,33 @@ export function advanceOnce(state: GameState, ctx: RuleContext): GameEvent[] {
   const nextTurn = state.turn + 1;
   const nextPlayer: PlayerId | undefined = state.seats[nextSeat];
 
+  // docs/16 §7：40 轮仍未分胜负 → 判和（全局回合 = 轮次 × 2）。
+  if (nextTurn > TURN_LIMIT) {
+    events.push(ev(at, 'game:ended', { winner: '', reason: 'draw' }));
+    return events;
+  }
+
   events.push(phaseChanged(at, state.phase, 'charge'));
   events.push(turnChanged(at, nextTurn, nextSeat));
   if (nextPlayer) {
-    events.push(maxCostChanged(at, nextPlayer, maxCostForTurn(nextTurn)));
-    // 进入充能阶段的自动效果：指挥官力量值推进一档（X-7 / ADR-0016 §3）。
-    // 覆盖「第 2 回合及以后」；第 1 回合由 `start.ts` 负责 —— 开局时已经处在
-    // 充能阶段，没有「进入」动作可挂，故必须两处都接。
-    events.push(...growCommander(state, nextPlayer, ctx));
+    // docs/16 §3.3：按**各自回合数**取上限（turn:changed 会让 chargeCount +1）。
+    const ownTurn = (state.players[nextPlayer]?.chargeCount ?? 0) + 1;
+    events.push(maxCostChanged(at, nextPlayer, maxCostForTurn(ownTurn)));
+    // docs/16 §2 充能①：强制收入 2 张（卡组顶 → 费用区，ADR-0024）。
+    const p = state.players[nextPlayer];
+    if (p) {
+      const income = takeFromDeck(
+        at,
+        nextPlayer,
+        { deck: p.zones.deck, graveyard: p.zones.graveyard },
+        COST_INCOME_PER_TURN,
+        state.rngCursor,
+        'cost',
+      );
+      events.push(...income.events);
+    }
+    // docs/16 §2 充能② / §6.3：指挥官力量按轮次同步（双方同力）。
+    events.push(...syncCommanderGrowth(state, nextTurn, ctx));
   }
   return events;
 }
@@ -101,7 +123,7 @@ export const phaseRule = (
   if (!state.started) {
     return { ok: false, error: { code: RULE_ERRORS.NOT_STARTED, message: '对局尚未开始' } };
   }
-  if (state.winner !== null) {
+  if (state.winner !== null || state.draw) {
     return { ok: false, error: { code: RULE_ERRORS.GAME_OVER, message: '对局已结束' } };
   }
   if (intent.actor === 'player' && activePlayer(state) !== intent.playerId) {

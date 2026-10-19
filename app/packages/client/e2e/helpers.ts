@@ -130,15 +130,25 @@ export async function pick(page: Page, indices: readonly number[]): Promise<void
 export async function chargeMinions(page: Page): Promise<number> {
   // 从**当前**费用区张数起算（调用前可能已有拖拽充能，drag.spec 2026-10-18）。
   // 返回充能完成后费用区的总张数。
+  //
+  // ⚠️ 不按「+1 张」做算术断言：充能收入是逐条播放事件的，可能在测试开始操作之后
+  // 才到达。故每张充能只断言「费用区张数比操作前多」—— 天然抗播放延迟。
+  //
+  // ⚠️ **留下最便宜的那张随从**（按实际支付额），不是「随便留一张」：
+  // 第 1 回合 maxCost = 1，若留下 5 费大哥（支付 4）就出不了，测试会误报。
   let total = await zoneCount(page, 'cost', 1);
   for (;;) {
     const hand = await readHand(page);
     const minions = hand.filter((c) => c.kind === '随从');
     if (minions.length <= 1) break; // 留一张随从供出牌；极端牌序（起手仅 1 随从）则充 0 张
-    await pick(page, [minions[0]!.index]);
+    const keep = [...minions].sort((a, b) => payOf(a) - payOf(b))[0]!;
+    const target = minions.find((c) => c.index !== keep.index);
+    if (!target) break;
+    const before = await zoneCount(page, 'cost', 1);
+    await pick(page, [target.index]);
     await page.getByTestId('charge').click();
-    total += 1;
-    await expect.poll(() => zoneCount(page, 'cost', 1)).toBe(total);
+    await expect.poll(() => zoneCount(page, 'cost', 1), { timeout: 10_000 }).toBeGreaterThan(before);
+    total = await zoneCount(page, 'cost', 1);
   }
   return total;
 }
@@ -150,13 +160,13 @@ export async function chargeMinions(page: Page): Promise<number> {
  * （`zone-graveyard` 的 0 = 对方第 ② 排，1 = 我方第 ⑤ 排；
  *   `zone-cost` 的 0 = 对方第 ③ 排，1 = 我方第 ④ 排）。
  *
- * ⚠️ 取的是文本里**最后一个**数字 —— 指挥官区带血量徽标（「血 12」），
- * 取最后一个才能稳定拿到卡数而不是血量。
+ * ⚠️ 取专属的 `zone-count` 节点，不再从区域文本里捞「最后一个数字」——
+ * 费用区现在带「本回合 已用/上限」徽标（docs/16 §3.3），会把数字解析带偏。
  */
 export async function zoneCount(page: Page, zone: string, nth = 0): Promise<number> {
-  const text = (await page.getByTestId(`zone-${zone}`).nth(nth).innerText()) ?? '';
-  const nums = text.match(/\d+/g);
-  return nums && nums.length > 0 ? Number(nums[nums.length - 1]) : Number.NaN;
+  const node = page.getByTestId(`zone-${zone}`).nth(nth).getByTestId('zone-count');
+  const text = ((await node.innerText()) ?? '').trim();
+  return Number(text);
 }
 
 /** 当前回合数（从「第 N 回合」解析）。 */
@@ -191,6 +201,43 @@ export async function advancePhase(page: Page, expectPhase: string): Promise<voi
   }
 }
 
+/** 当前回合费用使用情况（docs/16 §3.3）—— 从费用区徽标「本回合 已用/上限」解析。 */
+export async function costBudget(page: Page): Promise<{ used: number; max: number }> {
+  const text = (await page.getByTestId('cost-usage').innerText().catch(() => '')) ?? '';
+  const m = /(\d+)\s*\/\s*(\d+)/.exec(text);
+  return m ? { used: Number(m[1]), max: Number(m[2]) } : { used: 0, max: 1 };
+}
+
+/** 一张手牌的实际支付张数（docs/16 §4：随从 −1，最低 0；法术按卡面）。 */
+export function payOf(card: HandCard): number {
+  return card.kind === '随从' ? Math.max(0, card.cost - 1) : card.cost;
+}
+
+/** 当前回合剩余可支付的张数。 */
+export async function costRemaining(page: Page): Promise<number> {
+  const b = await costBudget(page);
+  return Math.max(0, b.max - b.used);
+}
+
+/**
+ * 把「登场效果引出的待定选择」全部放弃掉。
+ *
+ * 部分随从登场即要求选择目标（如霜律学徒 / 炎刃老兵 / 卫士），
+ * 不处理会一直挂着 `pendingChoice`，后续推进阶段会被引擎拒绝
+ * （ADR-0023 §2 全局守卫）。E2E 只关心链路是否闭合，不关心选哪个目标，
+ * 故统一点「放弃」；多选类会连续弹出，循环处理。
+ */
+export async function settleChoices(page: Page): Promise<void> {
+  // 事件播放队列有节奏，待定选择可能晚几百毫秒才到达客户端
+  await page.waitForTimeout(800);
+  for (let i = 0; i < 5; i++) {
+    const overlay = page.getByTestId('choice-overlay');
+    if (!(await overlay.isVisible().catch(() => false))) return;
+    await overlay.getByTestId('choice-pass').click();
+    await page.waitForTimeout(200);
+  }
+}
+
 /**
  * 在**当前行动方的回合**里走完「充能 → 推进到主要 → 出一张随从」。
  *
@@ -210,13 +257,18 @@ export async function playOneMinion(page: Page): Promise<void> {
   await advancePhase(page, '抽牌');
 
   // ③ 出一张**随从**。抽牌阶段抽过牌，手牌序号已变，必须重读。
+  //    docs/16 §3.3：还要满足本回合 maxCost（各自回合数 → 1/3/5/10）。
   const hand1 = await readHand(page);
   const costZone = await zoneCount(page, 'cost', 1);
+  const budget = await costRemaining(page);
   const chosen = hand1
     .filter((c) => c.kind === '随从')
-    .filter((c) => c.cost <= costZone)
-    .sort((a, b) => a.cost - b.cost)[0];
-  expect(chosen, `费用区 ${costZone} 张（充能 ${charged}），应存在支付得起的随从`).toBeDefined();
+    .filter((c) => payOf(c) <= costZone && payOf(c) <= budget)
+    .sort((a, b) => payOf(a) - payOf(b))[0];
+  expect(
+    chosen,
+    `费用区 ${costZone} 张（充能 ${charged}），本回合剩余额度 ${budget}，应存在支付得起的随从`,
+  ).toBeDefined();
 
   await pick(page, [chosen!.index]);
   await page.getByTestId('play').click();
@@ -224,4 +276,6 @@ export async function playOneMinion(page: Page): Promise<void> {
   await expect(page.getByTestId('slot-0').nth(1).locator('[data-testid="card"]')).toHaveCount(1, {
     timeout: 10_000,
   });
+  // 登场效果可能引出待定选择（霜律学徒 / 卫士 / 老兵…）—— 放掉，避免卡住后续推进
+  await settleChoices(page);
 }

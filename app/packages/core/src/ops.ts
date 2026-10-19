@@ -17,7 +17,13 @@ import type {
   Rejection,
   Zone,
 } from '@app/shared';
-import { INITIAL_COMMANDER_POWER_INDEX, RULE_ERRORS } from '@app/shared';
+import {
+  DAMAGE_TIER_MAX_LOW,
+  DAMAGE_TIER_MAX_MID,
+  INITIAL_COMMANDER_POWER_INDEX,
+  MINION_COST_DISCOUNT,
+  RULE_ERRORS,
+} from '@app/shared';
 
 import { advanceCursor, shuffle } from './rng.js';
 import { ZONES, activePlayer } from './state.js';
@@ -139,7 +145,10 @@ export function commanderPowerAt(def: CardDef, index: number): number {
 /**
  * 取一个场上单位的**当前**力量值；查不到卡定义返回 `null`（调用方必须据此拒绝）。
  *
- * 指挥官走曲线档位，其余一律取 `CardDef.power` 定值。
+ * 指挥官走曲线档位，其余一律取 `CardDef.power` 定值，再叠加：
+ *  - `tempPower`（本回合临时修正，ADR-0023 §3）；
+ *  - **霜律寒域光环**（ADR-0025）：敌方处于霜冻状态的随从 −1 力。
+ * 力量值下限 0（docs/12 §5.3），不为负。
  *
  * ⚠️ 战斗裁决**必须**走这里而不是直接读 `def.power` —— 否则指挥官会永远按初始档参战，
  * X-7 的曲线就成了死数据（ADR-0016 §8）。
@@ -153,8 +162,42 @@ export function unitPower(state: GameState, cards: Record<string, CardDef>, uid:
     loc.zone === 'commander'
       ? commanderPowerAt(def, state.players[loc.playerId]?.commanderPowerIndex ?? INITIAL_COMMANDER_POWER_INDEX)
       : def.power;
-  // ADR-0023 §3：本回合临时力量修正叠加在基础值上（统领 3 档 / 军师触发器）。
-  return base + (loc.card.tempPower ?? 0);
+  // ADR-0023 §3：本回合临时力量修正叠加在基础值上（统领 3 档 / 军师 / 队长 / 勇士 / 凤凰等）。
+  let value = base + (loc.card.tempPower ?? 0);
+  // ADR-0025：寒域光环 —— 对手场上有「霜律寒域」时，处于霜冻状态的本方随从 −1 力。
+  if (loc.zone === 'board' && loc.card.frozen) {
+    const foe = state.seats.find((id) => id !== loc.playerId);
+    const foeSpells = foe ? (state.players[foe]?.zones.spell ?? []) : [];
+    const domains = foeSpells.filter((c) => c.defId === 'frostDomain').length;
+    if (domains > 0) value -= domains;
+  }
+  return Math.max(0, value);
+}
+
+/* ------------------------------ 费用与伤害 ------------------------------ */
+
+/**
+ * 一张卡**实际要支付的费用**（docs/16 §4 / §4.1）：
+ * 随从减 1（最低 0），法术与持续法术按卡面值。
+ */
+export function costToPay(def: CardDef): number {
+  if (def.type !== 'minion') return Math.max(0, def.cost);
+  return Math.max(0, def.cost - MINION_COST_DISCOUNT);
+}
+
+/**
+ * 打脸伤害（docs/16 §5.5）：
+ *  - 卡面写了 `damage` → 以卡面为准（例外覆盖，§5.5 / §9 第 8 条）；
+ *  - 否则按**攻击者力量**分档：1–3 → 1，4–6 → 2，7+ → 3。
+ *
+ * 注意：卡面没写时**不再**走 `DEFAULT_DAMAGE`（那是 15 血旧口径）；
+ * `DEFAULT_DAMAGE` 保留给「需要默认值的极少数场景」与测试夹具。
+ */
+export function faceDamageOf(def: CardDef, attackerPower: number): number {
+  if (typeof def.damage === 'number') return def.damage;
+  if (attackerPower >= DAMAGE_TIER_MAX_MID + 1) return 3;
+  if (attackerPower >= DAMAGE_TIER_MAX_LOW + 1) return 2;
+  return 1;
 }
 
 /* ------------------------------ 拒绝 ------------------------------ */
@@ -175,7 +218,7 @@ export function baseGuard(state: GameState, intent: Intent): Rejection | null {
   if (!state.started) {
     return { code: RULE_ERRORS.NOT_STARTED, message: '对局尚未开始' };
   }
-  if (state.winner !== null) {
+  if (state.winner !== null || state.draw) {
     return { code: RULE_ERRORS.GAME_OVER, message: '对局已结束' };
   }
   if (state.seats.length === 0) return { code: RULE_ERRORS.NOT_STARTED, message: '无座位' };

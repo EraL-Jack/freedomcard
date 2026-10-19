@@ -25,7 +25,7 @@ export const turnEndRule = (
   if (!state.started) {
     return { ok: false, error: { code: RULE_ERRORS.NOT_STARTED, message: '对局尚未开始' } };
   }
-  if (state.winner !== null) {
+  if (state.winner !== null || state.draw) {
     return { ok: false, error: { code: RULE_ERRORS.GAME_OVER, message: '对局已结束' } };
   }
   if (intent.actor === 'player' && activePlayer(state) !== intent.playerId) {
