@@ -600,6 +600,7 @@ function WaitingRoom({ session }: { session: RoomSession }): React.JSX.Element {
    */
   const [decks] = useState(loadDecks);
   const [deckId, setDeckId] = useState(loadActiveDeckId);
+  const chosen = decks.find((d) => d.id === deckId && isDeckComplete(d)) ?? null;
   const pickDeck = (id: string): void => {
     setDeckId(id);
     saveActiveDeckId(id);
@@ -651,6 +652,9 @@ function WaitingRoom({ session }: { session: RoomSession }): React.JSX.Element {
               );
             })}
           </select>
+          <p className="mt-1 text-[11px] text-slate-500" data-testid="waiting-deck-current">
+            本局使用：{chosen ? chosen.name : '阵营默认卡组'}
+          </p>
         </label>
       ) : null}
       {/* 已准备后按钮不展示（Era 2026-10-19），状态用纯文本呈现 */}

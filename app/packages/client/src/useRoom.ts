@@ -514,8 +514,10 @@ export function useRoom(): RoomSession {
   /** 准备页换卡组（D-141）—— 服务端只在未开局时接受。 */
   const setDeck = useCallback((deck: string[]): void => {
     socket.emit(SOCKET_EVENTS.roomDeck, { deck }, (res: Ack) => {
-      if (!res.ok) return setNotice(`换卡组失败：${res.error ?? '未知错误'}`);
+      if (!res.ok) return setNotice(failText(res));
       if (res.room) setRoom(res.room);
+      // 下拉变化本身太轻，给一句确认，避免「点了没反应」的错觉。
+      setNotice('卡组已更新');
     });
   }, []);
 
