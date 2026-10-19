@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { IntentSchema, RoomCreateSchema, RoomDeckSchema, RoomJoinSchema } from '@app/shared';
+import {
+  IntentSchema,
+  ROOM_ERRORS,
+  ROOM_ERROR_TEXT,
+  RoomCreateSchema,
+  RoomDeckSchema,
+  RoomJoinSchema,
+} from '@app/shared';
 
 /**
  * 传输层 Intent 校验自检。
@@ -77,5 +84,23 @@ describe('房间入站 schema · 自建卡组（D-141）', () => {
       RoomDeckSchema.safeParse({ deck: Array.from({ length: 31 }, () => 'bladeScout') }).success,
     ).toBe(false);
     expect(RoomDeckSchema.safeParse({}).success).toBe(false);
+  });
+});
+
+/**
+ * 房间错误码文案覆盖（D-157）。
+ *
+ * 客户端原来自己维护一张映射表，把 `ROOM_NOT_FOUND` 写成了 `NOT_FOUND`、还缺 5 个码；
+ * 现在表在 `shared`，用 `Record<RoomErrorCode, string>` 声明（少一条就编译报错）。
+ * 这条测试钉运行时的那一半：每个码都要有中文文案，且不能只是把码抄一遍。
+ */
+describe('房间错误码 → 中文文案', () => {
+  it('每个错误码都有文案，且不是错误码本身', () => {
+    for (const code of Object.values(ROOM_ERRORS)) {
+      const text = ROOM_ERROR_TEXT[code];
+      expect(text, code).toBeTruthy();
+      expect(text, code).not.toBe(code);
+      expect(/[一-龥]/.test(text), code).toBe(true);
+    }
   });
 });

@@ -1,7 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import * as core from '@app/core';
-import { SOCKET_EVENTS, type CardInstance, type Faction, type GameEvent, type GameState, type Intent, type MatchFormat, type PlayerId } from '@app/shared';
+import {
+  ROOM_ERROR_TEXT,
+  SOCKET_EVENTS,
+  type CardInstance,
+  type Faction,
+  type GameEvent,
+  type GameState,
+  type Intent,
+  type MatchFormat,
+  type PlayerId,
+  type RoomErrorCode,
+} from '@app/shared';
 
 import { describeEvent } from './log.js';
 import { PHASE_LABEL } from './labels.js';
@@ -164,21 +175,16 @@ const LS = { playerId: 'fc.playerId', token: 'fc.token', nickname: 'fc.nickname'
  * 优先级：服务端自带的中文 `message` → 按错误码映射 → 原样展示错误码。
  * 直接展示错误码等于对玩家说天书 —— Era 2026-10-13 实测：人数填 22 超上限 8，
  * 界面只弹出「操作失败：INVALID_PAYLOAD」，不知道哪里错了、也不知道该怎么改。
+ *
+ * ⚠️ D-157：映射表移到了 `shared`（`ROOM_ERROR_TEXT`）并用 `Record<RoomErrorCode, string>`
+ * 声明 —— 客户端原来那张表把 `ROOM_NOT_FOUND` 写成了 `NOT_FOUND`、还缺 5 个码，
+ * 类型强制的全表能保证「新增错误码必须同时给文案」。
  */
-const ROOM_ERROR_TEXT: Readonly<Record<string, string>> = {
-  INVALID_PAYLOAD: '参数不合法：昵称需 1–24 个字，人数需 1–8',
-  NOT_FOUND: '房间不存在',
-  NOT_IN_ROOM: '你不在任何房间里',
-  ROOM_FULL: '房间已满',
-  ROOM_ENDED: '对局已结束',
-  INVALID_TOKEN: '重连凭据无效，请重新加入房间',
-};
-
 function failText(res: Ack): string {
   if (res.message) return `操作失败：${res.message}`;
-  const mapped = res.error ? ROOM_ERROR_TEXT[res.error] : undefined;
-  if (mapped) return `操作失败：${mapped}`;
-  return res.error ? `操作失败（${res.error}）` : '操作失败';
+  if (!res.error) return '操作失败';
+  const mapped = ROOM_ERROR_TEXT[res.error as RoomErrorCode];
+  return `操作失败：${mapped ?? res.error}`;
 }
 
 export function useRoom(): RoomSession {
@@ -562,7 +568,7 @@ export function useRoom(): RoomSession {
   /** 开始下一小局（BO3）—— 仅房主可发起，服务端会校验。 */
   const nextGame = useCallback((): void => {
     socket.emit(SOCKET_EVENTS.roomNextGame, {}, (res: Ack) => {
-      if (!res.ok) return setNotice(`开始下一局失败：${res.error ?? '未知错误'}`);
+      if (!res.ok) return setNotice(failText(res));
       if (res.room) setRoom(res.room);
     });
   }, []);
@@ -577,13 +583,13 @@ export function useRoom(): RoomSession {
       setState(null);
       setHash(null);
       setTurnDeadline(null);
-      setNotice(res.ok ? '已离开房间' : `离开失败：${res.error ?? '未知错误'}`);
+      setNotice(res.ok ? '已离开房间' : failText(res));
     });
   }, []);
 
   const ready = useCallback((): void => {
     socket.emit(SOCKET_EVENTS.roomReady, {}, (res: Ack) => {
-      if (!res.ok) return setNotice(`准备失败：${res.error ?? '未知错误'}`);
+      if (!res.ok) return setNotice(failText(res));
       if (res.room) setRoom(res.room);
     });
   }, []);
