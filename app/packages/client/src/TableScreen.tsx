@@ -368,7 +368,7 @@ function BoardSlot(props: {
           />
         </div>
       ) : (
-        <span className="text-[10px] text-slate-600">{props.index + 1}</span>
+        <span className="text-[10px] text-slate-500">{props.index + 1}</span>
       )}
     </div>
   );
@@ -445,7 +445,7 @@ function GameOverPanel(props: {
             开始第 {nextGameNo} 局
           </button>
         ) : (
-          <p className="text-xs text-slate-500" data-testid="wait-next">
+          <p className="text-xs text-slate-400" data-testid="wait-next">
             等待房主开始第 {nextGameNo} 局…
           </p>
         )
@@ -595,7 +595,7 @@ function RevealBox(props: {
       className="flex h-full min-h-0 flex-col rounded border border-dashed border-slate-600 bg-slate-900/40 p-1"
       data-testid="zone-reveal"
     >
-      <span className="text-[10px] text-slate-500">展示区</span>
+      <span className="text-[10px] text-slate-400">展示区</span>
       <div className="mt-1 flex min-h-0 flex-1 flex-wrap content-start gap-0.5 overflow-y-auto">
         {props.cards.map((rc) => {
           const inst: CardInstance = { uid: rc.uid, defId: rc.defId };
@@ -1020,7 +1020,7 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
             className={`rounded-full px-2 py-0.5 text-[10px] sm:text-[11px] ${
               ph === state.phase
                 ? 'bg-amber-500 font-medium text-slate-950'
-                : 'border border-slate-700 text-slate-500'
+                : 'border border-slate-700 text-slate-400'
             }`}
           >
             {PHASE_LABEL[ph]}
@@ -1061,7 +1061,7 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
           血量**不在**这里显示 —— Era 2026-10-14 指定：血量就在指挥官区显示。
           故血量徽标挂在两侧的指挥官区上（见下方 `badge`）。
         */}
-        <span className={myTurn ? 'text-emerald-400' : 'text-slate-500'}>
+        <span className={myTurn ? 'text-emerald-400' : 'text-slate-400'}>
           {myTurn ? '你的回合' : '对手回合'}
         </span>
         {/* 赛制与比分（D-132）—— 只在 BO3 显示，BO1 显示会占位制造噪音。
@@ -1349,7 +1349,7 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
                 </div>
               ))}
               {mine.zones.hand.length === 0 ? (
-                <span className="px-2 text-[11px] text-slate-500">手牌为空</span>
+                <span className="px-2 text-[11px] text-slate-400">手牌为空</span>
               ) : null}
             </div>
           </section>
