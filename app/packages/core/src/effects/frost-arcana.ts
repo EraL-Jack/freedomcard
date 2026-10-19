@@ -22,7 +22,10 @@ import { drawTop, emitter, enemyBoard, freezeUnit } from './primitives.js';
 
 export const frostEdictEffect: EffectModule = {
   onPlay(state, ctx, owner, uid) {
-    const targets = enemyBoard(state, owner).map((c) => c.uid);
+    // H31：只冻结**未冻结**单位（已冻结的不算「被冻结」，也不该被选中）。
+    const targets = enemyBoard(state, owner)
+      .filter((c) => !c.frozen)
+      .map((c) => c.uid);
     if (targets.length === 0) return [];
     return [
       choicePending(ctx.now, {
@@ -62,7 +65,7 @@ export const frostEdictEffect: EffectModule = {
 
 export const frostColdSnapEffect: EffectModule = {
   onPlay(state, ctx, owner, uid) {
-    const targets = enemyBoard(state, owner);
+    const targets = enemyBoard(state, owner).filter((c) => !c.frozen);
     if (targets.length === 0) return [];
     return [
       choicePending(ctx.now, {

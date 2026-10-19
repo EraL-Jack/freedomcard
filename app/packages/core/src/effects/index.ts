@@ -7,7 +7,7 @@
  *  - `activate`：玩家主动发动（详情浮层按钮，如统领Ⅰ/Ⅱ、裁决官Ⅰ）；
  *  - `choose`：回答该卡引出的待定选择；
  *  - `onSummon`：登场时（出牌召唤与效果召唤共用）；
- *  - `onPlay`：法术 / 持续法术出牌后结算。
+ *  - `onPlay`：法术 / 设置法术出牌后结算。
  */
 
 import {
@@ -89,7 +89,7 @@ export interface EffectModule {
   ): Result<GameEvent[], Rejection>;
   /** 登场时（含效果召唤）。返回的事件可含 `choice:pending`。 */
   onSummon?(state: GameState, ctx: RuleContext, owner: PlayerId, uid: string): GameEvent[];
-  /** 法术 / 持续法术出牌后结算（卡已进入法术区）。 */
+  /** 法术 / 设置法术出牌后结算（卡已进入法术区）。 */
   onPlay?(state: GameState, ctx: RuleContext, owner: PlayerId, uid: string): GameEvent[];
   /**
    * **展示时**（docs/17 §2.1 / D-230）：该卡从卡组顶被展示时触发。

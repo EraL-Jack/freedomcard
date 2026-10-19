@@ -30,12 +30,16 @@ const KIND_ART: Readonly<Record<CardType, string>> = {
   continuous: 'bg-emerald-800/60 text-emerald-200',
 };
 
-/** 类型文字标签（A6-1 四类）—— 色觉障碍玩家不能只靠颜色分辨（X-2 规则也有文字依据需求）。 */
+/** 类型文字标签（A6-1 四类）—— 色觉障碍玩家不能只靠颜色分辨（X-2 规则也有文字依据需求）。
+ *
+ * 「设置法术」= Era 2026-10-19 定名（原「持续法术」）：设置在场上、结算后留在法术区。
+ * 代码标识符仍是 `continuous`（改名会波及回放与协议），只有中文显示统一。
+ */
 const KIND_TAG: Readonly<Record<CardType, string>> = {
   commander: '指挥官',
   minion: '随从',
   spell: '法术',
-  continuous: '持续',
+  continuous: '设置',
 };
 
 export interface CardTileProps {

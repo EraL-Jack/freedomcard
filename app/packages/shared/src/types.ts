@@ -13,7 +13,12 @@ export type PlayerId = string;
 /** Intent 的发起方。`system` 用于服务端构造的行为（如回合超时自动结束回合）。 */
 export type IntentActor = 'player' | 'system';
 
-/** 卡牌类型 —— `docs/06` A6-1。 */
+/**
+ * 卡牌类型 —— `docs/06` A6-1。
+ *
+ * `continuous` 的中文名是**设置法术**（Era 2026-10-19 定名，原「持续法术」）：
+ * 设置在场上、结算后留在法术区。标识符保留 `continuous` 以兼容回放与协议。
+ */
 export type CardType = 'commander' | 'minion' | 'spell' | 'continuous';
 
 /**
