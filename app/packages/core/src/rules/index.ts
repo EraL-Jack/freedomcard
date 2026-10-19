@@ -30,7 +30,7 @@ export const INTENTS = {
   charge: 'charge:put',
   play: 'card:play',
   attack: 'attack:declare',
-  /** 指挥官攻击 —— docs/16 §6.1：每战斗阶段一次，固定 1 点打脸。 */
+  /** 指挥官攻击 —— docs/16 §6.1：每战斗阶段一次，基础 1 点打脸（可被伤害加成提升）。 */
   commanderAttack: 'commander:attack',
   /** 手动抽牌 —— Era 2026-10-18：抽牌阶段点击牌组触发。 */
   draw: 'card:draw',

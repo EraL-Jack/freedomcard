@@ -907,6 +907,40 @@ describe('指挥官攻击（docs/16 §6.1 / ADR-0024）', () => {
     const { events } = runWith(s, intent('p1', INTENTS.commanderAttack));
     expect(events.filter((e) => e.type === 'card:revealed').length).toBe(1);
   });
+
+  /**
+   * Era 2026-10-19 拍板（docs/16 §9 #9 由「不会」改为「会」，H34 已确认）：
+   * 指挥官的基础 1 点**进入伤害修正**，可被「你的指挥官伤害值 +N」类效果提升。
+   */
+  it('基础 1 点可被「指挥官伤害值 +N」提升（H34 已确认）', () => {
+    const s = cmdBattle();
+    const buffed: GameState = {
+      ...s,
+      players: { ...s.players, p1: { ...s.players['p1']!, commanderDamageBonus: 2 } },
+    };
+    const { events, state: after } = runWith(buffed, intent('p1', INTENTS.commanderAttack));
+    expect(after.players['p2']!.health).toBe(INITIAL_HEALTH - 3);
+    // 加成后的每 1 点照样触发受伤展示
+    expect(events.filter((e) => e.type === 'card:revealed').length).toBe(3);
+    expect(after.players['p2']!.zones.cost.length).toBe(3);
+  });
+
+  it('随从实例上的 tempDamage 不转移给指挥官（统领 7 档只加该随从打脸）', () => {
+    const s = cmdBattle();
+    const p1 = s.players['p1']!;
+    const withTemp: GameState = {
+      ...s,
+      players: {
+        ...s.players,
+        p1: {
+          ...p1,
+          zones: { ...p1.zones, board: [{ ...c('a1', 'd7'), tempDamage: 5 }] },
+        },
+      },
+    };
+    const after = run(withTemp, intent('p1', INTENTS.commanderAttack));
+    expect(after.players['p2']!.health).toBe(INITIAL_HEALTH - 1);
+  });
 });
 
 describe('攻击的事件序列与触发点（ADR-0013 §7）', () => {
