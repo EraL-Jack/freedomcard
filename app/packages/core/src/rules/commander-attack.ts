@@ -80,7 +80,7 @@ export const commanderAttackRule = (
   }
 
   // 前置效果可能已经打空对手血量（展示触发的直伤）—— 那就到此为止，
-  // 不再补一次「固定 1 点」，避免重复结算终局。
+  // 不再补一次基础伤害（1 + 加成），避免重复结算终局。
   const afterPre = pre.reduce(reduce, state);
   if (afterPre.winner !== null || afterPre.draw) return { ok: true, value: events };
 

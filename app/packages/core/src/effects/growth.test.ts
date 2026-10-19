@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest';
 import type { CardInstance, GameState, Intent, Phase, Zone } from '@app/shared';
 import { CARD_POOL } from '@app/shared/cards';
 
-import { applyIntent, createInitialState, reduce, INTENTS } from '../index.js';
+import { applyIntent, createInitialState, reduce, replay, stateHash, INTENTS } from '../index.js';
 import { freezeUnit } from '../effects/primitives.js';
 import { revealCountFor } from '../effects/star-commander.js';
 import { unitPower } from '../ops.js';
@@ -334,6 +334,42 @@ describe('星轨（docs/17 / D-230）', () => {
     // 收尾：展示区清空、三张按原顺序回到牌库底
     expect(mid.players['p1']!.zones.reveal).toEqual([]);
     expect(mid.players['p1']!.zones.deck.slice(-3).map((x) => x.uid)).toEqual(shown);
+  });
+
+  it('展示批次可回放：同一 Intent 序列两次重跑哈希链一致，展示区收尾为空（D-149）', () => {
+    const s = craft({
+      phase: 'battle',
+      commander: 'starWatcher',
+      zones: { commander: [c('cmd1', 'starWatcher')], cost: [c('k1', 'frostRecruit')] },
+      deck: [
+        'starGuard',
+        'starScout',
+        'starArcher',
+        'starWeaver',
+        'frostRecruit',
+        'frostRecruit',
+        'frostRecruit',
+        'frostRecruit',
+      ],
+      star: 3,
+    });
+    const intents: Intent[] = [intent('p1', INTENTS.commanderAttack, { reveal: true })];
+    const deps = {
+      applyIntent,
+      reduce,
+      stateHash,
+      cards: CARD_POOL,
+      now: (step: number): number => 2000 + step * 10,
+    };
+
+    const a = replay(s, intents, deps);
+    const b = replay(s, intents, deps);
+
+    expect(a.failedAt).toBeNull();
+    // 展示区是新增的状态字段 —— 它必须能由事件流完整重建，否则两次重放会在归位那一步分叉
+    expect(a.hashChain).toEqual(b.hashChain);
+    expect(a.state).toEqual(b.state);
+    expect(a.state.players['p1']!.zones.reveal).toEqual([]);
   });
 
   it('指挥官攻击（付 1 费展示）：先展示再结算 1 点伤害', () => {
