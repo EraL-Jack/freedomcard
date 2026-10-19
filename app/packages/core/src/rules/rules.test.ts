@@ -874,7 +874,7 @@ describe('指挥官攻击（docs/16 §6.1 / ADR-0024）', () => {
       foeZones: { commander: [c('p2#commander', 'cmd')], board: foeExtra },
     });
 
-  it('固定 1 点伤害，不吃力量、不受前排限制（对方有随从也能攻击）', () => {
+  it('基础 1 点：不吃自身力量、不受前排限制（对方有随从也能攻击）', () => {
     const s = cmdBattle([c('d1', 'm9')]);
     const after = run(s, intent('p1', INTENTS.commanderAttack));
     expect(after.players['p2']!.health).toBe(INITIAL_HEALTH - 1);

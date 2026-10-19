@@ -2229,3 +2229,29 @@ Era 2026-10-19 一次性拍板，逐条落地：
 - README §10 补「认输没有取消」；§11 新增 11.5（认输与第 3 局验收清单）。
 - 验证：core **144** / server **72** / E2E **19**（+1）/ typecheck 0 / lint 0。
 - 破坏性：**否**（新增入口，不改既有规则）。
+
+## D-148 H28 回放可复现 + 过期/反向注释纠偏
+
+- **新增回放测试**（`effects.test.ts`）：把「统领Ⅰ → 召唤卫士 → 选择入队 → 链结束出队 → 卫士放弃」
+  这 5 步 Intent 序列跑两遍，断言哈希链一致、终态一致、`pendingChoiceQueue` 清空。
+  `pendingChoiceQueue` 是 D-145 新增的状态字段，必须能由**事件流**完整重建，
+  否则「种子 + Intent 序列」的重放会在出队那一步与实机分叉。
+- **修掉 4 处与实现相反的注释**（都属于「照注释改代码就会改出 bug」的那类）：
+  1. `shared/src/constants.ts` `COMMANDER_ATTACK_DAMAGE`：原写「不受加成影响」→
+     H34 已确认可被加成（实际伤害 = 1 + `commanderDamageBonus`）。
+  2. `core/src/ops.ts` `unitPower`：原写「打脸固定 1 点」+ 引用 `D-230`（应为 D-133）。
+  3. `shared/src/types.ts` `CardDef.text`：原写「只存不解析，所有效果一律 `TODO(slot)`」→
+     效果早已由 `core/src/effects` 注册表实现；改为说明「文本不是执行源，两边必须同时改」。
+  4. `shared/src/types.ts` `damage` / `keywords`：原写「未给 / `TODO(slot)`」→ 补当前口径
+     （默认 1、打脸分档 1/2/3；关键词目前仅 taunt）。
+- **修掉 1 处写错的协议注释**：`SOCKET_EVENTS.roomDeck` 原写 payload 是 `{ defIds }`，
+  实际是 `{ deck: string[] }`（`RoomDeckSchema`）。客户端照注释写会直接 400。
+- **修掉 1 处过期状态注释**：`MULLIGAN_WINDOW_MS` 原写「时长 Era 未给，暂取 30s」→
+  H25 已确认 30 秒；同时补上「基准是各自首次进入充能阶段」。
+- **修掉 1 处过期说明**：`server/src/index.ts` 的 `game:intent` 注释原写
+  「`core.applyIntent` 仍是 `TODO(slot)`，会返回 `NOT_IMPLEMENTED`」—— 那是 10-13 的状态。
+- `docs/01` 顶部加说明：本文档是 v0.1 输入档案，`TODO(slot)` 可能已被后续输入关闭，
+  判断当前状态以 `docs/16` / `docs/18` / `docs/09` / `CHANGELOG` 为准。
+- `docs/12` 与 `rules.test.ts` 的「固定 1 点」表述改为「基础 1 点」。
+- 验证：core **145**（+1）/ server **72** / typecheck 0 / lint 0。
+- 破坏性：**否**（纯注释、文档与新增测试）。

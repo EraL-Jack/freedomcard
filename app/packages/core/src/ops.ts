@@ -149,8 +149,9 @@ export function commanderPowerAt(def: CardDef, index: number): number {
  *  - **霜律寒域光环**（ADR-0025）：敌方处于冻结状态的随从 −1 力。
  * 力量值下限 0（docs/12 §5.3），不为负。
  *
- * ⚠️ **指挥官没有力量值**（docs/16 §6.2.1 / D-230）：它不参与任何力量比较，
- * 打脸固定 1 点。`powerCurve` 字段只作历史保留，这里**不再读取** ——
+ * ⚠️ **指挥官没有力量值**（docs/16 §6.2.1 / D-133）：它不参与任何力量比较，
+ * 打脸伤害 = 基础 1 点 + `commanderDamageBonus`（ADR-0028）。
+ * `powerCurve` 字段只作历史保留，这里**不再读取** ——
  * 读它就等于让「已取消的成长」偷偷复活。
  */
 export function unitPower(state: GameState, cards: Record<string, CardDef>, uid: string): number | null {
