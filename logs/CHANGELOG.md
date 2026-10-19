@@ -2436,3 +2436,24 @@ Era 2026-10-19 一次性拍板，逐条落地：
   改法：昵称 `onChange` 即时落盘（与 `fc.activeDeckId` 同一处理方式）。
 - 验证：core **162** / server **74** / E2E **20**（+1）/ typecheck 0 / lint 0 / build gzip **140.33 kB**。
 - 破坏性：**否**（新增测试 + 昵称持久化）。
+
+## D-159 replay.json 现在真的可以重放（记录开局装配）
+
+- **发现**：核对「每局落 replay.json」时发现，记录里只有 `intents` / `events` / `hashChain` /
+  `startedAt` / `result` —— **没有 seed、没有卡组、没有指挥官**。
+  也就是说这份文件只能用来「对照哈希」，谁也没法从零重放一局：不知道从哪个状态出发。
+  这与「结论必须可复现」直接冲突：出问题时我拿到的是一串无法独立的 Intent。
+- 改动（服务端，不动协议与规则）：
+  - `session.ts` 抽出 `seedSetup(opts): SeedSetup`（seed + seats + decks + commanders），
+    `seedGameState` 改为 `createInitialState(seedSetup(opts))` —— 建状态与「记录装配」共用同一份参数，
+    避免两处各算一遍而对不上。
+  - `ReplayRecord` 增加 `setup` 与 `initialHash`；`ReplayRecorder.markStart(setup, hash)`。
+  - `index.ts` 开局处：先算 `seedOpts` → `seedSetup` → 建状态 → `markStart`，
+    这样 `game:start` 的每一步都能被重建出来。
+- 测试：新增 `server/src/room/replay.test.ts`（3 条）——
+  ① `seedSetup` 重建出的状态与 `seedGameState` 完全相等且哈希一致；
+  ② 自建卡组只覆盖主编组、指挥官不变；
+  ③ `markStart` 落在记录里，且用记录里的 `setup` 重建的哈希等于 `initialHash`。
+- 验证：core **162** / server **77**（+3）/ E2E **20** / typecheck 0 / lint 0 / build gzip **140.33 kB**。
+- 破坏性：**是（仅回放文件格式）** —— `replay.json` 多了两个字段；旧文件缺 `setup`，
+  仍可读但没有重放能力（本来也没有）。
