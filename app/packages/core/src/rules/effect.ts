@@ -38,7 +38,7 @@ export const effectActivateRule = (
     return reject(RULE_ERRORS.CARD_NOT_IN_ZONE, '只能发动自己卡牌的效果');
   }
   const module = EFFECTS[loc.card.defId];
-  if (!module) {
+  if (!module?.activate) {
     return reject(RULE_ERRORS.EFFECT_UNAVAILABLE, '这张卡没有可发动的效果');
   }
   return module.activate(state, intent, ctx, effectId);

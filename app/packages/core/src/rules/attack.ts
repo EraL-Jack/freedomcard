@@ -1,45 +1,42 @@
 /**
- * 攻击结算 —— ADR-0013（裁决）+ ADR-0014（指挥官伤害与胜负）。
+ * 随从攻击 —— docs/16 §5（8 血版，ADR-0024）+ ADR-0013 / ADR-0014 / ADR-0025。
  *
- * 依据：
- *  - X-3（Era 2026-10-13）：**只比较力量值**。
- *    `atk > def` → 防守方破坏；`atk < def` → 攻击方破坏；`atk == def` → 双方破坏。
- *  - X-4（Era 2026-10-13）：对指挥官造成伤害 → 扣除对应血量 → **血量清空游戏结束**。
- *  - X-5（Era 2026-10-13）：**卡上未写伤害值时，伤害值默认为 1**（与 `power` 无关）。
- *  - A9-2：每个单位每回合攻击 1 次，攻击后进入休眠态，重置阶段清除。
- *  - A10-3：先攻方第一回合不可攻击。
- *  - A7 嘲讽：对手**随从**攻击时必须优先选择嘲讽目标。
- *  - A5 补充 1：指挥官每受 1 点伤害 → 从卡组顶展示 1 张卡（如有效果则触发），
- *    然后置入费用区。
+ * 现行口径：
+ *  - **只能随从攻击**（指挥官攻击走 `commander-attack.ts`）；目标为对方随从或对方指挥官。
+ *  - **前排规则**（§5.2）：对方随从区有随从时，不能宣告攻击其指挥官。
+ *  - **打脸门槛**（§5.5）：攻击者力量 ≥ 敌方指挥官当前力量才能宣告。
+ *  - **打脸伤害**（§5.5）：按攻击者力量分档 1/2/3；卡面 `damage` 例外覆盖。
+ *  - 随从对随从：纯力量三分支（X-3），不掉血。
+ *  - 嘲讽优先于前排与任选（A7 / §8）。
+ *  - 攻击后休眠（A9-2）；统领 9 档的 `attackRefresh` 生效一次即消耗（H23）。
  *
- * **两条不同的路径**（ADR-0014 §1）：
- *  - 打**随从** → 力量值对比 → 输的一方破坏，不掉血（随从没有血量）。
- *  - 打**指挥官** → 力量值对比，防守方输则**扣血**，血空结束；攻击方输则自己破坏、不掉血。
- *
- * `TODO(slot)` 清单（未决，不猜）：
- *  1. `CardDef.damage` 的**取值范围**（上限/是否可为 0）—— 默认值已由 X-5 定为 1，范围未给。
- *  2. 触发效果的**清单**（A7 关键词表待补）。
- *  3. 效果能否取消 / 替换攻击（现按「不能」，ADR-0013 §8）。
- *  4. 展示出来的卡「如有效果则触发对应效果」—— 效果未定义，故只展示不触发。
+ * 卡牌钩子（ADR-0025）：
+ *  - 霜律戍卫：被攻击时攻击者本回合力量 −1（先于力量快照）；
+ *  - 霜律长枪兵：攻击霜冻目标时本次攻击 +2（一次性，不落状态）；
+ *  - 炎刃骑士：攻击时可除外墓地一张炎刃卡，换取本回合 +1 —— 需要选择，
+ *    因此攻击被拆成「挂起选择 → 回答后结算」两段（`resolveAttackEvents` 可复用）。
  */
 
 import {
-  DEFAULT_DAMAGE,
   KEYWORD_TAUNT,
   RULE_ERRORS,
   type CardDef,
   type GameEvent,
   type GameState,
   type Intent,
+  type PlayerId,
   type Result,
   type Rejection,
   type RuleContext,
 } from '@app/shared';
+import { isBladeCard } from '@app/shared/cards';
 
+import { commanderDamageEvents } from '../combat.js';
 import {
   baseGuard,
   defOf,
   ev,
+  faceDamageOf,
   firstRejection,
   hasKeyword,
   locate,
@@ -47,34 +44,114 @@ import {
   phaseGuard,
   reject,
   strArg,
-  takeFromDeck,
   unitPower,
 } from '../ops.js';
 import { opponentOf } from '../state.js';
+import { choicePending } from '../effects/index.js';
 
 /** 裁决结果：谁被破坏。 */
 export type CombatOutcome = 'defender' | 'attacker' | 'both';
 
-/**
- * 纯力量值比较 —— Era 给的三分支（X-3）。
- *
- * 单独导出是为了让「裁决」这件事可单测、可被后续效果系统复用，
- * 而不必构造一整个对局状态。
- */
+/** 纯力量值比较 —— Era 给的三分支（X-3）。 */
 export function resolveCombat(atkPower: number, defPower: number): CombatOutcome {
   if (atkPower > defPower) return 'defender';
   if (atkPower < defPower) return 'attacker';
   return 'both';
 }
 
+/** 已通过全部前置校验的攻击上下文。 */
+export interface AttackPlan {
+  me: PlayerId;
+  foe: PlayerId;
+  attackerUid: string;
+  targetUid: string;
+}
+
+/** 骑士选择挂起时，meta 里要带回的攻击上下文。 */
+export function attackChoice(
+  at: number,
+  me: PlayerId,
+  attackerUid: string,
+  targetUid: string,
+  options: string[],
+): GameEvent {
+  return choicePending(at, {
+    playerId: me,
+    kind: 'blade-knight-attack',
+    sourceUid: attackerUid,
+    options,
+    meta: { attackerUid, targetUid },
+  });
+}
+
 /**
- * 取一张卡的伤害值。
+ * **结算一次已宣告的攻击**（不再重复前置校验；供攻击规则与骑士的 choose 共用）。
  *
- * X-5（Era 2026-10-13）：**卡上未写伤害值时默认 1**。
- * 写成常量 `DEFAULT_DAMAGE` 而非字面量 —— 这是唯一一处伤害兜底，改名/改值只动一处。
+ * `extraPower` 只作用于本次攻击（骑士 +1 同时也会写 tempPower，二者相加不冲突：
+ * 调用方传 0 或 1，与已写入状态的 tempPower 无关 —— 这里用参数是为了「回答选择的
+ * 那一刻」就能参与裁决，而不必等事件落地）。
  */
-export function damageOf(def: CardDef): number {
-  return def.damage ?? DEFAULT_DAMAGE;
+export function resolveAttackEvents(
+  state: GameState,
+  ctx: RuleContext,
+  plan: AttackPlan,
+  extraPower = 0,
+): GameEvent[] {
+  const { me, foe, attackerUid, targetUid } = plan;
+  const at = ctx.now;
+  const atk = locate(state, attackerUid);
+  const tgt = locate(state, targetUid);
+  if (!atk || !tgt) return [];
+  const atkDef = defOf(ctx.cards, atk.card.defId);
+  const defDef = defOf(ctx.cards, tgt.card.defId);
+  if (!atkDef || !defDef) return [];
+
+  const events: GameEvent[] = [];
+  const basePower = unitPower(state, ctx.cards, attackerUid) ?? 0;
+  let atkPower = basePower + extraPower;
+
+  // 霜律戍卫：被攻击时攻击者本回合 −1（先于快照；同时落状态供本回合后续攻击使用）。
+  // 每次被攻击都触发，力量下限由 unitPower 的 0 下限兜底（这里只做本次修正）。
+  if (defDef.defId === 'frostWarden') {
+    events.push(ev(at, 'unit:modified', { playerId: me, uid: attackerUid, tempPower: -1 }));
+    atkPower = Math.max(0, atkPower - 1);
+  }
+  // 霜律长枪兵：攻击霜冻目标 +2（一次性）。
+  if (atkDef.defId === 'frostLancer' && tgt.card.frozen) {
+    atkPower += 2;
+  }
+
+  const defPower = unitPower(state, ctx.cards, targetUid) ?? 0;
+  const atkDamage = faceDamageOf(atkDef, atkPower) + (atk.card.tempDamage ?? 0);
+
+  const outcome = resolveCombat(atkPower, defPower);
+  events.push(ev(at, 'attack:declared', { by: me, attackerUid, targetUid }));
+  events.push(ev(at, 'trigger:attack', { by: me, uid: attackerUid }));
+  events.push(ev(at, 'trigger:defend', { by: me, uid: targetUid }));
+  events.push(ev(at, 'combat:resolved', { by: me, attackerUid, targetUid, atkPower, defPower, outcome }));
+
+  const defenderLoses = outcome === 'defender' || outcome === 'both';
+  const attackerDies = outcome === 'attacker' || outcome === 'both';
+  const targetIsCommander = tgt.zone === 'commander';
+
+  if (defenderLoses && targetIsCommander) {
+    // ADR-0014 / docs/16 §5.5：指挥官受伤扣血；伤害值由力量分档决定。
+    events.push(...commanderDamageEvents(at, state, foe, atkDamage, attackerUid, me));
+  } else if (defenderLoses) {
+    events.push(moved(at, tgt.playerId, targetUid, tgt.zone, 'graveyard'));
+  }
+
+  if (attackerDies) events.push(moved(at, me, attackerUid, 'board', 'graveyard'));
+
+  // A9-2：攻击后休眠；统领 9 档的「一回合一次，攻击后重置」生效即消耗（H23）。
+  if (!attackerDies) {
+    if (atk.card.attackRefresh) {
+      events.push(ev(at, 'unit:modified', { playerId: me, uid: attackerUid, attackRefresh: false }));
+    } else {
+      events.push(ev(at, 'unit:asleep', { playerId: me, uid: attackerUid }));
+    }
+  }
+  return events;
 }
 
 export const attackRule = (
@@ -87,11 +164,9 @@ export const attackRule = (
 
   const me = intent.playerId;
   const foe = opponentOf(state, me);
-  if (!foe) {
-    return reject(RULE_ERRORS.NOT_STARTED, '对手不在座');
-  }
+  if (!foe) return reject(RULE_ERRORS.NOT_STARTED, '对手不在座');
 
-  // A10-3：先攻方第一回合不可攻击。口径与 `phase.ts` 的首回合抽 1 张保持一致。
+  // A10-3 / docs/16 §5.1：先攻方第一回合不可攻击。
   if (state.turn === 1 && state.activeSeat === 0) {
     return reject(RULE_ERRORS.CANNOT_ATTACK, '先攻方第一回合不可攻击');
   }
@@ -116,86 +191,61 @@ export const attackRule = (
   const foePlayer = state.players[foe];
   if (!foePlayer) return reject(RULE_ERRORS.NOT_STARTED, '对手不在座');
 
-  // A7 嘲讽：对方场上有嘲讽随从时，目标必须落在嘲讽集合内。
-  // 多个嘲讽由攻击方任选其一 —— 「任选」不构成需要裁决的冲突（ADR-0013 §6）。
-  const taunts = foePlayer.zones.board.filter((c) => hasKeyword(defOf(ctx.cards, c.defId), KEYWORD_TAUNT));
-  if (taunts.length > 0 && !taunts.some((c) => c.uid === targetUid)) {
-    return reject(RULE_ERRORS.MUST_ATTACK_TAUNT, '对方存在嘲讽随从，必须优先选择嘲讽目标');
-  }
-
   const atkDef = defOf(ctx.cards, atk.card.defId);
-  const defDef = defOf(ctx.cards, tgt.card.defId);
-  if (!atkDef || !defDef) {
-    return reject(RULE_ERRORS.CARD_NOT_FOUND, '卡池中查不到该卡定义');
-  }
+  if (!atkDef) return reject(RULE_ERRORS.CARD_NOT_FOUND, '卡池中查不到该卡定义');
 
-  // 力量值快照 —— **必须排在触发之后**（ADR-0013 §7）：
-  // 若将来出现「攻击时 +N 力量」的效果，快照在前就会用旧值裁决。
-  //
-  // ⚠️ 读的是**当前**力量值而非静态 `def.power`（ADR-0016 §8）：指挥官按 X-7 的力量曲线
-  //    逐回合成长，若取定义上的初始值，指挥官会永远按第 0 档参战。
-  const atkPower = unitPower(state, ctx.cards, attackerUid);
-  const defPower = unitPower(state, ctx.cards, targetUid);
-  if (atkPower === null || defPower === null) {
-    return reject(RULE_ERRORS.CARD_NOT_FOUND, '无法确定该单位的力量值');
-  }
-  // 伤害值 = 卡面伤害（缺省 1，X-5）+ 本回合临时加成（统领 7 档，ADR-0023 §3）
-  const atkDamage = damageOf(atkDef) + (atk.card.tempDamage ?? 0);
-
-  const outcome = resolveCombat(atkPower, defPower);
-  const at = ctx.now;
-  const events: GameEvent[] = [];
-
-  events.push(ev(at, 'attack:declared', { by: me, attackerUid, targetUid }));
-  // 触发点：本批不结算任何效果（A7 效果清单未给），只产出事件供后续效果系统挂载。
-  events.push(ev(at, 'trigger:attack', { by: me, uid: attackerUid }));
-  events.push(ev(at, 'trigger:defend', { by: me, uid: targetUid }));
-  events.push(
-    ev(at, 'combat:resolved', { by: me, attackerUid, targetUid, atkPower, defPower, outcome }),
-  );
-
-  const defenderLoses = outcome === 'defender' || outcome === 'both';
-  const attackerDies = outcome === 'attacker' || outcome === 'both';
   const targetIsCommander = tgt.zone === 'commander';
 
-  if (defenderLoses && targetIsCommander) {
-    // ADR-0014 §1：指挥官不走「破坏」，改为受伤扣血。
-    const next = Math.max(0, foePlayer.health - atkDamage); // H15：血量不为负
-    events.push(ev(at, 'commander:damaged', { playerId: foe, amount: atkDamage, sourceUid: attackerUid }));
-
-    // A5 补充 1：每 1 点伤害 → 从卡组顶展示 1 张 → 置入费用区（H14：逐点触发，含重复卡）
-    const revealed = takeFromDeck(
-      at,
-      foe,
-      { deck: foePlayer.zones.deck, graveyard: foePlayer.zones.graveyard },
-      atkDamage,
-      state.rngCursor,
-      'cost',
-      true,
-    );
-    events.push(...revealed.events);
-    // ⚠️ 展示出的卡「如有效果则触发对应效果」—— 效果清单未给，故**只展示不触发**（TODO(slot)）
-
-    events.push(ev(at, 'health:changed', { playerId: foe, value: next, delta: -atkDamage }));
-    if (next <= 0) {
-      events.push(ev(at, 'game:ended', { winner: me, reason: 'health' }));
-    }
-  } else if (defenderLoses) {
-    events.push(moved(at, tgt.playerId, targetUid, tgt.zone, 'graveyard'));
+  // docs/16 §5.2 前排规则：对方随从区有随从时不能打脸（不分休眠与否，§9 第 2 条）。
+  if (targetIsCommander && foePlayer.zones.board.length > 0) {
+    return reject(RULE_ERRORS.FRONT_LINE, '对方随从区有随从，必须先攻击随从');
   }
 
-  if (attackerDies) events.push(moved(at, me, attackerUid, 'board', 'graveyard'));
-
-  // A9-2：攻击后休眠。已被破坏的单位不再标记 —— 对死掉的单位标休眠没有意义。
-  // 例外：统领 9 档授予的「攻击后重置」（attackRefresh）置位时不休眠，
-  // 但**一回合一次**（H23，Era 2026-10-19 拍板）—— 生效即消耗，本回合第二次攻击照常休眠。
-  if (!attackerDies) {
-    if (atk.card.attackRefresh) {
-      events.push(ev(at, 'unit:modified', { playerId: me, uid: attackerUid, attackRefresh: false }));
-    } else {
-      events.push(ev(at, 'unit:asleep', { playerId: me, uid: attackerUid }));
+  // A7 嘲讽：对方有嘲讽随从时必须优先选嘲讽（对随从目标生效；打脸已被前排挡住）。
+  if (!targetIsCommander) {
+    const taunts = foePlayer.zones.board.filter((c) => hasKeyword(defOf(ctx.cards, c.defId), KEYWORD_TAUNT));
+    if (taunts.length > 0 && !taunts.some((c) => c.uid === targetUid)) {
+      return reject(RULE_ERRORS.MUST_ATTACK_TAUNT, '对方存在嘲讽随从，必须优先选择嘲讽目标');
     }
   }
 
-  return { ok: true, value: events };
+  // docs/16 §5.5 打脸门槛：攻击者力量 ≥ 敌方指挥官当前力量。
+  if (targetIsCommander) {
+    const cmdUid = foePlayer.zones.commander[0]?.uid;
+    const cmdPower = cmdUid ? (unitPower(state, ctx.cards, cmdUid) ?? 0) : 0;
+    const atkPower = unitPower(state, ctx.cards, attackerUid) ?? 0;
+    if (atkPower < cmdPower) {
+      return reject(
+        RULE_ERRORS.COMMANDER_POWER_TOO_LOW,
+        `攻击者力量 ${atkPower} 低于敌方指挥官力量 ${cmdPower}，无法打脸`,
+      );
+    }
+  }
+
+  // 炎刃骑士：攻击时可除外墓地一张炎刃卡换本回合 +1 —— 需要选择，先挂起。
+  // （这是目前唯一需要「攻击前选择」的卡；新增同类卡时改成走 effects 注册表的钩子。）
+  if (atkDef.defId === 'bladeKnight') {
+    const gy = playerGraveyardBlade(state, me, ctx.cards);
+    if (gy.length > 0) {
+      return { ok: true, value: [attackChoice(ctx.now, me, attackerUid, targetUid, gy)] };
+    }
+  }
+
+  return { ok: true, value: resolveAttackEvents(state, ctx, { me, foe, attackerUid, targetUid }) };
 };
+
+/** 墓地里的炎刃卡 uid 列表（骑士 / 老兵 / 凤凰共用判定口径）。 */
+export function playerGraveyardBlade(
+  state: GameState,
+  playerId: PlayerId,
+  cards: Record<string, CardDef>,
+): string[] {
+  const p = state.players[playerId];
+  if (!p) return [];
+  return p.zones.graveyard
+    .filter((c) => {
+      const def = cards[c.defId];
+      return def !== undefined && isBladeCard(def);
+    })
+    .map((c) => c.uid);
+}

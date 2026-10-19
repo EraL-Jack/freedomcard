@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-import { activePage, advancePhase, chargeMinions, playOneMinion, readHand, startGame, turnNo, zoneCount } from './helpers.js';
+import { activePage, advancePhase, chargeMinions, costRemaining, payOf, playOneMinion, readHand, settleChoices, startGame, turnNo, zoneCount } from './helpers.js';
 
 /**
  * 拖拽交互端到端验证（B3-1「点选+拖拽都要」/ Era 2026-10-18「模拟现实操作的卡牌」）。
@@ -52,11 +52,12 @@ test('拖拽手牌到费用区 = 充能；拖拽手牌到随从区 = 出牌', as
 
   const hand1 = await readHand(p);
   const costZone = await zoneCount(p, 'cost', 1);
+  const budget = await costRemaining(p);
   const chosen = hand1
     .filter((c) => c.kind === '随从')
-    .filter((c) => c.cost <= costZone)
-    .sort((a, b) => a.cost - b.cost)[0];
-  expect(chosen, `费用区 ${costZone} 张，应存在支付得起的随从`).toBeDefined();
+    .filter((c) => payOf(c) <= costZone && payOf(c) <= budget)
+    .sort((a, b) => payOf(a) - payOf(b))[0];
+  expect(chosen, `费用区 ${costZone} 张、本回合剩余额度 ${budget}，应存在支付得起的随从`).toBeDefined();
 
   const handBefore = hand1.length;
   await dragTo(
@@ -70,6 +71,7 @@ test('拖拽手牌到费用区 = 充能；拖拽手牌到随从区 = 出牌', as
   await expect(p.getByTestId('slot-0').nth(1).locator('[data-testid="card"]')).toHaveCount(1, {
     timeout: 10_000,
   });
+  await settleChoices(p);
 });
 
 test('拖拽我方随从到对方随从 = 发起攻击', async ({ browser }) => {

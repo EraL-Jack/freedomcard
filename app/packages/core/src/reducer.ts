@@ -76,7 +76,13 @@ export function reduce(state: GameState, event: GameEvent): GameState {
         if (!card) return;
         p.zones[from] = src.filter((c) => c.uid !== uid);
         const dst = p.zones[to] ?? [];
-        p.zones[to] = [...dst, card];
+        // 霜冻是**实例状态位**（ADR-0025）：离开随从区即消失，回场时必须是干净实例。
+        let movedCard = card;
+        if (from === 'board' && card.frozen) {
+          const { frozen: _frozen, ...rest } = card;
+          movedCard = rest;
+        }
+        p.zones[to] = [...dst, movedCard];
       });
     }
 
@@ -105,9 +111,36 @@ export function reduce(state: GameState, event: GameEvent): GameState {
         p.mulliganDone = true;
       });
 
+    /**
+     * 重置阶段（docs/16 §2 / ADR-0025）：
+     * **霜冻单位跳过重置**，其余解除休眠。
+     */
     case 'units:reset':
       return withPlayer(state, s(event, 'playerId'), (p) => {
-        p.zones.board = p.zones.board.map((c) => ({ ...c, sleeping: false }));
+        p.zones.board = p.zones.board.map((c) => (c.frozen ? c : { ...c, sleeping: false }));
+      });
+
+    /** 霜冻（docs/12 §5 / ADR-0025）：立即休眠并打上状态位；重复冻结只刷新，不叠加。 */
+    case 'unit:frozen': {
+      const id = s(event, 'playerId');
+      const uid = s(event, 'uid');
+      return withPlayer(state, id, (p) => {
+        p.zones.board = p.zones.board.map((c) =>
+          c.uid === uid ? { ...c, frozen: true, sleeping: true } : c,
+        );
+      });
+    }
+
+    /** 费用支付记帐（docs/16 §3.3）：本回合已消耗张数累加。 */
+    case 'cost:spent':
+      return withPlayer(state, s(event, 'playerId'), (p) => {
+        p.usedCostThisTurn += Math.max(0, n(event, 'amount'));
+      });
+
+    /** 指挥官攻击（docs/16 §6.1）：本回合一次。 */
+    case 'commander:attacked':
+      return withPlayer(state, s(event, 'playerId'), (p) => {
+        p.commanderAttacked = true;
       });
 
     /** 临时修正写入（ADR-0023 §3）：统领 3/7/9 档与军师触发器的载体。 */
@@ -189,14 +222,21 @@ export function reduce(state: GameState, event: GameEvent): GameState {
       const to = s(event, 'to') as GameState['phase'];
       // 进入抽牌阶段 → 重置「已抽」标记（Era 2026-10-18：抽牌改为手动点击卡组）。
       let next: GameState = { ...state, phase: to, ...(to === 'draw' ? { drawnThisPhase: false } : {}) };
-      if (to === 'charge') {
+      // docs/12 §5.2 / ADR-0025：霜冻在**其控制者回合的结束阶段**解除（仍休眠）。
+      if (to === 'end') {
         const active = next.seats[next.activeSeat];
         if (active) {
           next = withPlayer(next, active, (p) => {
-            p.effectsUsed = [];
+            p.zones.board = p.zones.board.map((c) => {
+              if (!c.frozen) return c;
+              const { frozen: _frozen, ...rest } = c;
+              return rest;
+            });
           });
         }
       }
+      // ⚠️ `effectsUsed` 的「每回合一次」重置已移到 `turn:changed`（发给**拿到回合**的人）：
+      // 此处 activeSeat 还是刚结束回合的人（advanceOnce 先发 phase:changed 再发 turn:changed）。
       return next;
     }
 
@@ -217,6 +257,10 @@ export function reduce(state: GameState, event: GameEvent): GameState {
           // 行动方拿到回合 = 充能次数 +1；首次拿到回合的时刻 = 其换牌时间窗起点。
           chargeCount: incoming ? p.chargeCount + 1 : p.chargeCount,
           firstChargeAt: incoming ? (p.firstChargeAt ?? event.at) : p.firstChargeAt,
+          // ADR-0023 §3 / docs/16 §3.3：回合级记帐换人即清零。
+          effectsUsed: incoming ? [] : p.effectsUsed,
+          usedCostThisTurn: incoming ? 0 : p.usedCostThisTurn,
+          commanderAttacked: incoming ? false : p.commanderAttacked,
           turnTriggers: [],
           zones: {
             ...p.zones,
@@ -259,8 +303,11 @@ export function reduce(state: GameState, event: GameEvent): GameState {
     case 'card:revealed':
       return state;
 
-    case 'game:ended':
-      return { ...state, winner: s(event, 'winner') || null };
+    case 'game:ended': {
+      const winner = s(event, 'winner');
+      // docs/16 §7：40 轮判和 —— winner 为空 + reason='draw'。
+      return { ...state, winner: winner || null, draw: winner === '' && s(event, 'reason') === 'draw' };
+    }
 
     default:
       // 未知事件不改变状态 —— 但也不静默吞掉：交由上层核对事件白名单

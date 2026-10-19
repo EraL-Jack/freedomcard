@@ -1878,3 +1878,46 @@ UI 按现行规则放行；是否放开后攻方换牌待 Era 拍板。
 - 回归验证：简化对局模拟，每组 6,000–8,000 局（结论见 `15`/`16` 的数据表）；
   **未进引擎、未跑单测、未跑 E2E** —— 本条仅交付设计文档
 - 破坏性：否（仅新增文档与静态图；规则若落地属破坏性变更，须先补 ADR）
+
+## D-130 8 血核心规则 + 双阵营 30 张卡池（ADR-0024 / ADR-0025）
+
+- 背景：Era 在 GitHub 提交 `docs/12`（炎刃 15 + 霜律 15 设计稿）、`docs/16`（8 血版规则条文）
+  并指示「看看怎么实现」「动手」。按 `docs/16` §13 的 P0→P1 顺序落地，先补 ADR-0024/0025。
+- **核心规则（ADR-0024）**：
+  - 初始血量 15 → **8**；起手先手 5 / 后手 6；先手第一回合抽 **0** 张。
+  - 充能阶段**强制收入 2 张**（卡组顶 → 费用区），开局与每次进入充能阶段各一次。
+  - `maxCost` 按**各自回合数**（`chargeCount`）取 1/3/5/10，语义为「本回合所有支付的
+    总张数上限」；新增 `PlayerState.usedCostThisTurn` + `cost:spent` 事件，出牌与
+    效果支付（统领【2】/ 裁决官【2】）共用记帐。
+  - 随从费用 **−1（最低 0）**（`costToPay`），法术/持续法术按卡面值。
+  - **前排**：对方随从区非空时不能宣告打脸（FRONT_LINE）；**打脸门槛**：攻击者力量 ≥
+    敌方指挥官当前力量（COMMANDER_POWER_TOO_LOW）。
+  - **打脸伤害按力量分档** 1–3→1 / 4–6→2 / 7+→3，卡面 `damage` 例外覆盖（`faceDamageOf`）。
+  - **指挥官攻击**（新 `commander-attack.ts` / `commanderAttack` Intent）：每战斗阶段一次，
+    固定 1 点，不比较力量、不受前排限制、不吃伤害加成；不能攻击随从。
+  - 指挥官力量**按轮次同步**：`index = min(ceil(全局回合/2), 曲线末档)`，双方同力
+    （`syncCommanderGrowth`；移除原先「各自充能阶段推进」）。
+  - 40 轮判和：全局回合 > 80 → `game:ended{reason:'draw'}`；`GameState.draw` 参与
+    `baseGuard` 与结束面板。
+- **卡池（ADR-0025）**：`CARD_POOL` 扩到 **30 张**（炎刃 15 + 霜律 15）；8 张占位卡补
+  `text`、数值不变、转正（`PLACEHOLDER_CARD_IDS` 清空）；新增 `bladeCremation` /
+  `bladePhoenix` 与霜律 15 张（`frostAdjudicator` 曲线 0-1-2-4）。
+- **霜冻**：`CardInstance.frozen` 状态位；`units:reset` 跳过霜冻单位；控制者回合结束阶段
+  清除；重复冻结只刷新；离场即消失；`unit:frozen` 事件承载「被霜冻时」触发。
+- **效果落地**：新增 `effects/primitives.ts`（`freezeUnit` / `exileCard` / `drawTop` /
+  `millTop` / 多目标选择）、`blade-troops.ts`、`blade-arcana.ts`、`frost-commander.ts`、
+  `frost-troops.ts`、`frost-arcana.ts`；`EffectModule` 扩 `onSummon` / `onPlay`；
+  骑士的「攻击时选择」拆成 `attack:declare → pendingChoice → resolveAttackEvents`。
+  战旗的「除外时抽 1」挂在 `exileCard`，保证所有除外路径都触发。
+- **服务端**：默认卡组按座位交替分配炎刃 / 霜律两套 30 张（`BLADE_MAIN_DECK` /
+  `FROST_MAIN_DECK`），让一局里两个体系都能被看到。
+- **客户端**：效果发动列表改由 `ACTIVATABLE_EFFECTS`（shared 卡数据）驱动；新增指挥官
+  攻击按钮；霜冻卡冰蓝描边 + 「霜冻」角标；费用区显示「本回合 已用/上限」；选择浮层补齐
+  新 kind 的标题与多选「完成选择」；平局面板；日志补 `unit:frozen` / `commander:attacked` /
+  `cost:spent` / 平局文案。
+- **E2E 适配**：`zoneCount` 改用专属 `zone-count` 节点（费用区新增徽标会污染「最后一个数字」）；
+  `chargeMinions` 改为「比操作前多」而非 +1 算术（充能收入的播放延迟会错位）；
+  新增 `settleChoices` 放掉登场效果引出的待定选择；出牌筛选补 `payOf` 与 `costRemaining`。
+- 验证：core **122 passed**（+19 `v8-cards.test.ts`）/ server **52** / E2E **15 passed** /
+  typecheck 0 / lint 0 / build gzip **134.8 kB**（+5.8 kB 为 30 张卡面数据）。
+- 破坏性：**是**（规则口径与卡池规模变更；旧对局回放结算不再等价）。

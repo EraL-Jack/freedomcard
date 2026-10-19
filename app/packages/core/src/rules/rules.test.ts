@@ -2,14 +2,15 @@ import { describe, expect, it } from 'vitest';
 
 import {
   BOARD_SLOTS,
+  COST_INCOME_PER_TURN,
   DECK_SIZE,
-  DEFAULT_DAMAGE,
   INITIAL_HAND,
   INITIAL_HEALTH,
   KEYWORD_TAUNT,
   MAIN_DECK_SIZE,
   MULLIGAN_WINDOW_MS,
   RULE_ERRORS,
+  SECOND_PLAYER_HAND,
   type CardDef,
   type CardInstance,
   type GameEvent,
@@ -120,6 +121,13 @@ function craft(patch: {
     turn: patch.turn ?? 1,
     activeSeat: patch.activeSeat ?? 0,
   };
+  // 夹具默认放宽 maxCost（docs/16 §3.3 的上限另有专门用例），
+  // 否则几乎每个出牌用例都会被「第 1 回合只能花 1 张」挡住。
+  out.players = {
+    ...out.players,
+    p1: { ...out.players['p1']!, maxCost: 10 },
+    p2: { ...out.players['p2']!, maxCost: 10 },
+  };
   if (patch.zones) {
     const p = out.players['p1']!;
     out.players = { ...out.players, p1: { ...p, zones: { ...p.zones, ...patch.zones } } };
@@ -190,13 +198,21 @@ describe('卡组构成（ADR-0012 补充：31 = 30 + 1）', () => {
 /* ------------------------------ 开局 ------------------------------ */
 
 describe('开局 startRule', () => {
-  it('洗牌 → 掷骰 → 揭示指挥官 → 各发起手 5 张', () => {
+  it('洗牌 → 掷骰 → 揭示指挥官 → 发起手（先手 5 / 后手 6）+ 先手充能收入 2 张', () => {
     const s = run(fresh(), intent('p1', INTENTS.start));
     expect(s.started).toBe(true);
+    const [first, second] = s.seats as [string, string];
+    // docs/16 §1：先手 5、后手 6
+    expect(s.players[first]!.zones.hand.length).toBe(INITIAL_HAND);
+    expect(s.players[second]!.zones.hand.length).toBe(SECOND_PLAYER_HAND);
+    // docs/16 §2：先手充能阶段强制收入 2 张进费用区
+    expect(s.players[first]!.zones.cost.length).toBe(COST_INCOME_PER_TURN);
+    expect(s.players[first]!.zones.deck.length).toBe(
+      MAIN_DECK_SIZE - INITIAL_HAND - COST_INCOME_PER_TURN,
+    );
+    expect(s.players[second]!.zones.deck.length).toBe(MAIN_DECK_SIZE - SECOND_PLAYER_HAND);
     for (const id of ['p1', 'p2']) {
       const p = s.players[id]!;
-      expect(p.zones.hand.length).toBe(INITIAL_HAND);
-      expect(p.zones.deck.length).toBe(MAIN_DECK_SIZE - INITIAL_HAND);
       expect(p.zones.commander.length).toBe(1);
       expect(p.commanderRevealed).toBe(true);
       expect(p.zones.commander[0]!.defId).toBe('cmd');
@@ -257,14 +273,14 @@ describe('开局 startRule', () => {
 describe('起手换牌 mulliganRule', () => {
   const started = (): GameState => run(fresh(), intent('p1', INTENTS.start));
 
-  it('返回 2 张后手牌仍是 5 张、牌库仍是 25 张', () => {
+  it('返回 2 张后手牌仍是 5 张、牌库仍是 23 张（30 − 充能收入 2 − 起手 5）', () => {
     const s = started();
     const active = s.seats[0]!;
     const returning = s.players[active]!.zones.hand.slice(0, 2).map((x) => x.uid);
     const after = run(s, intent(active, INTENTS.mulligan, { returns: returning }));
     const p = after.players[active]!;
     expect(p.zones.hand.length).toBe(INITIAL_HAND);
-    expect(p.zones.deck.length).toBe(MAIN_DECK_SIZE - INITIAL_HAND);
+    expect(p.zones.deck.length).toBe(MAIN_DECK_SIZE - INITIAL_HAND - COST_INCOME_PER_TURN);
     expect(p.mulliganDone).toBe(true);
   });
 
@@ -397,20 +413,26 @@ describe('阶段流转 phaseRule', () => {
     expect(s.phase).toBe('battle');
   });
 
-  it('第一回合先攻方点击卡组只抽 1 张（A10-3）', () => {
+  it('第一回合先攻方点击卡组抽 0 张（docs/16 §1，ADR-0024）', () => {
     let s = run(craft({ phase: 'charge', turn: 1 }), intent('p1', INTENTS.phaseAdvance));
     s = run(s, intent('p1', INTENTS.draw));
-    expect(s.players['p1']!.zones.hand.length).toBe(1);
+    expect(s.players['p1']!.zones.hand.length).toBe(0);
+    // 抽 0 张也要走完「抽牌 → 主要」的自动推进
+    expect(s.phase).toBe('main');
   });
 
-  it('结束阶段之后进入下一回合：换行动方、回合 +1、最高费用按曲线增长', () => {
+  it('结束阶段之后进入下一回合：换行动方、回合 +1、最高费用按各自回合数取 1', () => {
     let s = craft({ phase: 'charge', turn: 1, activeSeat: 0 });
     // 重置瞬穿 + 抽完自动推进后，一回合只需 4 次推进：抽牌（抽完自动进主要）→战斗→结束→下一回合充能
     s = advance(s, 4).state;
     expect(s.turn).toBe(2);
     expect(s.activeSeat).toBe(1);
     expect(s.phase).toBe('charge');
-    expect(s.players['p2']!.maxCost).toBe(3);
+    // docs/16 §3.3：双方各自的第一回合上限都是 1（不按全局回合，否则后手白拿一档）
+    expect(s.players['p2']!.maxCost).toBe(1);
+    expect(s.players['p2']!.chargeCount).toBe(1);
+    // 进入充能阶段强制收入 2 张
+    expect(s.players['p2']!.zones.cost.length).toBe(COST_INCOME_PER_TURN);
   });
 
   it('非行动方推进阶段 → 拒绝 NOT_YOUR_TURN', () => {
@@ -464,24 +486,39 @@ describe('充能 chargeRule（X-2，充能区即费用区）', () => {
 /* ------------------------------ 出牌与支付 ------------------------------ */
 
 describe('出牌 playRule（A5 补充 2：按张数支付）', () => {
-  it('支付 = 从费用区取 cost 张送入弃牌区', () => {
+  it('随从减费：卡面 2 费实际支付 1 张（docs/16 §4）', () => {
     const s = craft({
       phase: 'main',
-      zones: { hand: [c('h1', 'm1')], cost: [c('k1', 'm4'), c('k2', 'm4')] },
+      zones: { hand: [c('h1', 'm2')], cost: [c('k1', 'm4'), c('k2', 'm4')] },
     });
     const after = run(s, intent('p1', INTENTS.play, { uid: 'h1' }));
     const p = after.players['p1']!;
     expect(p.zones.board.map((x) => x.uid)).toContain('h1');
-    expect(p.zones.cost.length).toBe(1); // 2 - cost(1)
-    expect(p.zones.graveyard.length).toBe(1);
+    expect(p.zones.cost.length).toBe(1); // 2 - (cost 2 − 1) = 1
     expect(p.zones.graveyard[0]!.uid).toBe('k1'); // 按费用区顺序从前往后取
+    expect(p.usedCostThisTurn).toBe(1);
   });
 
   it('费用区张数不足 → 拒绝 INSUFFICIENT_COST', () => {
-    const s = craft({ phase: 'main', zones: { hand: [c('h1', 'm1')], cost: [] } });
+    const s = craft({ phase: 'main', zones: { hand: [c('h1', 'm2')], cost: [] } });
     const r = applyIntent(s, intent('p1', INTENTS.play, { uid: 'h1' }), CTX);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.INSUFFICIENT_COST);
+  });
+
+  it('maxCost 校验：本回合已消耗 + 本次 > 上限 → 拒绝 MAX_COST_EXCEEDED（docs/16 §3.3）', () => {
+    const base = craft({
+      phase: 'main',
+      zones: { hand: [c('h1', 'm2')], cost: [c('k1', 'm4'), c('k2', 'm4')] },
+    });
+    // 第 2 回合（各自第 2 回合）上限 3；已用 3 → 本次 1 张被拒
+    const s: GameState = {
+      ...base,
+      players: { ...base.players, p1: { ...base.players['p1']!, maxCost: 3, usedCostThisTurn: 3 } },
+    };
+    const r = applyIntent(s, intent('p1', INTENTS.play, { uid: 'h1' }), CTX);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.MAX_COST_EXCEEDED);
   });
 
   it('cost 为 0 的卡无需支付即可打出', () => {
@@ -505,13 +542,14 @@ describe('出牌 playRule（A5 补充 2：按张数支付）', () => {
     if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.BOARD_FULL);
   });
 
-  it('法术进入法术区而非随从区（效果结算本身仍是 TODO）', () => {
+  it('法术结算后进入墓地（持续法术留在法术区）', () => {
     const s = craft({
       phase: 'main',
       zones: { hand: [c('h1', 's1')], cost: [c('k1', 'm4')] },
     });
     const after = run(s, intent('p1', INTENTS.play, { uid: 'h1' }));
-    expect(after.players['p1']!.zones.spell.length).toBe(1);
+    expect(after.players['p1']!.zones.spell.length).toBe(0);
+    expect(after.players['p1']!.zones.graveyard.map((x) => x.uid)).toContain('h1');
     expect(after.players['p1']!.zones.board.length).toBe(0);
   });
 
@@ -737,7 +775,7 @@ describe('打指挥官 · 伤害与胜负（ADR-0014）', () => {
 
   it('血量清空 → 游戏结束，胜者为攻击方', () => {
     let s = cmdBattle();
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 5 && s.winner === null; i++) {
       // 攻击后随从会休眠，这里手动重置以连续攻击
       const p1 = s.players['p1']!;
       s = {
@@ -753,26 +791,37 @@ describe('打指挥官 · 伤害与胜负（ADR-0014）', () => {
     expect(s.winner).toBe('p1');
   });
 
-  it('伤害值缺失时默认为 1，与力量值无关（X-5）', () => {
-    // m6 没有 damage 字段、power 为 6 → 伤害取默认 1，不是 6
+  it('伤害按力量分档：4–6 力打脸 2 点（docs/16 §5.5）', () => {
+    // m6 没有 damage 字段、power 6 → 分档 2，不是默认 1
     const after = run(cmdBattle(c('a1', 'm6')), hit());
-    expect(after.players['p2']!.health).toBe(INITIAL_HEALTH - DEFAULT_DAMAGE);
-    expect(after.players['p2']!.health).toBe(INITIAL_HEALTH - 1);
+    expect(after.players['p2']!.health).toBe(INITIAL_HEALTH - 2);
   });
 
-  it('伤害值显式写在卡上时按卡上的值，可大于力量值（X-5）', () => {
-    // d6：power 6 > cmd 5 故命中；damage 5 → 扣 5（不是 6）
+  it('伤害值显式写在卡上时按卡上的值（例外覆盖，§9 第 8 条）', () => {
+    // d6：power 6 → 分档 2，但卡面 damage 5 优先
     const after = run(cmdBattle(c('a1', 'd6')), hit());
     expect(after.players['p2']!.health).toBe(INITIAL_HEALTH - 5);
   });
 
-  it('攻击方力量值小于指挥官 → 攻击方自己破坏，指挥官不掉血', () => {
-    // m3：power 3 < cmd 5 → 攻击方输
-    const after = run(cmdBattle(c('a1', 'm3')), hit());
-    expect(after.players['p1']!.zones.board.length).toBe(0);
-    expect(after.players['p1']!.zones.graveyard.map((x) => x.uid)).toContain('a1');
-    expect(after.players['p2']!.health).toBe(INITIAL_HEALTH);
-    expect(after.players['p2']!.zones.commander.length).toBe(1);
+  it('攻击方力量 < 指挥官力量 → 不能宣告打脸（COMMANDER_POWER_TOO_LOW）', () => {
+    const r = applyIntent(cmdBattle(c('a1', 'm3')), hit(), CTX);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.COMMANDER_POWER_TOO_LOW);
+  });
+
+  it('前排规则：对方随从区有随从时不能打脸（FRONT_LINE）', () => {
+    const s = craft({
+      phase: 'battle',
+      turn: 2,
+      zones: { board: [c('a1', 'd7')] },
+      foeZones: {
+        commander: [c('p2#commander', 'cmd')],
+        board: [{ uid: 'd1', defId: 'm3', sleeping: true }], // 休眠随从也算「有随从」
+      },
+    });
+    const r = applyIntent(s, hit(), CTX);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.FRONT_LINE);
   });
 });
 
@@ -783,6 +832,50 @@ describe('伤害只作用于指挥官（ADR-0014 §1）', () => {
     expect(after.players['p1']!.health).toBe(INITIAL_HEALTH);
     expect(after.players['p2']!.health).toBe(INITIAL_HEALTH);
     expect(after.winner).toBeNull();
+  });
+});
+
+describe('指挥官攻击（docs/16 §6.1 / ADR-0024）', () => {
+  const cmdBattle = (foeExtra: CardInstance[] = []): GameState =>
+    craft({
+      phase: 'battle',
+      turn: 2,
+      zones: { commander: [c('p1#commander', 'cmd')] },
+      foeZones: { commander: [c('p2#commander', 'cmd')], board: foeExtra },
+    });
+
+  it('固定 1 点伤害，不吃力量、不受前排限制（对方有随从也能攻击）', () => {
+    const s = cmdBattle([c('d1', 'm9')]);
+    const after = run(s, intent('p1', INTENTS.commanderAttack));
+    expect(after.players['p2']!.health).toBe(INITIAL_HEALTH - 1);
+    expect(after.players['p1']!.commanderAttacked).toBe(true);
+  });
+
+  it('每回合只能一次 → 第二次拒绝 COMMANDER_ATTACK_USED', () => {
+    const s = cmdBattle();
+    const after = run(s, intent('p1', INTENTS.commanderAttack));
+    const r = applyIntent(after, intent('p1', INTENTS.commanderAttack), CTX);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.COMMANDER_ATTACK_USED);
+  });
+
+  it('先攻方第一回合不可攻击（A10-3）', () => {
+    const s = craft({
+      phase: 'battle',
+      turn: 1,
+      activeSeat: 0,
+      zones: { commander: [c('p1#commander', 'cmd')] },
+      foeZones: { commander: [c('p2#commander', 'cmd')] },
+    });
+    const r = applyIntent(s, intent('p1', INTENTS.commanderAttack), CTX);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.CANNOT_ATTACK);
+  });
+
+  it('指挥官攻击会触发受伤展示（每 1 点展示 1 张进费用区）', () => {
+    const s = cmdBattle();
+    const { events } = runWith(s, intent('p1', INTENTS.commanderAttack));
+    expect(events.filter((e) => e.type === 'card:revealed').length).toBe(1);
   });
 });
 
@@ -861,30 +954,24 @@ describe('指挥官力量值曲线（X-7 / ADR-0016）', () => {
     expect(s.players['p2']!.commanderPowerIndex).toBe(0);
   });
 
-  it('开局经历第一次充能 → 先攻方力量值变为 1（Era：第一回合就会变到 1）', () => {
+  it('开局同步到第 1 轮：双方力量都是 1（docs/16 §6.3）', () => {
     const { state: after, events } = startWithCurve();
-    // ⚠️ 先后手由掷骰决定（A2-4），故先攻方要按 `seats[0]` 取，不能写死 p1
-    const first = after.seats[0]!;
-    expect(after.players[first]!.commanderPowerIndex).toBe(1);
-    expect(unitPower(after, CARDS, `${first}#commander`)).toBe(1);
-    const grown = events.filter((e) => e.type === 'commander:grown');
-    expect(grown).toHaveLength(1);
-    expect(grown[0]!.payload).toMatchObject({ playerId: first, index: 1, power: 1 });
-  });
-
-  it('开局只推进先攻方 —— 成长发生在己方充能阶段，后攻方仍停在第 0 档', () => {
-    const { state: after } = startWithCurve();
     const [first, second] = after.seats as [PlayerId, PlayerId];
     expect(after.players[first]!.commanderPowerIndex).toBe(1);
-    expect(after.players[second]!.commanderPowerIndex).toBe(0);
+    expect(after.players[second]!.commanderPowerIndex).toBe(1);
+    expect(unitPower(after, CARDS, `${first}#commander`)).toBe(1);
+    expect(unitPower(after, CARDS, `${second}#commander`)).toBe(1);
+    const grown = events.filter((e) => e.type === 'commander:grown');
+    expect(grown).toHaveLength(2);
+    expect(grown[0]!.payload).toMatchObject({ index: 1, power: 1 });
   });
 
-  it('后攻方在自己的第一个充能阶段才成长到 1', () => {
+  it('第 2 回合仍属第 1 轮 —— 双方都保持 1（不按各自回合数推进）', () => {
     const { state: s0 } = startWithCurve();
-    const second = s0.seats[1]!;
-    const s1 = advance(s0, 4).state; // 先攻方走完一回合（抽完自动推进后每回合 4 次）→ 后攻方第一回合充能阶段
+    const s1 = advance(s0, 4).state;
+    const [first, second] = s1.seats as [PlayerId, PlayerId];
     expect(s1.turn).toBe(2);
-    expect(s1.players[second]!.commanderPowerIndex).toBe(1);
+    expect(unitPower(s1, CARDS, `${first}#commander`)).toBe(1);
     expect(unitPower(s1, CARDS, `${second}#commander`)).toBe(1);
   });
 
@@ -899,16 +986,16 @@ describe('指挥官力量值曲线（X-7 / ADR-0016）', () => {
     expect(powers).toEqual([1, 3, 5]);
   });
 
-  it('走到末档后封顶：第 4 回合仍为 5，且不再产出成长事件', () => {
+  it('走到末档后封顶：第 4 轮起仍为 5，且不再产出成长事件', () => {
     const { state: s0 } = startWithCurve();
-    const a = advance(s0, 28); // 7 个完整回合（4 次/回合）—— 无论 p1 先后手都经历 4 次充能
+    const a = advance(s0, 28); // 7 个完整回合（4 次/回合）→ 第 8 回合 = 第 4 轮
     expect(a.state.players['p1']!.commanderPowerIndex).toBe(3);
     expect(unitPower(a.state, CARDS, 'p1#commander')).toBe(5);
-    // 先攻方共经历 4 次充能，但只有前 3 次推进了档位 → 3 条事件
+    // 按轮次同步：第 3 回合（第 2 轮）与第 5 回合（第 3 轮）各一次 → 2 条事件
     const p1Grown = a.events.filter(
       (e) => e.type === 'commander:grown' && e.payload?.['playerId'] === 'p1',
     );
-    expect(p1Grown).toHaveLength(3);
+    expect(p1Grown).toHaveLength(2);
   });
 
   it('未定义曲线的指挥官不成长，力量恒为 CardDef.power', () => {
@@ -923,9 +1010,9 @@ describe('指挥官力量值曲线（X-7 / ADR-0016）', () => {
     expect(unitPower(after, CARDS, 'p1#commander')).toBe(5);
   });
 
-  it('战斗裁决读的是指挥官**当前档位**的力量值（ADR-0016 §8）', () => {
+  it('战斗裁决读的是指挥官**当前档位**的力量值，且力量不足时不能宣告打脸', () => {
     // 场景固定为：p2 的 m1（力量 2）攻击 p1 的曲线指挥官，只有指挥官档位不同。
-    const attackWithIndex = (index: number): GameState => {
+    const stateWithIndex = (index: number): GameState => {
       const base = craft({
         phase: 'battle',
         turn: 4,
@@ -933,14 +1020,19 @@ describe('指挥官力量值曲线（X-7 / ADR-0016）', () => {
         zones: { commander: [c('p1#commander', 'cmdCurve')] },
         foeZones: { board: [c('d1', 'm1')] },
       });
-      const s = setIndex(base, 'p1', index);
-      return run(s, intent('p2', INTENTS.attack, { attackerUid: 'd1', targetUid: 'p1#commander' }));
+      return setIndex(base, 'p1', index);
     };
+    const hitCmd = (_s: GameState): Intent =>
+      intent('p2', INTENTS.attack, { attackerUid: 'd1', targetUid: 'p1#commander' });
 
-    // 第 0 档力量 0 < 攻击方 2 → 防守方（指挥官）输 → 掉 1 血（伤害值默认 1，X-5）
-    expect(attackWithIndex(0).players['p1']!.health).toBe(INITIAL_HEALTH - 1);
-    // 第 2 档力量 3 > 攻击方 2 → 攻击方输 → 指挥官不掉血
-    expect(attackWithIndex(2).players['p1']!.health).toBe(INITIAL_HEALTH);
+    // 第 0 档力量 0 ≤ 攻击方 2 → 允许打脸，分档伤害 1
+    const low = run(stateWithIndex(0), hitCmd(stateWithIndex(0)));
+    expect(low.players['p1']!.health).toBe(INITIAL_HEALTH - 1);
+
+    // 第 2 档力量 3 > 攻击方 2 → 直接不允许宣告（docs/16 §5.5 门槛）
+    const r = applyIntent(stateWithIndex(2), hitCmd(stateWithIndex(2)), CTX);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.COMMANDER_POWER_TOO_LOW);
   });
 });
 

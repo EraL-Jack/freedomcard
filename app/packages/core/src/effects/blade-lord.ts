@@ -31,11 +31,11 @@ import { baseGuard, ev, firstRejection, locate, moved, playerOf, reject, strArg 
 
 import {
   bladeExileCount,
-  bladeSummonTriggerEvents,
   choiceCleared,
   choicePending,
   effectKey,
   payCostCards,
+  summonEntryEvents,
   usedGuard,
   type EffectModule,
 } from './index.js';
@@ -233,9 +233,10 @@ export const bladeLordEffect: EffectModule = {
       case 'l1': {
         // 从墓地召唤到随从区
         events.push(moved(at, me, choice, 'graveyard', 'board'));
-        // 登场触发器（军师）：召唤炎刃随从也触发（ADR-0023 §7）
-        const postState = state; // 触发判定读当前状态的触发器表即可（次数只减不增）
-        events.push(...bladeSummonTriggerEvents(at, postState, me, choice, ctx.cards));
+        // 登场触发器 / 自动登场效果；选择类登场效果跳过（同一时刻只能挂一个 pending）。
+        events.push(
+          ...summonEntryEvents(at, state, me, choice, ctx, { allowChoice: false }),
+        );
         break;
       }
       case 'l3':

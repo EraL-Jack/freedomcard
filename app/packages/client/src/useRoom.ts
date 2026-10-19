@@ -115,6 +115,8 @@ export interface RoomSession {
   /** 手动抽牌（Era 2026-10-18）：抽牌阶段点击卡组触发。 */
   draw(): void;
   attack(attackerUid: string, targetUid: string): void;
+  /** 指挥官攻击（docs/16 §6.1）：目标恒为敌方指挥官，每战斗阶段一次。 */
+  commanderAttack(): void;
   mulligan(returns: string[]): void;
   /** 发动卡面效果（ADR-0023）—— uid 是效果来源卡，effect 是效果编号。 */
   activateEffect(uid: string, effect: string): void;
@@ -532,6 +534,8 @@ export function useRoom(): RoomSession {
     play: (uid) => send(core.INTENTS.play, { uid }),
     draw: () => send(core.INTENTS.draw),
     attack: (attackerUid, targetUid) => send(core.INTENTS.attack, { attackerUid, targetUid }),
+    /** 指挥官攻击（docs/16 §6.1）：目标恒为敌方指挥官，无需参数。 */
+    commanderAttack: () => send(core.INTENTS.commanderAttack),
     mulligan: (returns) => send(core.INTENTS.mulligan, { returns }),
     activateEffect: (uid, effect) => send(core.INTENTS.effectActivate, { uid, effect }),
     chooseEffect: (choice) => send(core.INTENTS.effectChoose, { choice }),

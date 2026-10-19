@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import { startGame, activePage } from './helpers.js';
+import { startGame } from './helpers.js';
 
 /**
  * 联机开局端到端验证（真界面）。
@@ -15,20 +15,22 @@ import { startGame, activePage } from './helpers.js';
 test('双方准备后开局，对战桌按 B2 布局渲染', async ({ browser }) => {
   const { host, guest } = await startGame(browser);
 
-  // A10-1：起手 5 张
-  await expect(host.getByTestId('hand').locator('[data-testid="card"]')).toHaveCount(5, {
-    timeout: 10_000,
-  });
-  await expect(guest.getByTestId('hand').locator('[data-testid="card"]')).toHaveCount(5, {
-    timeout: 10_000,
-  });
+  // docs/16 §1：先手 5 张、后手 6 张（先后手由掷骰决定，故只断言两侧合起来是 5 + 6）
+  await expect
+    .poll(async () => {
+      const hostHand = await host.getByTestId('hand').locator('[data-testid="card"]').count();
+      const guestHand = await guest.getByTestId('hand').locator('[data-testid="card"]').count();
+      return [hostHand, guestHand].sort((a, b) => a - b);
+    })
+    .toEqual([5, 6]);
 
   // 开局事件进了日志（说明客户端真的在 reduce 事件流）
   await expect(host.getByTestId('log')).toContainText('对局开始', { timeout: 10_000 });
 
   // X-1：指挥官在开局揭示。B2-4 上下镜像 —— 我方与对方**各有一个**指挥官区。
   await expect(host.getByTestId('zone-commander')).toHaveCount(2, { timeout: 10_000 });
-  await expect(host.getByTestId('zone-commander').first()).toContainText('炎刃军统领', {
+  // ADR-0025：座位 0 = 炎刃、座位 1 = 霜律；host 是座位 0，其**我方**指挥官（nth(1)）是炎刃
+  await expect(host.getByTestId('zone-commander').nth(1)).toContainText('炎刃军统领', {
     timeout: 10_000,
   });
 
@@ -57,8 +59,13 @@ test('卡牌详情：点「?」按钮可查看完整效果文本（Era 2026-10-1
 
 test('统领效果Ⅱ：发动 → 选择手牌 → 除外（ADR-0023 / X-16）', async ({ browser }) => {
   const { host, guest } = await startGame(browser);
-  // 效果发动要求是我的回合 —— 先找到行动方
-  const p = await activePage([host, guest]);
+  // 效果发动要求是我的回合，且统领是**炎刃**指挥官（ADR-0025：座位 0 = host = 炎刃）。
+  // 若首回合行动方是 guest，先让它结束回合，把回合交给 host。
+  const p = host;
+  if (!(await p.getByText('你的回合').isVisible())) {
+    await guest.getByTestId('end-turn').click();
+    await expect(p.getByText('你的回合')).toBeVisible({ timeout: 20_000 });
+  }
 
   const handBefore = await p.getByTestId('hand').locator('[data-testid="card"]').count();
 

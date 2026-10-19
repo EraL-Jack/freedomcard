@@ -28,9 +28,9 @@ import { shuffle } from '../rng.js';
 
 import {
   bladeExileCount,
-  bladeSummonTriggerEvents,
   choiceCleared,
   choicePending,
+  summonEntryEvents,
   type EffectModule,
 } from './index.js';
 
@@ -137,6 +137,11 @@ export const bladeOrderEffect: EffectModule = {
     return reject(RULE_ERRORS.EFFECT_UNAVAILABLE, `未知效果: ${effectId}`);
   },
 
+  /** 出牌结算：展示卡组顶 7 张 + 挂起召唤选择（由 play.ts 的 spellEntryEvents 调用）。 */
+  onPlay(state, ctx, owner, uid) {
+    return bladeOrderResolution(ctx.now, state, ctx, owner, uid);
+  },
+
   choose(state, intent, ctx, pending): Result<GameEvent[], Rejection> {
     const at = ctx.now;
     const choice = strArg(intent.payload?.['choice']) ?? '';
@@ -172,12 +177,16 @@ export const bladeOrderEffect: EffectModule = {
     if (choice !== 'pass') {
       events.push(moved(at, me, choice, 'deck', 'board'));
       takenOut.push(choice);
-      // 登场触发器（军师）：号令召唤的炎刃随从同样触发（ADR-0023 §7）
-      events.push(...bladeSummonTriggerEvents(at, state, me, choice, ctx.cards));
     }
-    // 洗回要在召唤事件**之后**的牌序上算 —— 先推演再算新序
+    // 洗回要在召唤事件**之后**的牌序上算 —— 先推演再算新序。
+    // ⚠️ 顺序：洗回（以 choice:cleared 收尾）→ 登场触发。反过来的话，
+    // 登场触发的待定选择会被洗回的 choice:cleared 清掉。
     const next = events.reduce(reduce, state);
     events.push(...shuffleBackEvents(at, next, me, revealed, takenOut));
+    if (choice !== 'pass') {
+      const afterShuffle = events.reduce(reduce, state);
+      events.push(...summonEntryEvents(at, afterShuffle, me, choice, ctx));
+    }
     return { ok: true, value: events };
   },
 };

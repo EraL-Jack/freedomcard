@@ -31,12 +31,17 @@ describe('开局桥 seedGameState（ADR-0019）', () => {
     }
   });
 
-  it('每位玩家的指挥官都是唯一的那张 commander', () => {
+  it('每位玩家都有合法指挥官（按座位交替分配炎刃 / 霜律，ADR-0025）', () => {
     const s = seedGameState({ seats, seed: 1 });
+    const used: string[] = [];
     for (const id of seats) {
-      expect(s.players[id]!.commanderDefId).toBe(DEFAULT_COMMANDER_ID);
-      expect(CARD_POOL[DEFAULT_COMMANDER_ID]!.type).toBe('commander');
+      const cmd = s.players[id]!.commanderDefId;
+      expect(cmd.length).toBeGreaterThan(0);
+      expect(CARD_POOL[cmd]!.type).toBe('commander');
+      used.push(cmd);
     }
+    // 一局里两套体系都能被看到：第一位炎刃、第二位霜律
+    expect(used).toEqual([DEFAULT_COMMANDER_ID, 'frostAdjudicator']);
   });
 
   it('同一 seed 两次建立的状态完全一致（可复现）', () => {

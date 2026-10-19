@@ -9,8 +9,10 @@
  */
 
 import {
+  COST_INCOME_PER_TURN,
   INITIAL_HAND,
   RULE_ERRORS,
+  SECOND_PLAYER_HAND,
   SEQUENCE_DIE,
   type CardInstance,
   type GameEvent,
@@ -22,11 +24,11 @@ import {
   type RuleContext,
 } from '@app/shared';
 
-import { drawCards, ev, deckShuffled, rngAdvance } from '../ops.js';
+import { drawCards, ev, deckShuffled, rngAdvance, takeFromDeck } from '../ops.js';
 import { nextInt, shuffle } from '../rng.js';
 import { commanderUid } from '../state.js';
 import { checkDeck } from '../deck.js';
-import { growCommander } from './commander-growth.js';
+import { syncCommanderGrowth } from './commander-growth.js';
 
 export const startRule = (
   state: GameState,
@@ -87,18 +89,28 @@ export const startRule = (
     );
   }
 
-  // ④ 第一回合的充能阶段：指挥官力量值推进一档（X-7 / ADR-0016 §3）
-  //    开局后正处**先攻方**第一回合的充能阶段，此处是「已经在该阶段」而非「进入」，
-  //    故必须在这里单独补一次，否则先攻方永远停在初始档（Era：第一回合就会变到 1）。
-  //
-  //    ⚠️ **只推进先攻方**：揭示是双方的（X-1），但「每回合充能阶段成长」是**己方**回合的事。
-  //    后攻方（seats[1]）的第一次成长发生在它自己的第一个充能阶段 —— 由 `phase.ts` 的
-  //    `advanceOnce` 在跨回合时接线（ADR-0016 §6）。开局就一起推会让后攻方凭空多一档。
-  events.push(...growCommander(state, seats[0]!, ctx));
+  // ④ 第一回合的充能阶段（docs/16 §2 / ADR-0024）：
+  //    ① 强制收入 2 张（卡组顶 → 费用区）；② 指挥官力量同步到第 1 轮（双方均为 1）。
+  //    开局后正处**先攻方**第一回合的充能阶段，没有「进入」动作可挂，故必须在这里补。
+  const firstPlayer = seats[0]!;
+  const firstDeck = shuffled.get(firstPlayer) ?? [];
+  const income = takeFromDeck(
+    at,
+    firstPlayer,
+    { deck: firstDeck, graveyard: [] },
+    COST_INCOME_PER_TURN,
+    cursor,
+    'cost',
+  );
+  events.push(...income.events);
+  events.push(...syncCommanderGrowth(state, 1, ctx));
 
-  // ⑤ 发起手牌（A10-1：5 张）
+  // ⑤ 发起手牌（docs/16 §1）：先手 5 张、后手 6 张。
+  //    收入 2 张已从先手卡组顶取走 —— 后续抽牌必须基于**收入后**的牌序。
   for (const id of seats) {
-    const drawn = drawCards(at, id, { deck: shuffled.get(id) ?? [], graveyard: [] }, INITIAL_HAND, cursor);
+    const deckNow = id === firstPlayer ? income.deck : (shuffled.get(id) ?? []);
+    const count = id === seats[0] ? INITIAL_HAND : SECOND_PLAYER_HAND;
+    const drawn = drawCards(at, id, { deck: deckNow, graveyard: [] }, count, cursor);
     events.push(...drawn.events);
   }
 

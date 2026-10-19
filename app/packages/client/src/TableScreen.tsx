@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as core from '@app/core';
 import type { CardInstance, GameState, PlayerId, PlayerState, Zone } from '@app/shared';
 
-import { CARD_POOL } from '@app/shared/cards';
+import { ACTIVATABLE_EFFECTS, CARD_POOL } from '@app/shared/cards';
 import { MULLIGAN_WINDOW_MS } from '@app/shared/constants';
 
 import CardTile from './CardTile.js';
@@ -171,7 +171,8 @@ function CardOf(props: {
         power={power}
         kind={def?.type ?? 'minion'}
         text={def?.text}
-        sleeping={props.sleeping}
+        sleeping={props.sleeping ?? props.card.sleeping}
+        frozen={props.card.frozen}
         selected={props.selected}
         disabled={props.disabled}
         glow={props.glow}
@@ -255,7 +256,9 @@ function ZoneBox(props: {
               {props.badge}
             </span>
           ) : null}
-          <span className="shrink-0 text-slate-200">{props.cards.length}</span>
+          <span className="shrink-0 text-slate-200" data-testid="zone-count">
+            {props.cards.length}
+          </span>
         </button>
       ) : (
         <div className="flex w-full items-center justify-between gap-1 text-[10px] text-slate-400">
@@ -265,7 +268,9 @@ function ZoneBox(props: {
               {props.badge}
             </span>
           ) : null}
-          <span className="shrink-0 text-slate-200">{props.cards.length}</span>
+          <span className="shrink-0 text-slate-200" data-testid="zone-count">
+            {props.cards.length}
+          </span>
         </div>
       )}
       {props.action ? (
@@ -372,16 +377,17 @@ function GameOverPanel(props: {
   me: PlayerId;
   onBack: () => void;
 }): React.JSX.Element {
+  const draw = props.state.draw;
   const won = props.state.winner === props.me;
   return (
     <div className="flex h-dvh flex-col items-center justify-center gap-4 p-6 text-center">
       <p
-        className={`text-4xl font-bold ${won ? 'text-amber-300' : 'text-slate-300'}`}
+        className={`text-4xl font-bold ${draw ? 'text-slate-200' : won ? 'text-amber-300' : 'text-slate-300'}`}
         data-testid="game-result"
       >
-        {won ? '胜利' : '败北'}
+        {draw ? '平局' : won ? '胜利' : '败北'}
       </p>
-      <p className="text-sm text-slate-400">对局结束</p>
+      <p className="text-sm text-slate-400">{draw ? '40 轮未分胜负' : '对局结束'}</p>
       <button
         type="button"
         className="rounded bg-slate-700 px-6 py-2 text-sm"
@@ -418,7 +424,21 @@ function ChoiceOverlay(props: {
     'blade-lord-2': '统领效果Ⅱ：选择一张要除外的手牌',
     'blade-scout-exile': '展示到炎刃斥候 —— 是否将其除外？',
     'blade-order-summon': '号令：选择要召唤的随从',
+    'blade-guard-exile': '卫士：展示到炎刃卡 —— 是否将其除外？',
+    'blade-knight-attack': '骑士：可除外墓地一张炎刃卡，换本回合力量 +1',
+    'blade-veteran-exile': '老兵：可除外墓地一张炎刃卡，换抽一张牌',
+    'blade-tactics-target': '战术：选择一个己方随从（本回合力量 +2/+3）',
+    'blade-cremation': '焚典：选择要除外的炎刃卡（其余进墓地）',
+    'frost-adjudicator-1': '裁决官Ⅰ：霜冻一个敌方随从',
+    'frost-apprentice-freeze': '学徒：霜冻一个敌方随从',
+    'frost-binder-freeze': '缚锁者：霜冻一个敌方随从（已霜冻则改为抽牌）',
+    'frost-nightwatch-freeze': '守夜人：霜冻至多两个敌方随从',
+    'frost-edict-freeze': '律令：霜冻一个敌方随从',
+    'frost-coldsnap-freeze': '寒流：霜冻至多两个敌方随从',
+    'frost-judgment-target': '审判：霜冻目标；若已霜冻则破坏',
   };
+  /** 多选类选择用「完成选择」，其余用「放弃」。 */
+  const MULTI_SELECT = new Set(['blade-cremation', 'frost-nightwatch-freeze', 'frost-coldsnap-freeze']);
 
   // uid 选项 → 反查卡定义渲染小卡；子效果选项 → 文案按钮
   const findCard = (uid: string): CardInstance | undefined =>
@@ -469,7 +489,7 @@ function ChoiceOverlay(props: {
           onClick={() => props.onChoose('pass')}
           data-testid="choice-pass"
         >
-          放弃
+          {MULTI_SELECT.has(choice.kind) ? '完成选择（其余按卡面处理）' : '放弃'}
         </button>
       </div>
     </div>
@@ -657,7 +677,7 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   // 对局已结束（含对手中途离开由系统代认输）—— 必须放在「等待对手加入」之前：
   // 对手离场后 state.players 里仍有其数据，但席位已空，若先判对手缺失会把
   // 结束面板永远挡住（Era 2026-10-18：一方离开后另一方卡在空白页）。
-  if (state.winner !== null) {
+  if (state.winner !== null || state.draw) {
     return <GameOverPanel state={state} me={me} onBack={session.leave} />;
   }
 
@@ -672,6 +692,18 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   const canMulligan = mulliganOpen && mine.chargeCount === 1 && !mine.mulliganDone;
   /** 抽牌阶段且未抽：我方卡组区变为「点击抽牌」发光动作（Era 2026-10-18 手动抽牌）。 */
   const canDraw = myTurn && state.phase === 'draw' && !state.drawnThisPhase;
+  /**
+   * 指挥官攻击（docs/16 §6.1）：战斗阶段、本回合未攻击过、非先攻方第一回合。
+   * 不可操作时不展示按钮（Era 2026-10-19）。
+   */
+  const canCommanderAttack =
+    myTurn &&
+    state.phase === 'battle' &&
+    !mine.commanderAttacked &&
+    !(state.turn === 1 && state.activeSeat === 0) &&
+    mine.zones.commander.length > 0;
+  /** 本回合费用使用情况（docs/16 §3.3）—— 只做展示，权威在服务端。 */
+  const costText = `${mine.usedCostThisTurn}/${mine.maxCost}`;
   // ⚠️ 客户端时钟与服务端未必同步，这里的倒计时是**示意**；权威判定在服务端（ADR-0017）。
   const remain = turnDeadline ? Math.max(0, Math.ceil((turnDeadline - now) / 1000)) : null;
 
@@ -696,28 +728,25 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   const destroyGhost = fx?.kind === 'destroy' ? (fx.destroyed ?? null) : null;
 
   /**
-   * 详情浮层里的效果发动列表（ADR-0023）。
+   * 详情浮层里的效果发动列表（ADR-0023 / ADR-0025）。
+   * 数据来自 `ACTIVATABLE_EFFECTS`（卡牌数据的一部分），
    * ⚠️ 只做**展示门槛**（读状态），能不能发动由服务端裁决（ADR-0002）。
    */
   const effectsFor = (card: CardInstance): { id: string; label: string }[] | undefined => {
-    const used = mine.effectsUsed;
+    const list = ACTIVATABLE_EFFECTS[card.defId];
+    if (!list || !list.length) return undefined;
     // Era 2026-10-19：不可发动的效果**不展示**（取代此前的置灰+原因）。
-    const mk = (id: string, label: string) => {
-      const unavailable = !myTurn || !!state.pendingChoice || used.includes(`${card.uid}:${id}`);
-      return unavailable ? null : { id, label };
-    };
-    const pick = (list: ({ id: string; label: string } | null)[]) =>
-      list.filter((x): x is { id: string; label: string } => x !== null);
-    if (card.defId === 'bladeLord' && mine.zones.commander.some((x) => x.uid === card.uid)) {
-      return pick([
-        mk('1', '发动 效果Ⅰ：付 2 张费用，按除外区「炎刃」数执行至多 3 项'),
-        mk('2', '发动 效果Ⅱ：将一张手牌除外'),
-      ]);
+    const out: { id: string; label: string }[] = [];
+    for (const ef of list) {
+      const used = mine.effectsUsed.includes(`${card.uid}:${ef.id}`);
+      const inZone =
+        ef.zone === 'commander'
+          ? mine.zones.commander.some((x) => x.uid === card.uid)
+          : mine.zones.board.some((x) => x.uid === card.uid);
+      if (!inZone || !myTurn || !!state.pendingChoice || used) continue;
+      out.push({ id: ef.id, label: ef.label });
     }
-    if (card.defId === 'bladeTactician' && mine.zones.board.some((x) => x.uid === card.uid)) {
-      return pick([mk('1', '发动：本回合己方炎刃随从登场时力量 +1（次数=除外区炎刃数）')]);
-    }
-    return undefined;
+    return out;
   };
 
   /**
@@ -857,6 +886,17 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
         <span className={myTurn ? 'text-emerald-400' : 'text-slate-500'}>
           {myTurn ? '你的回合' : '对手回合'}
         </span>
+        {/* 指挥官攻击（docs/16 §6.1）—— 可用时才出现 */}
+        {canCommanderAttack ? (
+          <button
+            type="button"
+            className="animate-pulse rounded bg-rose-700 px-2 py-1 text-[11px] font-medium text-rose-50"
+            onClick={() => session.commanderAttack()}
+            data-testid="commander-attack"
+          >
+            指挥官攻击（1 点）
+          </button>
+        ) : null}
       </header>
 
       {/* 事件呈现层（横幅/飘字）+ 提示 toast —— Era 2026-10-18：
@@ -969,6 +1009,8 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
               cards={mine.zones.cost}
               expandable
               state={state}
+              badge={`本回合 ${costText}`}
+              badgeTestId="cost-usage"
               dropKey="cost"
               highlight={dragging?.kind === 'hand' && state.phase === 'charge'}
               onCardDetail={openDetail}

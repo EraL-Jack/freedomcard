@@ -91,6 +91,13 @@ export interface CardInstance {
   tempDamage?: number;
   /** 「一回合一次，攻击后重置」（统领 9 档，H23）：置位时下一次攻击后不进入休眠，生效一次即消耗。 */
   attackRefresh?: boolean;
+  /**
+   * 霜冻状态位（ADR-0025 / docs/12 §5）—— **不是卡面关键词**，随实例生灭。
+   *
+   * 语义：被霜冻的单位立即休眠；其控制者的下一个重置阶段跳过重置；
+   * 该控制者回合的结束阶段解除（仍休眠）。不叠加：重复冻结只刷新一次跳过。
+   */
+  frozen?: boolean;
 }
 
 /** 回合内触发器（军师类「本回合获得效果」，ADR-0023 §7）。 */
@@ -130,9 +137,9 @@ export interface PlayerState {
    * 故它不是一个 `CardInstance`；在第一个充能阶段揭示时才生成实例置入指挥官区（X-1）。
    */
   commanderDefId: string;
-  /** 血量 —— `docs/06` A10-2 初始 15；归零判负（A3-1）。 */
+  /** 血量 —— docs/16 §1 初始 **8**（ADR-0024）；归零判负（A3-1），下限 0。 */
   health: number;
-  /** 最高费用 —— A5-2 曲线 1→3→5→10，第 4 回合达上限。 */
+  /** 最高费用 —— docs/16 §3.3：按**各自回合数**取 1→3→5→10，第 4 回合达上限。 */
   maxCost: number;
   zones: Record<Zone, CardInstance[]>;
   /** X-1：指挥官在第一个充能阶段揭示后直接置入指挥官区。 */
@@ -164,6 +171,13 @@ export interface PlayerState {
   effectsUsed: string[];
   /** 本回合生效中的触发器（军师类，回合切换清空）。 */
   turnTriggers: TurnTrigger[];
+  /**
+   * 本回合已消耗的费用张数 —— docs/16 §3.3：`maxCost` 是「本回合所有支付的
+   * 总张数上限」，出牌与效果支付共用这一记帐。回合切换时清零。
+   */
+  usedCostThisTurn: number;
+  /** 本回合指挥官是否已攻击（docs/16 §6.1：每个己方战斗阶段一次）。回合切换清零。 */
+  commanderAttacked: boolean;
 }
 
 /** 对局状态 —— 结构见 ADR-0012。 */
@@ -194,8 +208,10 @@ export interface GameState {
    * 快照/回放都要能复现「窗口还剩多久」。
    */
   startedAt: number | null;
-  /** 胜负：血空（A3-1）或认输（A3-4）后写入；平局按 A3-3 不存在。 */
+  /** 胜负：血空（A3-1）或认输（A3-4）后写入；平局时保持 null 且 `draw === true`。 */
   winner: PlayerId | null;
+  /** 平局（docs/16 §7：40 轮未分胜负判和）。 */
+  draw: boolean;
   /** 待定选择（ADR-0023）—— 非空时阻塞除回答/认输外的所有玩家 Intent。 */
   pendingChoice: PendingChoice | null;
 }

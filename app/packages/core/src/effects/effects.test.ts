@@ -59,6 +59,12 @@ function craft(patch: {
     turn: patch.turn ?? 2,
     activeSeat: patch.activeSeat ?? 0,
   };
+  // docs/16 §3.3 的 maxCost 上限另有专门用例；夹具默认放宽，避免效果支付被额度挡住。
+  out.players = {
+    ...out.players,
+    p1: { ...out.players['p1']!, maxCost: 10 },
+    p2: { ...out.players['p2']!, maxCost: 10 },
+  };
   if (patch.zones) {
     const p = out.players['p1']!;
     out.players = { ...out.players, p1: { ...p, zones: { ...p.zones, ...patch.zones } } };

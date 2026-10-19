@@ -1,16 +1,16 @@
 /**
- * 出牌 —— `docs/06` A5 补充 2 + A6-1 + A9-1。
+ * 出牌 —— docs/16 §3 / §4（8 血版，ADR-0024）+ A5 补充 2 / A6-1。
  *
- * 支付语义（A5 补充 2）：把**足够数量的卡**从费用区置入弃牌区，数量不足则无法支付。
- * 所以「费用」不是数值资源池，而是**费用区里的卡的数量**；`cost` 是本次要消耗的张数。
+ * 支付语义：费用是**费用区里的卡的数量**；本次支付 `costToPay(def)` 张。
+ *  - 随从：卡面费用 −1（最低 0，docs/16 §4）；
+ *  - 法术 / 持续法术：卡面费用（§4.1）。
  *
- * ⚠️ 两处刻意留空，均属 Era 未给输入，不得自行发明：
- *  1. **最高费用（`maxCost`）的上限语义未定** —— A5-2 给了增长曲线 1→3→5→10，
- *     但没说是「单卡 cost 上限」还是「本回合可消耗的总张数上限」。
- *     本文件只**按张数支付**，不施加 `maxCost` 限制；`maxCost` 仍按曲线推进并存于状态，
- *     待 Era 明确后再补这条校验（改动只落在本文件）。
- *  2. **法术 / 持续法术的效果结算未定** —— A6-3 字段清单与效果定义都没给。
- *     本文件只把卡放进 `spell` 区，**不执行任何效果**。
+ * `maxCost` 校验（§3.3）：本回合**所有支付的总张数**不得超过上限
+ * （各自回合数 → 1/3/5/10）。0 费不占额度。支付后发 `cost:spent` 记帐。
+ *
+ * 效果接线（ADR-0025）：
+ *  - 随从 → `summonEntryEvents`（军师/队长触发器 + 各卡登场效果）；
+ *  - 法术 → `spellEntryEvents`，结算后置入墓地（持续法术留在法术区）。
  */
 
 import {
@@ -25,10 +25,9 @@ import {
   type Zone,
 } from '@app/shared';
 
-import { baseGuard, firstRejection, locate, moved, playerOf, strArg } from '../ops.js';
+import { baseGuard, costToPay, ev, firstRejection, locate, moved, playerOf, strArg } from '../ops.js';
 import { reduce } from '../reducer.js';
-import { bladeSummonTriggerEvents } from '../effects/index.js';
-import { bladeOrderResolution } from '../effects/blade-order.js';
+import { spellEntryEvents, summonEntryEvents } from '../effects/index.js';
 
 export const playRule = (
   state: GameState,
@@ -66,34 +65,47 @@ export const playRule = (
     return { ok: false, error: { code: RULE_ERRORS.BOARD_FULL, message: `随从区已满（${BOARD_SLOTS}）` } };
   }
 
-  // A5 补充 2：从费用区取 `cost` 张送入弃牌区，不足则拒绝
-  if (p.zones.cost.length < def.cost) {
+  const pay = costToPay(def);
+
+  // A5 补充 2：费用区张数必须够
+  if (p.zones.cost.length < pay) {
     return {
       ok: false,
       error: {
         code: RULE_ERRORS.INSUFFICIENT_COST,
-        message: `费用不足：需要 ${def.cost} 张，费用区仅有 ${p.zones.cost.length} 张`,
+        message: `费用不足：需要 ${pay} 张，费用区仅有 ${p.zones.cost.length} 张`,
+      },
+    };
+  }
+  // docs/16 §3.3：本回合总消耗上限（0 费不占额度）
+  if (pay > 0 && p.usedCostThisTurn + pay > p.maxCost) {
+    return {
+      ok: false,
+      error: {
+        code: RULE_ERRORS.MAX_COST_EXCEEDED,
+        message: `本回合费用上限 ${p.maxCost} 张，已用 ${p.usedCostThisTurn} 张`,
       },
     };
   }
 
   const at = ctx.now;
   const events: GameEvent[] = [];
-  for (let i = 0; i < def.cost; i++) {
+  for (let i = 0; i < pay; i++) {
     events.push(moved(at, intent.playerId, p.zones.cost[i]!.uid, 'cost', 'graveyard'));
   }
+  if (pay > 0) events.push(ev(at, 'cost:spent', { playerId: intent.playerId, amount: pay }));
   events.push(moved(at, intent.playerId, uid, 'hand', dest));
 
-  // ADR-0023 §7：登场触发器 —— 炎刃随从登场时结算军师的「本回合 +1」。
-  // 注意先推演移动事件再判触发（触发器读的是登场后的场面）。
+  // 效果接线：先推演移动事件（效果读的是登场/入区后的场面）。
+  const next = events.reduce(reduce, state);
   if (dest === 'board') {
-    const next = events.reduce(reduce, state);
-    events.push(...bladeSummonTriggerEvents(at, next, intent.playerId, uid, ctx.cards));
-  }
-  // ADR-0023 §6：号令法术出牌即结算 —— 展示卡组顶 7 张并挂起待定选择。
-  if (def.defId === 'bladeOrder') {
-    const next = events.reduce(reduce, state);
-    events.push(...bladeOrderResolution(at, next, ctx, intent.playerId, uid));
+    events.push(...summonEntryEvents(at, next, intent.playerId, uid, ctx));
+  } else {
+    events.push(...spellEntryEvents(at, next, intent.playerId, uid, ctx));
+    // 普通法术结算后进墓地；持续法术留在法术区（提供光环 / 触发）。
+    if (def.type === 'spell') {
+      events.push(moved(at, intent.playerId, uid, 'spell', 'graveyard'));
+    }
   }
   return { ok: true, value: events };
 };

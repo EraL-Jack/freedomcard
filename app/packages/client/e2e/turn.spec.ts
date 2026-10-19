@@ -4,9 +4,12 @@ import {
   activePage,
   advancePhase,
   chargeMinions,
+  costRemaining,
+  payOf,
   pick,
   phaseText,
   readHand,
+  settleChoices,
   startGame,
   turnNo,
   zoneCount,
@@ -50,15 +53,18 @@ test('推进阶段 → 充能 → 出牌 → 结束回合', async ({ browser }) 
   // ④ 出牌 —— 抽牌阶段抽过牌，手牌序号已变，必须重读
   const hand1 = await readHand(p);
   const costZone = await zoneCount(p, 'cost', 1);
+  const budget = await costRemaining(p);
   const playable = hand1
-    .filter((c) => c.cost <= costZone)
-    .sort((a, b) => a.cost - b.cost)[0];
-  expect(playable, `费用区 ${costZone} 张，应存在支付得起的手牌`).toBeDefined();
+    .filter((c) => payOf(c) <= costZone && payOf(c) <= budget)
+    .sort((a, b) => payOf(a) - payOf(b))[0];
+  expect(playable, `费用区 ${costZone} 张、本回合剩余额度 ${budget}，应存在支付得起的手牌`).toBeDefined();
   const pc = playable!;
 
   const before = hand1.length;
   await pick(p, [pc.index]);
   await p.getByTestId('play').click();
+  // 登场效果可能引出待定选择 —— 放掉，避免卡住后续推进
+  await settleChoices(p);
 
   // 出牌 = 手牌 −1，且落到对应区域（随从进随从区，法术进法术区）
   await expect
