@@ -114,12 +114,10 @@ export interface RevealResult {
  *
  * 与抽牌的区别：不进手牌、不烧牌库、触发「展示时」效果。
  *
- * ⚠️ **置底早于触发**（实现口径，登记假设 H35）：若等触发结算完再置底，
- * 触发里的抽牌会把「已展示但还没归位」的卡抽走，与「展示后回牌库底」矛盾。
- * 故先把这批卡挪到牌库底，再逐张结算「展示时」—— 触发读到的是卡定义，
- * 不依赖它在牌堆里的位置。
- *
- * 牌库不足时把弃牌区洗回（沿用 A9 补充 2 的 reshuffle，与抽牌同一口径）。
+ * 实现口径（Era 2026-10-20）：卡片在结算期间**停在展示区**（`Zone = 'reveal'`），
+ * 结算完再由调用方置底。它等价于「先离场、再结算」——
+ * 若让展示卡留在卡组顶结算，触发里的抽牌会把它抽走（既算展示过、又躺在手里，
+ * 之后再被展示会二次触发）。
  */
 export function revealFromDeck(
   at: number,
@@ -151,11 +149,36 @@ export function revealFromDeck(
   if (top.length === 0) return { events: e.events, revealed: [], state: e.state };
 
   for (const c of top) {
+    // 先离开卡组、进入展示区，再公开。
+    // 顺序很关键：展示触发的效果里可能有抽牌（守卫 / 星轨环）。卡若还留在卡组顶，
+    // 那次抽牌会把同批的展示卡抽走；移进展示区后，抽牌只会抽到下一张。
+    e.push(moved(at, playerId, c.uid, 'deck', 'reveal'));
     e.push(ev(at, 'card:revealed', { playerId, uid: c.uid, from: 'deck', reason }));
   }
-  // 按原顺序置底（docs/17 §2.1）
-  e.push(ev(at, 'deck:put-bottom', { playerId, order: top.map((c) => c.uid) }));
+  // 置底不在这里做 —— 调用方结算完「展示时」后统一调 `putRevealedBottom`，
+  // 这样效果执行期间卡片确实停在展示区（Era 2026-10-20）。
   return { events: e.events, revealed: top, state: e.state };
+}
+
+/**
+ * 把展示区里的一批卡按给定顺序送回牌库底（docs/17 §2.1）。
+ *
+ * 只处理**仍在展示区**的卡：展示时效果可能已经把某张移走（进手牌 / 弃牌区 / 场上），
+ * 这类卡跳过 —— `deck:put-bottom` 对找不到的 uid 本来就是静默跳过，
+ * 这里先过滤只是让事件流更干净、少一条无意义的置底声明。
+ */
+export function putRevealedBottom(
+  at: number,
+  state: GameState,
+  playerId: PlayerId,
+  order: readonly string[],
+): GameEvent[] {
+  const p = state.players[playerId];
+  if (!p) return [];
+  const present = new Set(p.zones.reveal.map((c) => c.uid));
+  const uids = order.filter((uid) => present.has(uid));
+  if (uids.length === 0) return [];
+  return [ev(at, 'deck:put-bottom', { playerId, order: uids })];
 }
 
 /**

@@ -45,8 +45,8 @@ export const starFallEffect: EffectModule = {
 /**
  * 凝视星空：展示 2 张 → 选 1 张加入手牌，其余按原顺序置入牌库底。
  *
- * 展示时先把整批置底（`revealFromDeck`），选择阶段再把选中的那张从牌库
- * 移到手牌 —— 「其余置底」天然已经满足，不需要额外事件。
+ * 展示时先把整批送进展示区、结算完再送回牌库底（`revealFromDeck` + `putRevealedBottom`），
+ * 选择阶段再把选中的那张从牌库移到手牌 —— 「其余置底」天然已经满足，不需要额外事件。
  */
 export const starGazeEffect: EffectModule = {
   onPlay: (state, ctx, owner) => {

@@ -566,7 +566,25 @@ function ChoiceOverlay(props: {
   );
 }
 
-/** 展示区（D-123，Era 2026-10-18）：效果从卡组展示的卡放这里，双方各一格。 */
+/**
+ * 展示区（D-123，Era 2026-10-18 / 2026-10-20）—— 效果从卡组展示的卡放这里，双方各一格。
+ *
+ * 内容有两个来源，缺一不可：
+ *  1. **状态里的 `zones.reveal`** —— 星轨「展示 → 结算 → 归位」期间卡真的停在这里，
+ *     置底后从状态消失，格子随之清空（Era 2026-10-20：「效果执行的时候放在展示区」）；
+ *  2. **客户端回执**（`session.revealed`）—— 焚典 / 号令 / 指挥官受伤展示这类
+ *     「看一眼但卡片未离场」的翻牌，状态上没有位置，只能由回执呈现到下一批或回合结束。
+ */
+function revealCards(
+  state: GameState,
+  pid: PlayerId | null,
+  echo: readonly { uid: string; defId: string }[],
+): readonly { uid: string; defId: string }[] {
+  const zone = pid ? (state.players[pid]?.zones.reveal ?? []) : [];
+  const seen = new Set(zone.map((c) => c.uid));
+  return [...zone, ...echo.filter((c) => !seen.has(c.uid))];
+}
+
 function RevealBox(props: {
   cards: readonly { uid: string; defId: string }[];
   state: GameState;
@@ -1163,7 +1181,11 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
                 }
               />
             ))}
-            <RevealBox cards={foe ? (revealed[foe] ?? []) : []} state={state} onCardDetail={openDetail} />
+            <RevealBox
+              cards={revealCards(state, foe, foe ? (revealed[foe] ?? []) : [])}
+              state={state}
+              onCardDetail={openDetail}
+            />
           </section>
 
           {/* 中场线 —— 双方半场的分界（桌面感）；我方回合时我方半场微光。 */}
@@ -1223,7 +1245,11 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
                 />
               );
             })}
-            <RevealBox cards={revealed[me] ?? []} state={state} onCardDetail={openDetail} />
+            <RevealBox
+              cards={revealCards(state, me, revealed[me] ?? [])}
+              state={state}
+              onCardDetail={openDetail}
+            />
           </section>
 
           {/* ⑤ 我方五区 —— 与第 ② 排（对方五区）**严格镜像**（Era 2026-10-14）。

@@ -9,7 +9,12 @@ import { INITIAL_COMMANDER_POWER_INDEX, INITIAL_HEALTH, INITIAL_MAX_COST } from 
  * 便于单测与回放从同一起点出发。
  */
 
-/** 8 个区域，与 `docs/06` B2 布局逐项对应（无独立充能区 —— Era 2026-10-13 确认）。 */
+/**
+ * 9 个区域，与 `docs/06` B2 布局逐项对应（无独立充能区 —— Era 2026-10-13 确认）。
+ *
+ * `reveal`（展示区）是**瞬时**区域：卡在效果结算期间停在这里，结算完回牌库底。
+ * 放在数组末尾，`locate` 这类「按顺序找第一处」的查找才不会被它抢先命中。
+ */
 export const ZONES: readonly Zone[] = [
   'deck',
   'hand',
@@ -19,6 +24,7 @@ export const ZONES: readonly Zone[] = [
   'cost',
   'graveyard',
   'exile',
+  'reveal',
 ];
 
 export function emptyZones(): Record<Zone, CardInstance[]> {

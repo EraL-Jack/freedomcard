@@ -17,6 +17,7 @@ export const ZONE_LABEL: Readonly<Record<Zone, string>> = {
   cost: '费用区',
   graveyard: '弃牌区',
   exile: '除外区',
+  reveal: '展示区',
 };
 
 /**
