@@ -52,6 +52,20 @@ export interface SeedOptions {
 }
 
 /**
+ * 一局的**装配参数** —— 有了它就能原样重建开局状态（D-159）。
+ *
+ * 为什么单独抽出来：`replay.json` 原本只记 Intent 序列 + 事件 + 哈希链，
+ * 但没有 seed / 卡组 / 指挥官，**根本没法重放**（不知道从哪个状态出发）。
+ * 现在把这份参数一起落盘，回放才真的「可复现」。
+ */
+export interface SeedSetup {
+  seed: number;
+  seats: PlayerId[];
+  decks: Record<PlayerId, readonly string[]>;
+  commanders: Record<PlayerId, string>;
+}
+
+/**
  * 用「房间座位 + 默认卡组」建立一局**尚未开局**的初始状态。
  *
  * 与 `runtimeOf` 里那个空状态的区别**只在于**带上了真实座位与卡组，
@@ -60,7 +74,7 @@ export interface SeedOptions {
  * 调用方拿到返回值后，应构造 `actor: 'system'` 的 `game:start` Intent
  * 交给 `submitSystemIntent`，由引擎完成洗牌 / 掷骰 / 发牌。
  */
-export function seedGameState(opts: SeedOptions): GameState {
+export function seedSetup(opts: SeedOptions): SeedSetup {
   const { decks, commanders } = defaultDeckSetup(opts.seats, opts.factions ?? {});
   // D-141：自建卡组只替换主卡组；指挥官仍取阵营那一张。
   const finalDecks: Record<PlayerId, readonly string[]> = { ...decks };
@@ -68,10 +82,10 @@ export function seedGameState(opts: SeedOptions): GameState {
     const custom = opts.decks?.[id];
     if (custom && custom.length > 0) finalDecks[id] = custom;
   }
-  return core.createInitialState({
-    seed: opts.seed,
-    seats: [...opts.seats],
-    decks: finalDecks,
-    commanders,
-  });
+  return { seed: opts.seed, seats: [...opts.seats], decks: finalDecks, commanders };
+}
+
+/** 用装配参数建立开局状态 —— 与 `seedSetup` 一一对应，回放时也走这条。 */
+export function seedGameState(opts: SeedOptions): GameState {
+  return core.createInitialState(seedSetup(opts));
 }
