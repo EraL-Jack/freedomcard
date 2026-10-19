@@ -18,7 +18,7 @@ import {
 } from '@app/shared';
 import { CARD_POOL } from '@app/shared/cards';
 
-import { applyIntent, createInitialState, reduce, INTENTS } from '../index.js';
+import { applyIntent, createInitialState, reduce, replay, stateHash, INTENTS } from '../index.js';
 import { summonEntryEvents } from '../effects/index.js';
 import { unitPower } from '../ops.js';
 
@@ -397,5 +397,44 @@ describe('号令：展示 7 张选随从召唤', () => {
     // 然后进入召唤选择（斥候已除外，不在揭示列表里）
     expect(next.pendingChoice?.kind).toBe('blade-order-summon');
     expect(next.pendingChoice?.options).toContain('d2');
+  });
+});
+
+/**
+ * 回放：选择链排队（H28 / D-145）。
+ *
+ * 排队字段（pendingChoiceQueue）是新增的状态字段 —— 它必须能由**事件流**完整重建，
+ * 否则「种子 + Intent 序列」的重放会在出队那一步与实机分叉。
+ * 这里把含排队的那一段完整跑两遍，比对哈希链与终态。
+ */
+describe('回放：H28 排队序列', () => {
+  it('同一 Intent 序列重跑两次：哈希链、终态、队列清空都一致', () => {
+    const base = craft({
+      zones: {
+        commander: [c('lord1', 'bladeLord')],
+        cost: [c('k1', 'bladeRecruit'), c('k2', 'bladeRecruit')],
+        exile: [c('x1', 'bladeVanguard'), c('x2', 'bladeScout'), c('x3', 'bladeOrder')],
+        graveyard: [c('g1', 'bladeGuard')],
+        board: [c('b1', 'bladeRecruit')],
+      },
+    });
+    const intents: Intent[] = [
+      intent('p1', INTENTS.effectActivate, { uid: 'lord1', effect: '1' }),
+      intent('p1', INTENTS.effectChoose, { choice: 'l1' }),
+      intent('p1', INTENTS.effectChoose, { choice: 'g1' }), // 卫士登场 → 选择入队
+      intent('p1', INTENTS.effectChoose, { choice: 'pass' }), // 统领链结束 → 出队
+      intent('p1', INTENTS.effectChoose, { choice: 'pass' }), // 卫士放弃
+    ];
+    const deps = { applyIntent, reduce, stateHash, cards: CARD_POOL, now: (step: number) => 1000 + step * 10 };
+
+    const a = replay(base, intents, deps);
+    const b = replay(base, intents, deps);
+
+    expect(a.failedAt).toBeNull();
+    expect(a.hashChain).toEqual(b.hashChain);
+    expect(a.state).toEqual(b.state);
+    // 链条走完：没有悬挂选择，队列也已清空
+    expect(a.state.pendingChoice).toBeNull();
+    expect(a.state.pendingChoiceQueue).toEqual([]);
   });
 });

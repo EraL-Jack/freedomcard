@@ -589,8 +589,9 @@ io.on('connection', (socket) => {
 
   /**
    * Intent 入站：走完整处理链（去重 → 引擎 → reduce → 哈希 → 回放 → 广播），全程同步。
-   * 当前 `core.applyIntent` 仍是 `TODO(slot)`，会返回 `NOT_IMPLEMENTED` —— 这是预期状态，
-   * 等 `docs/06` A 组输入后由注册表接管。
+   *
+   * 规则由 `core/src/rules/` 的注册表按 `Intent.type` 派发（9 条规则，ADR-0024 起为 8 血版）；
+   * 未知类型才返回 `NOT_IMPLEMENTED`。被拒绝时附中文 `message`，客户端直接展示。
    */
   socket.on(SOCKET_EVENTS.gameIntent, (raw: unknown, ack?: (res: unknown) => void) => {
     const parsed = IntentSchema.safeParse(raw);

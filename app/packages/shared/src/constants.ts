@@ -30,7 +30,7 @@ export const SOCKET_EVENTS = {
    * 换卡组 —— D-141（Era 2026-10-19：对局前与准备页都能选）。
    *
    * 只在**未开局**时允许；开局后服务端拒 `DECK_LOCKED`。
-   * payload 是 `{ defIds: string[] }`（30 张主卡组），空数组 = 回到阵营默认卡组。
+   * payload 是 `{ deck: string[] }`（30 个 defId），空数组 = 回到阵营默认卡组。
    * 指挥官不随卡组提交 —— 仍由席位阵营决定。
    */
   roomDeck: 'room:deck',
@@ -50,8 +50,10 @@ export const TURN_TIMEOUT_MS = 30_000;
 /**
  * 开局换牌时间窗 —— Era 2026-10-19：「开局换牌需要加一个时间窗，时间窗过了隐藏换牌按钮」。
  *
- * 从 `game:started` 事件时间戳起算；窗口过后服务端拒绝换牌、客户端隐藏按钮。
- * ⚠️ 时长取值 Era 未给，暂取 30s（与回合时限同量级），已登记 docs/09 假设 H25。
+ * 基准 = **各自首次进入己方充能阶段**（`PlayerState.firstChargeAt`），不是开局时刻 ——
+ * 后攻方的首个充能阶段在下一回合，按开局起算会让它永远落在窗外（X-17 放开后攻换牌的前提）。
+ * 窗口过后服务端拒换牌（`MULLIGAN_EXPIRED`）、客户端隐藏按钮。
+ * 时长按 Era 2026-10-19 拍板取 **30 秒**（H25 已确认）。
  */
 export const MULLIGAN_WINDOW_MS = 30_000;
 
@@ -114,7 +116,13 @@ export const COST_INCOME_PER_TURN = 2;
  */
 export const MINION_COST_DISCOUNT = 1;
 
-/** 指挥官攻击的固定伤害（docs/16 §6.1）：不比较力量、不受加成影响。 */
+/**
+ * 指挥官攻击的**基础**伤害（docs/16 §6.1）—— 不比较力量、不受前排限制。
+ *
+ * ⚠️ 它只是基数：实际伤害 = `COMMANDER_ATTACK_DAMAGE + commanderDamageBonus`
+ * （H34 / ADR-0028，Era 2026-10-19 确认「指挥官的 1 点可以被伤害加成类效果提升」）。
+ * 随从实例的 `tempDamage` 不转移给指挥官；固定直伤（星陨）不吃加成。
+ */
 export const COMMANDER_ATTACK_DAMAGE = 1;
 
 /**
