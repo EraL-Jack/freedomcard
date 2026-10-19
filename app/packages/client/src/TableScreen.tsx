@@ -513,6 +513,13 @@ function ChoiceOverlay(props: {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" data-testid="choice-overlay">
       <div className="w-80 max-w-full rounded-xl border border-emerald-600/60 bg-slate-900 p-4">
         <p className="text-sm font-medium text-emerald-200">{TITLE[choice.kind] ?? '请选择'}</p>
+        {/* 排队提示（H28 / D-145）：链中召唤的登场选择会在此之后连续弹出，
+            不说明的话玩家会以为卡住了 */}
+        {props.state.pendingChoiceQueue.length > 0 ? (
+          <p className="mt-1 text-[11px] text-amber-300" data-testid="choice-queue-hint">
+            另有 {props.state.pendingChoiceQueue.length} 个效果等待结算，本次回答后依次弹出
+          </p>
+        ) : null}
         <div className="mt-3 flex max-h-64 flex-wrap justify-center gap-2 overflow-y-auto">
           {choice.options.map((opt) => {
             if (SUB_LABEL[opt]) {

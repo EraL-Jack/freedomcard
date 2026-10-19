@@ -231,6 +231,45 @@ describe('星轨（docs/17 / D-230）', () => {
     expect(after.players['p1']!.starTrack).toBe(2);
   });
 
+  it('展示批次里含「展示时抽牌」：抽到的是牌库下一张，同批展示卡不重复触发（H35）', () => {
+    // 牌库顺序：守卫（展示时抽 1）/ 斥候（展示时星轨 +1）/ 弓手（展示时打 1 点）/ 织者（第 4 张）
+    const s = craft({
+      phase: 'battle',
+      commander: 'starWatcher',
+      zones: { commander: [c('cmd1', 'starWatcher')], cost: [c('k1', 'frostRecruit')] },
+      deck: [
+        'starGuard',
+        'starScout',
+        'starArcher',
+        'starWeaver',
+        'frostRecruit',
+        'frostRecruit',
+        'frostRecruit',
+        'frostRecruit',
+      ],
+      star: 3, // 展示 3 张
+    });
+    const before = s.players['p1']!.zones.deck;
+    const shown = before.slice(0, 3).map((x) => x.uid);
+    const fourth = before[3]!.uid;
+
+    const after = run(s, intent('p1', INTENTS.commanderAttack, { reveal: true }));
+    const p1 = after.players['p1']!;
+
+    // ① 守卫抽到的是第 4 张 —— 证明 3 张展示卡**已经先置底**、不再占用牌库顶
+    expect(p1.zones.hand.map((x) => x.uid)).toContain(fourth);
+    expect(shown.some((u) => p1.zones.hand.some((x) => x.uid === u))).toBe(false);
+
+    // ② 三张展示卡全部回到牌库底，且保持翻开顺序
+    expect(p1.zones.deck.slice(-3).map((x) => x.uid)).toEqual(shown);
+
+    // ③ 星轨：基础 3 + 展示 3 张 + 斥候自身 1 = 7（不会因抽牌被重复结算）
+    expect(p1.starTrack).toBe(7);
+
+    // ④ 展示时效果各触发一次：弓手 1 点 + 指挥官攻击本身 1 点 = 8 − 2
+    expect(after.players['p2']!.health).toBe(6);
+  });
+
   it('指挥官攻击（付 1 费展示）：先展示再结算 1 点伤害', () => {
     const s = craft({
       phase: 'battle',
