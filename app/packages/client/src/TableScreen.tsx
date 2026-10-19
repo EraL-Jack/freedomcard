@@ -832,6 +832,11 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   }
 
   const myTurn = state.seats[state.activeSeat] === me;
+  /**
+   * 我方有挂起的待定选择 —— 此刻引擎只放行「回答选择」和「认输」，其余 Intent 一律被拒。
+   * 用它把底部操作区里**必然被拒**的按钮藏掉（Era 2026-10-19：不可操作的按钮不展示）。
+   */
+  const choiceOpen = state.pendingChoice !== null && state.pendingChoice.playerId === me;
   /** 换牌可用 = 窗口内（己方首个充能阶段 + 时间窗）且本局还没换过（mulliganDone 每人一次，A8-3）。 */
   const canMulligan = mulliganOpen && mine.chargeCount === 1 && !mine.mulliganDone;
   /** 抽牌阶段且未抽：我方卡组区变为「点击抽牌」发光动作（Era 2026-10-18 手动抽牌）。 */
@@ -1369,9 +1374,13 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
           「出牌 / 充能」不在此处 —— Era 2026-10-18：卡牌的操作按钮挂在卡的附近，
           选中手牌后浮现在卡的上方（见第 ⑥ 排）。
           Era 2026-10-19：**不可操作的按钮不展示**（废止置灰方案）——
-          推进/结束回合只在己方回合出现；抽牌阶段不出现推进（未抽被拒、抽完自动推进）。 */}
-      <footer className="flex flex-wrap items-center gap-1">
-        {myTurn && state.phase !== 'draw' ? (
+          推进/结束回合只在己方回合出现；抽牌阶段不出现推进（未抽被拒、抽完自动推进）。
+
+          层级高于待定选择浮层（浮层 z-50 → 这里 z-[60]）：引擎守卫本来就只放行
+          「回答 + 认输」，但浮层是 `fixed inset-0`，会把这一排整个盖住 ——
+          于是规则允许认输、界面点不到。抬到浮层之上，界面才与引擎口径一致。 */}
+      <footer className="relative z-[60] flex flex-wrap items-center gap-1">
+        {myTurn && state.phase !== 'draw' && !choiceOpen ? (
           <button
             type="button"
             className="rounded bg-slate-700 px-3 py-2 text-xs sm:text-sm"
@@ -1381,7 +1390,7 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
             推进阶段
           </button>
         ) : null}
-        {myTurn ? (
+        {myTurn && !choiceOpen ? (
           <button
             type="button"
             className="rounded bg-slate-700 px-3 py-2 text-xs sm:text-sm"
