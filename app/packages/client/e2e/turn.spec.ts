@@ -35,9 +35,18 @@ import {
 test('推进阶段 → 充能 → 出牌 → 结束回合', async ({ browser }) => {
   const { host, guest } = await startGame(browser);
   const pages: readonly Page[] = [host, guest];
-  const p = await activePage(pages);
 
-  // ① 开局即处于第一回合的充能阶段（ADR-0016：开局不经过「进入」动作）
+  // docs/16 §1.3（D-227）：先攻首回合**自动充能 0 张**，且 maxCost = 1，
+  // 起手可能一张都打不出（例如 1 张 3 费随从 + 4 张 ≥1 费法术）。
+  // 故本用例先让先攻方结束回合，在**后攻方**（起手 6 张 + 充能收入 2 张）身上验证完整操作链。
+  const first = await activePage(pages);
+  await first.getByTestId('end-turn').click();
+  await expect.poll(() => turnNo(first), { timeout: 15_000 }).toBe(2);
+
+  const p = await activePage(pages);
+  expect(p, '回合应移交给另一位玩家').not.toBe(first);
+
+  // ① 现在处于第 2 回合的充能阶段
   await expect.poll(() => phaseText(p)).toContain('阶段 充能');
 
   // ② 充能 —— 逐张充能随从（D-112 选中排他：多张充能 = 多次单张操作），

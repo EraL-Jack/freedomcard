@@ -124,17 +124,19 @@ export function resolveAttackEvents(
   const defPower = unitPower(state, ctx.cards, targetUid) ?? 0;
   const atkDamage = faceDamageOf(atkDef, atkPower) + (atk.card.tempDamage ?? 0);
 
-  const outcome = resolveCombat(atkPower, defPower);
+  const targetIsCommander = tgt.zone === 'commander';
+  // docs/16 §5.5（D-227 修订）：打脸不再是力量对拼 —— 只要前排为空，
+  // 任意随从宣告即直接结算伤害，不比较力量、攻击方也不会自爆。
+  const outcome: CombatOutcome = targetIsCommander ? 'defender' : resolveCombat(atkPower, defPower);
   events.push(ev(at, 'attack:declared', { by: me, attackerUid, targetUid }));
   events.push(ev(at, 'trigger:attack', { by: me, uid: attackerUid }));
   events.push(ev(at, 'trigger:defend', { by: me, uid: targetUid }));
   events.push(ev(at, 'combat:resolved', { by: me, attackerUid, targetUid, atkPower, defPower, outcome }));
 
   const defenderLoses = outcome === 'defender' || outcome === 'both';
-  const attackerDies = outcome === 'attacker' || outcome === 'both';
-  const targetIsCommander = tgt.zone === 'commander';
+  const attackerDies = !targetIsCommander && (outcome === 'attacker' || outcome === 'both');
 
-  if (defenderLoses && targetIsCommander) {
+  if (targetIsCommander) {
     // ADR-0014 / docs/16 §5.5：指挥官受伤扣血；伤害值由力量分档决定。
     events.push(...commanderDamageEvents(at, state, foe, atkDamage, attackerUid, me));
   } else if (defenderLoses) {
@@ -209,18 +211,8 @@ export const attackRule = (
     }
   }
 
-  // docs/16 §5.5 打脸门槛：攻击者力量 ≥ 敌方指挥官当前力量。
-  if (targetIsCommander) {
-    const cmdUid = foePlayer.zones.commander[0]?.uid;
-    const cmdPower = cmdUid ? (unitPower(state, ctx.cards, cmdUid) ?? 0) : 0;
-    const atkPower = unitPower(state, ctx.cards, attackerUid) ?? 0;
-    if (atkPower < cmdPower) {
-      return reject(
-        RULE_ERRORS.COMMANDER_POWER_TOO_LOW,
-        `攻击者力量 ${atkPower} 低于敌方指挥官力量 ${cmdPower}，无法打脸`,
-      );
-    }
-  }
+  // docs/16 §5.5（D-227 修订）：**已删除打脸力量门槛** —— 前排为空时任何随从
+  // 都能宣告打脸，直接结算伤害，不比较力量、攻击方不自爆。
 
   // 炎刃骑士：攻击时可除外墓地一张炎刃卡换本回合 +1 —— 需要选择，先挂起。
   // （这是目前唯一需要「攻击前选择」的卡；新增同类卡时改成走 effects 注册表的钩子。）

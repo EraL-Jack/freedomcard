@@ -20,6 +20,10 @@ import type { CardDef } from './types.js';
  * - `damage` 只在卡面写明时写入；未写的按 `DEFAULT_DAMAGE`（X-5）。
  *   但打脸伤害现在按力量分档（docs/16 §5.5），`damage` 是**例外覆盖**。
  * - 霜冻不是卡面关键词常量，而是实例状态位（ADR-0025）—— 卡面文本里写「霜冻」即可。
+ *
+ * ⚠️ 指挥官技能费用：卡面原文写的是【2】，`docs/16` §6.4（D-228）定稿为
+ * **基础 3 费、每提升一档 −1（2/1/0）**，故两处 `text` 已按新口径标注「3-档位」。
+ * 这是 Era 的规则修订，不是我方改写卡面。
  */
 
 export const CARD_POOL: Record<string, CardDef> = {
@@ -35,7 +39,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     power: 0,
     text: [
       '力量值0-1-3-5 力量值提升，在每回合充能阶段执行',
-      'Ⅰ 【2】每回合一次，可以根据除外区的卡名包含炎刃的卡的数量执行以下最多3个效果，每个效果最多一次：',
+      'Ⅰ 【3-档位】每回合一次，可以根据除外区的卡名包含炎刃的卡的数量执行以下最多3个效果，每个效果最多一次：',
       '1个：从墓地选择一个力量值在除外区炎刃数量等级以下的随从，召唤',
       '3个：选择一个随从，本回合力量值+1',
       '5个：选择一个力量值在除外区炎刃数量等级以下的随从，破坏',
@@ -186,7 +190,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     power: 0,
     text: [
       '力量值0-1-2-4 力量值提升，在每回合充能阶段执行',
-      'Ⅰ 【2】每回合一次：霜冻一个敌方随从。',
+      'Ⅰ 【3-档位】每回合一次：霜冻一个敌方随从。',
       'Ⅱ 每回合一次：当一个敌方随从被霜冻时，抽一张牌。',
     ].join('\n'),
     powerCurve: [0, 1, 2, 4],
@@ -343,7 +347,7 @@ export const ACTIVATABLE_EFFECTS: Readonly<
   Record<string, readonly { id: string; label: string; zone: 'commander' | 'board' }[]>
 > = {
   bladeLord: [
-    { id: '1', label: '发动 效果Ⅰ：付 2 张费用，按除外区「炎刃」数执行至多 3 项', zone: 'commander' },
+    { id: '1', label: '发动 效果Ⅰ：付 3−档位 张费用（2/1/0），按除外区「炎刃」数执行至多 3 项', zone: 'commander' },
     { id: '2', label: '发动 效果Ⅱ：将一张手牌除外', zone: 'commander' },
   ],
   bladeTactician: [
@@ -354,6 +358,6 @@ export const ACTIVATABLE_EFFECTS: Readonly<
     },
   ],
   frostAdjudicator: [
-    { id: '1', label: '发动 效果Ⅰ：付 2 张费用，霜冻一个敌方随从', zone: 'commander' },
+    { id: '1', label: '发动 效果Ⅰ：付 3−档位 张费用（2/1/0），霜冻一个敌方随从', zone: 'commander' },
   ],
 };

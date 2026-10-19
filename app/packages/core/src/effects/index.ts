@@ -133,6 +133,19 @@ export function effectKey(uid: string, effectId: string): string {
   return `${uid}:${effectId}`;
 }
 
+/**
+ * 指挥官技能的基础费用（docs/16 §6.4 / D-228 定稿）：
+ * **3 − 当前档位**，最低 0 —— 第 1 轮 2 费、第 2 轮 1 费、第 3 轮起 0 费。
+ *
+ * 档位用 `commanderPowerIndex`（开局 = 1，第 3 轮 = 3）。基础值 3 是规则条文，
+ * 不是从卡面推的 —— 卡面原文写的是【2】，D-228 明确改为「随力量档位递减」。
+ */
+export const COMMANDER_SKILL_BASE_COST = 3;
+
+export function commanderSkillCost(p: PlayerState): number {
+  return Math.max(0, COMMANDER_SKILL_BASE_COST - p.commanderPowerIndex);
+}
+
 /** 已用过则拒绝。 */
 export function usedGuard(p: PlayerState, uid: string, effectId: string): Rejection | null {
   return p.effectsUsed.includes(effectKey(uid, effectId))

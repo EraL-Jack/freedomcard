@@ -33,6 +33,7 @@ import {
   bladeExileCount,
   choiceCleared,
   choicePending,
+  commanderSkillCost,
   effectKey,
   payCostCards,
   summonEntryEvents,
@@ -149,7 +150,7 @@ export const bladeLordEffect: EffectModule = {
     if (open.length === 0) {
       return reject(RULE_ERRORS.EFFECT_UNAVAILABLE, '除外区没有「炎刃」卡，档位不足');
     }
-    const pay = payCostCards(at, me, p, 2);
+    const pay = payCostCards(at, me, p, commanderSkillCost(p));
     if (!Array.isArray(pay)) return { ok: false, error: pay };
 
     return {

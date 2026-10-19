@@ -60,10 +60,11 @@ function craft(patch: {
     activeSeat: patch.activeSeat ?? 0,
   };
   // docs/16 §3.3 的 maxCost 上限另有专门用例；夹具默认放宽，避免效果支付被额度挡住。
+  // 指挥官档位取第 1 轮（1）—— 技能费用 = 3 − 档位 = 2，与本文件的历史断言一致。
   out.players = {
     ...out.players,
-    p1: { ...out.players['p1']!, maxCost: 10 },
-    p2: { ...out.players['p2']!, maxCost: 10 },
+    p1: { ...out.players['p1']!, maxCost: 10, commanderPowerIndex: 1 },
+    p2: { ...out.players['p2']!, maxCost: 10, commanderPowerIndex: 1 },
   };
   if (patch.zones) {
     const p = out.players['p1']!;

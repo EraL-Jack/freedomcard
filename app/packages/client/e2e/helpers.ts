@@ -131,16 +131,21 @@ export async function chargeMinions(page: Page): Promise<number> {
   // 从**当前**费用区张数起算（调用前可能已有拖拽充能，drag.spec 2026-10-18）。
   // 返回充能完成后费用区的总张数。
   //
-  // ⚠️ 不按「+1 张」做算术断言：开局有**充能收入 2 张**（docs/16 §2），
-  // 而客户端是逐条播放事件的，收入事件可能在测试开始操作之后才到达。
-  // 故每张充能只断言「费用区张数比操作前多」—— 与收入无关，天然抗播放延迟。
+  // ⚠️ 不按「+1 张」做算术断言：充能收入是逐条播放事件的，可能在测试开始操作之后
+  // 才到达。故每张充能只断言「费用区张数比操作前多」—— 天然抗播放延迟。
+  //
+  // ⚠️ **留下最便宜的那张随从**（按实际支付额），不是「随便留一张」：
+  // 第 1 回合 maxCost = 1，若留下 5 费大哥（支付 4）就出不了，测试会误报。
   let total = await zoneCount(page, 'cost', 1);
   for (;;) {
     const hand = await readHand(page);
     const minions = hand.filter((c) => c.kind === '随从');
     if (minions.length <= 1) break; // 留一张随从供出牌；极端牌序（起手仅 1 随从）则充 0 张
+    const keep = [...minions].sort((a, b) => payOf(a) - payOf(b))[0]!;
+    const target = minions.find((c) => c.index !== keep.index);
+    if (!target) break;
     const before = await zoneCount(page, 'cost', 1);
-    await pick(page, [minions[0]!.index]);
+    await pick(page, [target.index]);
     await page.getByTestId('charge').click();
     await expect.poll(() => zoneCount(page, 'cost', 1), { timeout: 10_000 }).toBeGreaterThan(before);
     total = await zoneCount(page, 'cost', 1);

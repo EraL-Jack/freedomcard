@@ -20,6 +20,7 @@ import { baseGuard, ev, firstRejection, locate, playerOf, reject, strArg } from 
 import {
   choiceCleared,
   choicePending,
+  commanderSkillCost,
   effectKey,
   payCostCards,
   usedGuard,
@@ -48,7 +49,7 @@ export const frostAdjudicatorEffect: EffectModule = {
     if (targets.length === 0) {
       return reject(RULE_ERRORS.EFFECT_UNAVAILABLE, '对方场上没有随从可冻结');
     }
-    const pay = payCostCards(at, me, p, 2);
+    const pay = payCostCards(at, me, p, commanderSkillCost(p));
     if (!Array.isArray(pay)) return { ok: false, error: pay };
 
     return {

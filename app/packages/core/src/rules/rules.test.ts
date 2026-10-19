@@ -198,18 +198,16 @@ describe('卡组构成（ADR-0012 补充：31 = 30 + 1）', () => {
 /* ------------------------------ 开局 ------------------------------ */
 
 describe('开局 startRule', () => {
-  it('洗牌 → 掷骰 → 揭示指挥官 → 发起手（先手 5 / 后手 6）+ 先手充能收入 2 张', () => {
+  it('洗牌 → 掷骰 → 揭示指挥官 → 发起手（先手 5 / 后手 6）；先攻首回合 0 充能（D-227）', () => {
     const s = run(fresh(), intent('p1', INTENTS.start));
     expect(s.started).toBe(true);
     const [first, second] = s.seats as [string, string];
     // docs/16 §1：先手 5、后手 6
     expect(s.players[first]!.zones.hand.length).toBe(INITIAL_HAND);
     expect(s.players[second]!.zones.hand.length).toBe(SECOND_PLAYER_HAND);
-    // docs/16 §2：先手充能阶段强制收入 2 张进费用区
-    expect(s.players[first]!.zones.cost.length).toBe(COST_INCOME_PER_TURN);
-    expect(s.players[first]!.zones.deck.length).toBe(
-      MAIN_DECK_SIZE - INITIAL_HAND - COST_INCOME_PER_TURN,
-    );
+    // docs/16 §1（D-227）：**先攻首回合自动充能 0 张**，卡组顶不动
+    expect(s.players[first]!.zones.cost.length).toBe(0);
+    expect(s.players[first]!.zones.deck.length).toBe(MAIN_DECK_SIZE - INITIAL_HAND);
     expect(s.players[second]!.zones.deck.length).toBe(MAIN_DECK_SIZE - SECOND_PLAYER_HAND);
     for (const id of ['p1', 'p2']) {
       const p = s.players[id]!;
@@ -273,14 +271,14 @@ describe('开局 startRule', () => {
 describe('起手换牌 mulliganRule', () => {
   const started = (): GameState => run(fresh(), intent('p1', INTENTS.start));
 
-  it('返回 2 张后手牌仍是 5 张、牌库仍是 23 张（30 − 充能收入 2 − 起手 5）', () => {
+  it('返回 2 张后手牌仍是 5 张、牌库仍是 25 张（30 − 起手 5；先攻首回合 0 充能）', () => {
     const s = started();
     const active = s.seats[0]!;
     const returning = s.players[active]!.zones.hand.slice(0, 2).map((x) => x.uid);
     const after = run(s, intent(active, INTENTS.mulligan, { returns: returning }));
     const p = after.players[active]!;
     expect(p.zones.hand.length).toBe(INITIAL_HAND);
-    expect(p.zones.deck.length).toBe(MAIN_DECK_SIZE - INITIAL_HAND - COST_INCOME_PER_TURN);
+    expect(p.zones.deck.length).toBe(MAIN_DECK_SIZE - INITIAL_HAND);
     expect(p.mulliganDone).toBe(true);
   });
 
@@ -803,10 +801,11 @@ describe('打指挥官 · 伤害与胜负（ADR-0014）', () => {
     expect(after.players['p2']!.health).toBe(INITIAL_HEALTH - 5);
   });
 
-  it('攻击方力量 < 指挥官力量 → 不能宣告打脸（COMMANDER_POWER_TOO_LOW）', () => {
-    const r = applyIntent(cmdBattle(c('a1', 'm3')), hit(), CTX);
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.COMMANDER_POWER_TOO_LOW);
+  it('D-227：删除打脸门槛 —— 1 力随从也能直接扣血，且不会自爆', () => {
+    // m1：power 2，指挥官 cmd 力量 5 —— 旧规则会被拒/自爆，新规则直接造成 1 点
+    const after = run(cmdBattle(c('a1', 'm1')), hit());
+    expect(after.players['p2']!.health).toBe(INITIAL_HEALTH - 1);
+    expect(after.players['p1']!.zones.board.map((x) => x.uid)).toContain('a1');
   });
 
   it('前排规则：对方随从区有随从时不能打脸（FRONT_LINE）', () => {
@@ -1010,8 +1009,7 @@ describe('指挥官力量值曲线（X-7 / ADR-0016）', () => {
     expect(unitPower(after, CARDS, 'p1#commander')).toBe(5);
   });
 
-  it('战斗裁决读的是指挥官**当前档位**的力量值，且力量不足时不能宣告打脸', () => {
-    // 场景固定为：p2 的 m1（力量 2）攻击 p1 的曲线指挥官，只有指挥官档位不同。
+  it('D-227：打脸不看指挥官档位 —— 任意档位下 2 力随从都造成 1 点', () => {
     const stateWithIndex = (index: number): GameState => {
       const base = craft({
         phase: 'battle',
@@ -1025,14 +1023,13 @@ describe('指挥官力量值曲线（X-7 / ADR-0016）', () => {
     const hitCmd = (_s: GameState): Intent =>
       intent('p2', INTENTS.attack, { attackerUid: 'd1', targetUid: 'p1#commander' });
 
-    // 第 0 档力量 0 ≤ 攻击方 2 → 允许打脸，分档伤害 1
-    const low = run(stateWithIndex(0), hitCmd(stateWithIndex(0)));
-    expect(low.players['p1']!.health).toBe(INITIAL_HEALTH - 1);
-
-    // 第 2 档力量 3 > 攻击方 2 → 直接不允许宣告（docs/16 §5.5 门槛）
-    const r = applyIntent(stateWithIndex(2), hitCmd(stateWithIndex(2)), CTX);
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.COMMANDER_POWER_TOO_LOW);
+    // 第 0 档（力 0）与第 3 档（力 5）结果一致：都直接扣 1 点（分档 1–3 → 1）
+    expect(run(stateWithIndex(0), hitCmd(stateWithIndex(0))).players['p1']!.health).toBe(
+      INITIAL_HEALTH - 1,
+    );
+    expect(run(stateWithIndex(3), hitCmd(stateWithIndex(3))).players['p1']!.health).toBe(
+      INITIAL_HEALTH - 1,
+    );
   });
 });
 

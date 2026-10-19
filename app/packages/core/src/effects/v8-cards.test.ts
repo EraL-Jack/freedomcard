@@ -64,8 +64,8 @@ function craft(patch: {
     turn: patch.turn ?? 2,
     activeSeat: patch.activeSeat ?? 0,
     players: {
-      p1: { ...s.players['p1']!, maxCost: 10 },
-      p2: { ...s.players['p2']!, maxCost: 10 },
+      p1: { ...s.players['p1']!, maxCost: 10, commanderPowerIndex: 1 },
+      p2: { ...s.players['p2']!, maxCost: 10, commanderPowerIndex: 1 },
     },
   };
   if (patch.zones) {
@@ -383,6 +383,43 @@ describe('霜律效果（docs/12 §4）', () => {
       foeZones: { board: [{ uid: 'f1', defId: 'frostRecruit', frozen: true }] },
     });
     expect(unitPower(weak, CARD_POOL, 'f1')).toBe(0); // 1 - 1 → 0，不为负
+  });
+});
+
+/* ------------------------------ 指挥官技能费用（D-228） ------------------------------ */
+
+describe('指挥官技能费用 = 3 − 档位（docs/16 §6.4 / D-228）', () => {
+  const mk = (index: number, costCards: CardInstance[]): GameState => {
+    const s = craft({
+      commander: 'frostAdjudicator',
+      zones: { commander: [c('cmd1', 'frostAdjudicator')], cost: costCards },
+      foeZones: { board: [c('f1', 'bladeVanguard')] },
+    });
+    return {
+      ...s,
+      players: { ...s.players, p1: { ...s.players['p1']!, commanderPowerIndex: index } },
+    };
+  };
+
+  it('第 1 轮（档位 1）付 2 张；第 3 轮（档位 3）0 费', () => {
+    const two = [c('k1', 'bladeRecruit'), c('k2', 'bladeRecruit')];
+    let s = run(mk(1, two), intent('p1', INTENTS.effectActivate, { uid: 'cmd1', effect: '1' }));
+    expect(s.players['p1']!.zones.cost.length).toBe(0);
+    expect(s.players['p1']!.usedCostThisTurn).toBe(2);
+
+    s = run(mk(3, []), intent('p1', INTENTS.effectActivate, { uid: 'cmd1', effect: '1' }));
+    expect(s.players['p1']!.usedCostThisTurn).toBe(0);
+    expect(s.pendingChoice?.kind).toBe('frost-adjudicator-1');
+  });
+
+  it('档位 1 时费用区只有 1 张 → 拒绝（不足 2）', () => {
+    const r = applyIntent(
+      mk(1, [c('k1', 'bladeRecruit')]),
+      intent('p1', INTENTS.effectActivate, { uid: 'cmd1', effect: '1' }),
+      CTX,
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.INSUFFICIENT_COST);
   });
 });
 
