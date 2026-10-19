@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import { startGame } from './helpers.js';
+import { startGame, newClient } from './helpers.js';
 
 /**
  * 联机开局端到端验证（真界面）。
@@ -131,4 +131,65 @@ test('BO3 中一方离开：系列赛直接判负，不再停在「等待下一�
   await expect(host.getByTestId('game-result')).toBeVisible({ timeout: 20_000 });
   await expect(host.getByTestId('series-score')).toContainText('BO3', { timeout: 10_000 });
   await expect(host.getByTestId('next-game')).toHaveCount(0);
+});
+
+/**
+ * 自建卡组接入开局（D-141）。
+ *
+ * 覆盖链路：本地卡组 → 建房 payload → 服务端校验 → 开局装配。
+ * 用「全霜律卡组」是为了可判定：默认炎刃卡组里没有任何「霜律」卡，
+ * 手牌出现「霜律」即证明我方主卡组确实换成了自建那 30 张。
+ */
+test('自建卡组：对局前选中，开局后使用该卡组（D-141）', async ({ browser }) => {
+  /** 与 `FROST_MAIN_DECK_RECIPE` 同构（30 张，同名 ≤3）。 */
+  const recipe = {
+    frostRecruit: 2,
+    frostApprentice: 3,
+    frostWarden: 3,
+    frostEdict: 2,
+    frostBinder: 3,
+    frostLancer: 3,
+    frostColdSnap: 1,
+    frostEnforcer: 2,
+    frostDomain: 2,
+    frostNightwatch: 2,
+    frostJailer: 2,
+    frostJudgment: 2,
+    frostFinalJudgment: 1,
+    frostWinterblade: 2,
+  };
+
+  const host = await newClient(browser, 'Host');
+  // 直接写 localStorage（等价于在卡组编辑器里建好并选中）
+  await host.evaluate((cards) => {
+    localStorage.setItem(
+      'fc.decks',
+      JSON.stringify([{ id: 'e2e-frost', name: 'E2E 霜律', cards }]),
+    );
+    localStorage.setItem('fc.activeDeckId', 'e2e-frost');
+  }, recipe);
+  await host.reload();
+  await expect(host.getByText('服务端已连接')).toBeVisible({ timeout: 15_000 });
+  await host.getByTestId('nickname').fill('Host');
+  // 下拉已从 localStorage 恢复为自建卡组
+  await expect(host.getByTestId('deck-choice')).toHaveValue('e2e-frost');
+
+  await host.getByTestId('create').click();
+  const code = ((await host.getByTestId('room-code').textContent()) ?? '').trim();
+
+  // 准备页也能换（D-141）：切回阵营默认再切回自建，服务端两次都应接受
+  await host.getByTestId('waiting-deck').selectOption('');
+  await host.getByTestId('waiting-deck').selectOption('e2e-frost');
+
+  const guest = await newClient(browser, 'Guest');
+  await guest.getByTestId('code').fill(code);
+  await guest.getByTestId('join').click();
+  await expect(guest.getByTestId('ready')).toBeVisible({ timeout: 10_000 });
+
+  await host.getByTestId('ready').click();
+  await guest.getByTestId('ready').click();
+  await expect(host.getByTestId('turn')).toBeVisible({ timeout: 15_000 });
+
+  // 默认炎刃卡组里没有霜律卡 —— 手牌出现「霜律」即证明自建卡组生效
+  await expect(host.getByTestId('hand')).toContainText('霜律', { timeout: 10_000 });
 });

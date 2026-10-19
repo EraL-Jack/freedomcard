@@ -48,17 +48,35 @@ export const MatchFormatSchema = z.enum(['bo1', 'bo3']);
  * `format` / `faction` 缺省时由服务端取默认值（BO1 / 按座位轮换阵营）：
  * 老客户端不带这两个字段也要能建房，故用 `optional()` 而不是必填。
  */
+/**
+ * 自建主卡组 —— 30 个 `defId`（D-141）。
+ *
+ * ⚠️ 同样必须**显式声明**：`z.object()` 对未声明键是 strip，漏掉会让客户端提交的卡组
+ * 在入站被静默丢弃，服务端只会看到「没带卡组」并回退默认 —— 这种失败没有任何报错。
+ *
+ * 这里只限制「字符串数组、长度不超过 30」；张数 / 同名上限 / 含指挥官 / 未知卡
+ * 由服务端 `validateDeckList` 给出人话原因。
+ */
+const DeckSchema = z.array(z.string().min(1)).max(30);
+
 export const RoomCreateSchema = z.object({
   nickname: z.string().min(1).max(24),
   capacity: z.number().int().min(1).max(8),
   format: MatchFormatSchema.optional(),
   faction: FactionSchema.optional(),
+  deck: DeckSchema.optional(),
 });
 
 export const RoomJoinSchema = z.object({
   code: z.string().min(1),
   nickname: z.string().min(1).max(24),
   faction: FactionSchema.optional(),
+  deck: DeckSchema.optional(),
+});
+
+/** 换卡组（准备页）—— 空数组表示回到阵营默认卡组。 */
+export const RoomDeckSchema = z.object({
+  deck: DeckSchema,
 });
 
 export const RoomReconnectSchema = z.object({

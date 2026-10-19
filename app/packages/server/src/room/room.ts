@@ -1,6 +1,8 @@
 import type { Faction, MatchFormat, PlayerId } from '@app/shared';
 import { RECONNECT_GRACE_MS, ROOM_ERRORS } from '@app/shared/constants';
 
+import { validateDeckList } from '../deck-pool.js';
+
 import type { Clock, IdGen, Outcome, Room, Seat } from './types.js';
 
 /** 座位轮换的默认阵营 —— 未显式选择时，让相邻两席尽量不同（star 留给第三席）。 */
@@ -46,14 +48,37 @@ export class RoomManager {
     this.graceMs = deps.graceMs ?? RECONNECT_GRACE_MS;
   }
 
+  /**
+   * 归一自建卡组（D-141）。
+   *
+   * - 未传 / 空数组 → `{ ok: true }`（无 `deck`，用阵营默认）
+   * - 非法 → `{ ok: false, message }`（人话原因）
+   *
+   * 入站 schema 只保证「是字符串数组且 ≤30 张」，张数与同名上限在这里查。
+   */
+  private checkDeck(
+    deck?: readonly string[],
+  ): { ok: true; deck?: readonly string[] } | { ok: false; message: string } {
+    if (!deck || deck.length === 0) return { ok: true };
+    const reason = validateDeckList(deck);
+    if (reason) return { ok: false, message: reason };
+    return { ok: true, deck: [...deck] };
+  }
+
   create(input: {
     nickname: string;
     capacity: number;
     format?: MatchFormat;
     faction?: Faction;
+    /** 自建主卡组（D-141）；缺省或空数组 = 用阵营默认。 */
+    deck?: readonly string[];
   }): Outcome<JoinInfo> {
     if (input.capacity < 1) {
       return { ok: false, error: ROOM_ERRORS.ROOM_NOT_FOUND, message: '房间容量必须 >= 1' };
+    }
+    const deckCheck = this.checkDeck(input.deck);
+    if (!deckCheck.ok) {
+      return { ok: false, error: ROOM_ERRORS.INVALID_DECK, message: deckCheck.message };
     }
     const playerId = this.ids.id();
     const token = this.ids.token();
@@ -70,6 +95,7 @@ export class RoomManager {
       disconnectedAt: null,
       ready: false,
       faction: input.faction ?? DEFAULT_FACTIONS[0]!,
+      ...(deckCheck.deck ? { deck: deckCheck.deck } : {}),
     };
     const room: Room = {
       id: this.ids.id(),
@@ -93,7 +119,13 @@ export class RoomManager {
     return { ok: true, value: { room, seat } };
   }
 
-  join(input: { code: string; nickname: string; faction?: Faction }): Outcome<JoinInfo> {
+  join(input: {
+    code: string;
+    nickname: string;
+    faction?: Faction;
+    /** 自建主卡组（D-141）；缺省或空数组 = 用阵营默认。 */
+    deck?: readonly string[];
+  }): Outcome<JoinInfo> {
     const roomId = this.byCode.get(input.code);
     if (!roomId) {
       return { ok: false, error: ROOM_ERRORS.ROOM_NOT_FOUND, message: '房间不存在' };
@@ -109,6 +141,10 @@ export class RoomManager {
     if (free < 0) {
       return { ok: false, error: ROOM_ERRORS.ROOM_FULL, message: '房间已满' };
     }
+    const deckCheck = this.checkDeck(input.deck);
+    if (!deckCheck.ok) {
+      return { ok: false, error: ROOM_ERRORS.INVALID_DECK, message: deckCheck.message };
+    }
     const playerId = this.ids.id();
     const token = this.ids.token();
     const seat: Seat = {
@@ -121,11 +157,39 @@ export class RoomManager {
       disconnectedAt: null,
       ready: false,
       faction: input.faction ?? DEFAULT_FACTIONS[free % DEFAULT_FACTIONS.length]!,
+      ...(deckCheck.deck ? { deck: deckCheck.deck } : {}),
     };
     room.seats[free] = seat;
     room.wins[playerId] = 0;
     this.byPlayer.set(playerId, { roomId: room.id, token });
     return { ok: true, value: { room, seat } };
+  }
+
+  /**
+   * 换卡组（D-141）—— 准备页用。
+   *
+   * 只在**未开局**（`phase === 'lobby'`）时允许；开局后锁定（`DECK_LOCKED`）。
+   * 空数组 = 回到阵营默认卡组。指挥官不随之改变（仍由阵营决定）。
+   */
+  setDeck(roomId: string, playerId: PlayerId, deck: readonly string[]): Outcome<Room> {
+    const room = this.rooms.get(roomId);
+    if (!room) {
+      return { ok: false, error: ROOM_ERRORS.ROOM_NOT_FOUND, message: '房间不存在' };
+    }
+    if (room.phase !== 'lobby') {
+      return { ok: false, error: ROOM_ERRORS.DECK_LOCKED, message: '对局已开始，不能再换卡组' };
+    }
+    const seat = room.seats.find((s) => s?.playerId === playerId) ?? null;
+    if (!seat) {
+      return { ok: false, error: ROOM_ERRORS.NOT_IN_ROOM, message: '你不在这个房间' };
+    }
+    const deckCheck = this.checkDeck(deck);
+    if (!deckCheck.ok) {
+      return { ok: false, error: ROOM_ERRORS.INVALID_DECK, message: deckCheck.message };
+    }
+    if (deckCheck.deck) seat.deck = deckCheck.deck;
+    else delete seat.deck;
+    return { ok: true, value: room };
   }
 
   /**
@@ -342,6 +406,8 @@ export class RoomManager {
               // ADR-0019：准备状态属于房间层事实，不含任何玩法信息。
               ready: s.ready,
               faction: s.faction,
+              // D-141：只下发「是否用了自建卡组」，30 个 defId 留在服务端。
+              deckSize: s.deck?.length ?? null,
             }
           : null,
       ),

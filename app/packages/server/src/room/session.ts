@@ -44,6 +44,11 @@ export interface SeedOptions {
    * 缺省时按座位轮换，保证两席尽量不同阵营。
    */
   factions?: Readonly<Record<PlayerId, Faction>>;
+  /**
+   * 各席位的**自建主卡组**（D-141）—— 只覆盖主卡组那 30 张，指挥官仍由阵营决定。
+   * 缺省或空数组的席位用阵营默认卡组。
+   */
+  decks?: Readonly<Record<PlayerId, readonly string[]>>;
 }
 
 /**
@@ -57,10 +62,16 @@ export interface SeedOptions {
  */
 export function seedGameState(opts: SeedOptions): GameState {
   const { decks, commanders } = defaultDeckSetup(opts.seats, opts.factions ?? {});
+  // D-141：自建卡组只替换主卡组；指挥官仍取阵营那一张。
+  const finalDecks: Record<PlayerId, readonly string[]> = { ...decks };
+  for (const id of opts.seats) {
+    const custom = opts.decks?.[id];
+    if (custom && custom.length > 0) finalDecks[id] = custom;
+  }
   return core.createInitialState({
     seed: opts.seed,
     seats: [...opts.seats],
-    decks,
+    decks: finalDecks,
     commanders,
   });
 }

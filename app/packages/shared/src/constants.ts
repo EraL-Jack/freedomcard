@@ -26,6 +26,14 @@ export const SOCKET_EVENTS = {
    * 只有房主能发起，且必须处于「上一小局已结束、系列赛未分胜负」的待开局状态。
    */
   roomNextGame: 'room:next-game',
+  /**
+   * 换卡组 —— D-141（Era 2026-10-19：对局前与准备页都能选）。
+   *
+   * 只在**未开局**时允许；开局后服务端拒 `DECK_LOCKED`。
+   * payload 是 `{ defIds: string[] }`（30 张主卡组），空数组 = 回到阵营默认卡组。
+   * 指挥官不随卡组提交 —— 仍由席位阵营决定。
+   */
+  roomDeck: 'room:deck',
   gameIntent: 'game:intent',
   gameEvents: 'game:events',
   gameSnapshot: 'game:snapshot',
@@ -59,6 +67,10 @@ export const ROOM_ERRORS = {
   NOT_HOST: 'NOT_HOST',
   /** 当前没有「上一小局已结束、等待开局」的状态。 */
   NO_NEXT_GAME: 'NO_NEXT_GAME',
+  /** 自建卡组不合法（张数 / 同名上限 / 含指挥官 / 未知卡）。 */
+  INVALID_DECK: 'INVALID_DECK',
+  /** 只有未开局时才允许换卡组。 */
+  DECK_LOCKED: 'DECK_LOCKED',
 } as const;
 
 export type RoomErrorCode = (typeof ROOM_ERRORS)[keyof typeof ROOM_ERRORS];

@@ -734,4 +734,29 @@ E2E 里先后手由掷骰决定、起手牌由洗牌决定，两者都是随机�
   `core/src/effects/growth.test.ts`（+4 条）、`docs/{01,06,09,10,12,16,17,18}`。
 - 破坏性：**是**（冻结链强度下降 —— 重复冻结不再刷霜痕 / 裁决官Ⅱ；旧回放结算不再等价）。
 
+## ADR-0030 · 卡组编辑接入开局（D-141 / X-18）
+
+- 日期：2026-10-19
+- 状态：已接受（Era 拍板：「对局前可以选，准备页面也可以选」）
+- 背景：`DeckScreen` 自 D-110 起就能保存多套卡组，但开局一直走 `deck-pool.ts` 的默认卡组。
+  此前把「卡组怎么交给服务端」列为 Era 输入范围，故留了缺口。Era 本轮给出时机，缺口补齐。
+- 决策：
+  1. **两处可选**：主界面（`room:create` / `room:join`）与准备页（`room:deck`）。
+     准备页改卡组只在 `phase === 'lobby'` 时允许，开局后拒 `DECK_LOCKED`。
+  2. **提交 `defId` 列表**，不是卡组 id：卡组存在客户端 localStorage，服务端没有对应表，
+     传 id 无法解析。30 个 `defId` 由服务端 `validateDeckList` 校验（30 张 / 同名 ≤3 /
+     不含指挥官 / 卡必须存在），失败返回人话原因。
+  3. **指挥官不随卡组提交**：仍由席位阵营决定。理由：卡组编辑器只编主卡组（30 张），
+     若让卡组携带指挥官，等于给「阵营」和「卡组」两套来源，开局时必然产生歧义。
+  4. **空数组 = 回到阵营默认**，而不是「非法卡组」：准备页需要一个「不选」的显式表达。
+  5. `Seat.deck` 只存展开后的 30 个 defId；`publicView` 只下发布尔式信息 `deckSize`，
+     不下发卡组内容（对手不该看到你的构筑）。
+- 协议注意：`RoomCreateSchema` / `RoomJoinSchema` / `RoomDeckSchema` 必须显式声明 `deck`，
+  否则 `z.object()` 会静默 strip（与 ADR-0011 的 `payload` 是同一类坑）。
+- 影响：`shared/src/{constants,schema,index}.ts`、`server/src/{index,deck-pool}.ts`、
+  `server/src/room/{types,room,session}.ts`、`client/src/{decks,HomeScreen,DeckScreen,TableScreen,useRoom}.ts*`、
+  server 单测 +11、E2E +1。
+- 破坏性：**否**（`deck` 为可选字段，老客户端不传即沿用阵营默认）。
+
+
 

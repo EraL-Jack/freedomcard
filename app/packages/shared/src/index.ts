@@ -27,6 +27,7 @@ export {
   RoomCreateSchema,
   RoomJoinSchema,
   RoomReconnectSchema,
+  RoomDeckSchema,
 } from './schema.js';
 export type { EchoPayload } from './schema.js';
 

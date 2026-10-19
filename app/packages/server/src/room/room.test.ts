@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { DEFAULT_MAIN_DECK } from '../deck-pool.js';
+
 import { RoomManager } from './room.js';
 import type { Clock, IdGen } from './types.js';
 
@@ -54,6 +56,90 @@ describe('RoomManager · 建房与加入', () => {
     if (!created.ok) throw new Error('create failed');
     const view = manager.publicView(created.value.room);
     expect(JSON.stringify(view)).not.toContain(created.value.seat.token);
+  });
+});
+
+/** 自建卡组（D-141）—— 建房 / 加入 / 准备页换卡组。 */
+describe('RoomManager · 自建卡组（D-141）', () => {
+  const legal = [...DEFAULT_MAIN_DECK];
+
+  it('建房带合法卡组 → 席位保存；房间视图只暴露张数', () => {
+    const { manager } = harness();
+    const r = manager.create({ nickname: 'A', capacity: 2, deck: legal });
+    if (!r.ok) throw new Error('create failed');
+    expect(r.value.seat.deck).toHaveLength(30);
+    const view = manager.publicView(r.value.room);
+    expect(view.seats[0]?.deckSize).toBe(30);
+    // 30 个 defId 不随视图下发
+    expect(JSON.stringify(view)).not.toContain('bladeScout');
+  });
+
+  it('张数不对 → INVALID_DECK（人话原因）', () => {
+    const { manager } = harness();
+    const r = manager.create({ nickname: 'A', capacity: 2, deck: legal.slice(0, 29) });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toBe('INVALID_DECK');
+      expect(r.message).toContain('30');
+    }
+  });
+
+  it('同名超过 3 张 → INVALID_DECK', () => {
+    const { manager } = harness();
+    const bad = Array.from({ length: 30 }, () => 'bladeScout');
+    const r = manager.create({ nickname: 'A', capacity: 2, deck: bad });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toContain('同名');
+  });
+
+  it('主卡组含指挥官 → INVALID_DECK', () => {
+    const { manager } = harness();
+    const bad = Array.from({ length: 30 }, () => 'bladeScout');
+    bad[0] = 'bladeLord';
+    const r = manager.create({ nickname: 'A', capacity: 2, deck: bad });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toContain('指挥官');
+  });
+
+  it('加入时也能带卡组', () => {
+    const { manager } = harness();
+    const created = manager.create({ nickname: 'A', capacity: 2 });
+    if (!created.ok) throw new Error('create failed');
+    const joined = manager.join({
+      code: created.value.room.code,
+      nickname: 'B',
+      deck: legal,
+    });
+    if (!joined.ok) throw new Error('join failed');
+    expect(joined.value.seat.deck).toHaveLength(30);
+  });
+
+  it('准备页换卡组：未开局可改，空数组回到阵营默认', () => {
+    const { manager } = harness();
+    const created = manager.create({ nickname: 'A', capacity: 2 });
+    if (!created.ok) throw new Error('create failed');
+    const playerId = created.value.seat.playerId;
+
+    const set = manager.setDeck(created.value.room.id, playerId, legal);
+    expect(set.ok).toBe(true);
+    if (set.ok) expect(set.value.seats[0]?.deck).toHaveLength(30);
+
+    const reset = manager.setDeck(created.value.room.id, playerId, []);
+    expect(reset.ok).toBe(true);
+    if (reset.ok) expect(reset.value.seats[0]?.deck).toBeUndefined();
+  });
+
+  it('开局后换卡组被拒为 DECK_LOCKED', () => {
+    const { manager } = harness();
+    const created = manager.create({ nickname: 'A', capacity: 2 });
+    if (!created.ok) throw new Error('create failed');
+    const playerId = created.value.seat.playerId;
+    // 开局后 phase 由 startGame 置为 playing（index.ts）；这里直接改内存对象模拟。
+    created.value.room.phase = 'playing';
+
+    const r = manager.setDeck(created.value.room.id, playerId, legal);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBe('DECK_LOCKED');
   });
 });
 
