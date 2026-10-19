@@ -149,6 +149,17 @@ export interface PlayerState {
   commanderPowerIndex: number;
   /** 起手换牌只允许一次（A10-1）。 */
   mulliganDone: boolean;
+  /**
+   * 首次进入**己方充能阶段**的时刻（事件时间戳）—— 换牌时间窗的计时基准
+   * （X-17，Era 2026-10-19：双方都能换牌，窗口按各自起算，否则后攻方永远落在窗外）。
+   * 先攻方在 `game:started` 时写入；后攻方在第一次拿到回合（turn:changed）时写入。
+   */
+  firstChargeAt: number | null;
+  /**
+   * 已进入己方充能阶段的次数 —— 换牌只允许在**第一次**（X-17）。
+   * 不能只看 `firstChargeAt`：它无法区分「第一次充能」和「之后每个回合的充能」。
+   */
+  chargeCount: number;
   /** 本回合已发动的「每回合一次」效果（键 `${uid}:${effect}`，ADR-0023 §3）。 */
   effectsUsed: string[];
   /** 本回合生效中的触发器（军师类，回合切换清空）。 */

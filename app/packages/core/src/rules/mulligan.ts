@@ -4,8 +4,10 @@
  * 原文顺序：选任意数量返回卡组底 → 从卡组顶抽满 5 张 → 再洗牌。
  * 三步严格照做，不调换顺序 —— 顺序变了「不会换到返回去的牌」这个性质就不成立。
  *
- * 时间窗（Era 2026-10-19）：开局换牌只在 `game:started` 后 `MULLIGAN_WINDOW_MS`
- * 内可用；窗口过后服务端拒绝（客户端同时隐藏按钮，双保险）。
+ * 时间窗（Era 2026-10-19）：开局换牌只在 `MULLIGAN_WINDOW_MS` 内可用；
+ * 窗口过后服务端拒绝、客户端隐藏按钮。X-17（同日拍板）：**双方都能换**，
+ * 窗口从「各自首次进入己方充能阶段」（`PlayerState.firstChargeAt`）起算 ——
+ * 若按开局时刻算，后攻方（第 2 回合才轮到）永远落在窗外，放开等于没放。
  */
 
 import {
@@ -40,23 +42,29 @@ export const mulliganRule = (
   intent: Intent,
   ctx: RuleContext,
 ): Result<GameEvent[], Rejection> => {
+  const p = playerOf(state, intent.playerId);
+  if (!p) return { ok: false, error: { code: RULE_ERRORS.NOT_YOUR_TURN, message: '玩家不在本局' } };
+
   const guard = firstRejection(
     baseGuard(state, intent),
-    state.turn !== 1 || state.phase !== 'charge'
-      ? { code: RULE_ERRORS.WRONG_PHASE, message: '起手换牌只在第一回合的充能阶段可用' }
+    state.phase !== 'charge'
+      ? { code: RULE_ERRORS.WRONG_PHASE, message: '起手换牌只在充能阶段可用' }
       : null,
-    state.players[intent.playerId]?.mulliganDone
+    // X-17（Era 2026-10-19）：双方都能换 —— 后攻方在自己的第一个充能阶段（第 2 回合）换。
+    // 每人一次机会：第一次充能阶段不换，之后就再没有机会。
+    p.chargeCount !== 1
+      ? { code: RULE_ERRORS.WRONG_PHASE, message: '起手换牌只在你的第一个充能阶段可用' }
+      : null,
+    p.mulliganDone
       ? { code: RULE_ERRORS.MULLIGAN_DONE, message: '起手换牌只能进行一次' }
       : null,
-    // 时间窗（Era 2026-10-19）：以 game:started 的事件时间戳为基准
-    state.startedAt !== null && ctx.now - state.startedAt > MULLIGAN_WINDOW_MS
+    // 时间窗（Era 2026-10-19）：从「各自首次进入充能阶段」起算 ——
+    // 若按开局时刻算，后攻方（第 2 回合才轮到）永远落在窗外，放开等于没放。
+    p.firstChargeAt !== null && ctx.now - p.firstChargeAt > MULLIGAN_WINDOW_MS
       ? { code: RULE_ERRORS.MULLIGAN_EXPIRED, message: '开局换牌时间窗已过' }
       : null,
   );
   if (guard) return { ok: false, error: guard };
-
-  const p = playerOf(state, intent.playerId);
-  if (!p) return { ok: false, error: { code: RULE_ERRORS.NOT_YOUR_TURN, message: '玩家不在本局' } };
 
   const returns = strListArg(intent.payload?.returns);
   if (!returns) {

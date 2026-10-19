@@ -1825,3 +1825,21 @@ UI 按现行规则放行；是否放开后攻方换牌待 Era 拍板。
   既有用例）/ server 51 / E2E 15 passed（helpers.advancePhase 抽牌分支改为断言
   自动落在主要阶段；换牌断言从「置灰」改为「不展示」）/ typecheck 0 / build gzip 129 kB。
 - 破坏性：**否**（事件协议不变；`startedAt` 为新增字段，旧快照无此字段时按 null 处理）。
+
+## D-129 后攻方换牌放开（X-17 拍板）
+
+- 背景：Era 2026-10-19 拍板 X-17「放开，双方都能换」。原守卫 `turn !== 1` 使后攻方
+  （其首个充能阶段在第 2 回合）永远无法换牌。
+- **规则**：双方各自**第一个充能阶段**均可换一次。判定从「第 1 回合」改为
+  `PlayerState.chargeCount === 1`（首次进入己方充能阶段）——只看回合数无法区分
+  「后攻方的第一次」与「之后的每一次」。
+- **时间窗基准随之改**：从「开局时刻（state.startedAt）」改为「各自首次进入己方
+  充能阶段」（`PlayerState.firstChargeAt`）—— 按开局时刻算的话后攻方永远落在
+  30s 窗外，放开等于没放。时长仍 30s（H25 待确认）。
+- 接线：`game:started` 写先攻方（chargeCount=1 + firstChargeAt）；`turn:changed`
+  给拿到回合的一方 chargeCount+1 并补写 firstChargeAt。注意事件顺序坑：
+  advanceOnce 先发 phase:changed(end→charge) 再发 turn:changed，phase 钩子读到的
+  activeSeat 还是**刚结束回合**的人 —— 充能计数必须挂在 turn:changed 上。
+- 客户端：换牌按钮窗口判定同步改为 chargeCount + firstChargeAt。
+- 验证：core 98（+2：后攻方可换 / 第二次充能不可换）/ server 51 / typecheck 0。
+- 破坏性：**否**（新增两个玩家字段，旧快照缺省 null/0 → 换牌不可用，安全降级）。

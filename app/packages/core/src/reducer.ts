@@ -189,8 +189,6 @@ export function reduce(state: GameState, event: GameEvent): GameState {
       const to = s(event, 'to') as GameState['phase'];
       // 进入抽牌阶段 → 重置「已抽」标记（Era 2026-10-18：抽牌改为手动点击卡组）。
       let next: GameState = { ...state, phase: to, ...(to === 'draw' ? { drawnThisPhase: false } : {}) };
-      // 「每回合一次」在自己回合重置（Era 2026-10-18 口径，ADR-0023 §3）：
-      // 进入**己方充能阶段**时清空记帐 —— 与指挥官成长同一接线点。
       if (to === 'charge') {
         const active = next.seats[next.activeSeat];
         if (active) {
@@ -210,9 +208,15 @@ export function reduce(state: GameState, event: GameEvent): GameState {
       // 回合切换 = 「本回合」词缀的边界（ADR-0023 §3）：
       // 清空全场卡的临时修正与双方触发器。
       const players: GameState['players'] = {};
+      const nextSeat = n(event, 'activeSeat');
       for (const [id, p] of Object.entries(state.players)) {
+        const incoming = id === state.seats[nextSeat];
         players[id] = {
           ...p,
+          // X-17：新回合从充能阶段开始（advanceOnce 的 end→charge 路径）。
+          // 行动方拿到回合 = 充能次数 +1；首次拿到回合的时刻 = 其换牌时间窗起点。
+          chargeCount: incoming ? p.chargeCount + 1 : p.chargeCount,
+          firstChargeAt: incoming ? (p.firstChargeAt ?? event.at) : p.firstChargeAt,
           turnTriggers: [],
           zones: {
             ...p.zones,
@@ -232,8 +236,17 @@ export function reduce(state: GameState, event: GameEvent): GameState {
 
     case 'game:started': {
       const seats = list(event, 'seats');
-      // startedAt = 换牌时间窗的计时基准（Era 2026-10-19，MULLIGAN_WINDOW_MS）
-      return { ...state, seats, activeSeat: 0, started: true, startedAt: event.at };
+      // startedAt = 对局开局时刻；先攻方开局即处于己方第一个充能阶段（没有「进入」
+      // 动作，ADR-0016 §3），其充能计数与换牌窗基准（X-17）在此一并写入。
+      let next: GameState = { ...state, seats, activeSeat: 0, started: true, startedAt: event.at };
+      const first = seats[0];
+      if (first) {
+        next = withPlayer(next, first, (p) => {
+          p.firstChargeAt = event.at;
+          p.chargeCount = 1;
+        });
+      }
+      return next;
     }
 
     // 战斗的**纯记录**事件（ADR-0013）：破坏由随后的 `card:moved` 承载，

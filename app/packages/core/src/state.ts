@@ -72,6 +72,8 @@ export function createInitialState(opts: InitialStateOptions): GameState {
       commanderRevealed: false,
       commanderPowerIndex: INITIAL_COMMANDER_POWER_INDEX,
       mulliganDone: false,
+      firstChargeAt: null,
+      chargeCount: 0,
       effectsUsed: [],
       turnTriggers: [],
     };
