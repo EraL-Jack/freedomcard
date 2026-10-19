@@ -37,7 +37,9 @@ function multiFreezeChoice(
   remaining: number,
   used: string[],
 ): GameEvent {
+  // H31：候选只列**未冻结**的单位（对已冻结者再冻结不算「被冻结」）。
   const options = enemyBoard(state, me)
+    .filter((c) => !c.frozen)
     .map((c) => c.uid)
     .filter((u) => !used.includes(u));
   if (remaining <= 0 || options.length === 0) return choiceCleared(at);
@@ -81,7 +83,10 @@ function multiFreezeChoose(
 
 export const frostApprenticeEffect: EffectModule = {
   onSummon(state, ctx, owner, uid) {
-    const targets = enemyBoard(state, owner).map((c) => c.uid);
+    // H31：只冻结未冻结单位。
+    const targets = enemyBoard(state, owner)
+      .filter((c) => !c.frozen)
+      .map((c) => c.uid);
     if (targets.length === 0) return [];
     return [
       choicePending(ctx.now, {
@@ -152,7 +157,7 @@ export const frostBinderEffect: EffectModule = {
 /** 登场时：霜冻至多两个敌方随从。 */
 export const frostNightwatchEffect: EffectModule = {
   onSummon(state, ctx, owner, uid) {
-    const targets = enemyBoard(state, owner);
+    const targets = enemyBoard(state, owner).filter((c) => !c.frozen);
     if (targets.length === 0) return [];
     return [
       choicePending(ctx.now, {

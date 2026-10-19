@@ -72,9 +72,12 @@ export const frostAdjudicatorEffect: EffectModule = {
     const g = firstRejection(baseGuard(state, intent), usedGuard(p, loc.card.uid, '1'));
     if (g) return { ok: false, error: g };
 
-    const targets = enemyBoard(state, me).map((c) => c.uid);
+    // H31：只列未冻结的敌方随从（对已冻结者再冻结不算「被冻结」）。
+    const targets = enemyBoard(state, me)
+      .filter((c) => !c.frozen)
+      .map((c) => c.uid);
     if (targets.length === 0) {
-      return reject(RULE_ERRORS.EFFECT_UNAVAILABLE, '对方场上没有随从可冻结');
+      return reject(RULE_ERRORS.EFFECT_UNAVAILABLE, '对方场上没有可冻结的随从');
     }
     const pay = payCostCards(at, me, p, commanderSkillCost(p));
     if (!Array.isArray(pay)) return { ok: false, error: pay };

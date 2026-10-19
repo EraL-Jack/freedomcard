@@ -175,7 +175,7 @@ export function unitPower(state: GameState, cards: Record<string, CardDef>, uid:
 
 /**
  * 一张卡**实际要支付的费用**（docs/16 §4 / §4.1）：
- * 随从减 1（最低 0），法术与持续法术按卡面值。
+ * 随从减 1（最低 0），法术与设置法术按卡面值。
  */
 export function costToPay(def: CardDef): number {
   if (def.type !== 'minion') return Math.max(0, def.cost);

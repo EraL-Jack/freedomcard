@@ -236,6 +236,12 @@ export function freezeUnit(
   const loc = locate(state, targetUid);
   if (!loc || loc.zone !== 'board') return { events: [], state };
 
+  // H31（Era 2026-10-19 拍板）：**对已冻结单位再次冻结不算「被冻结」**。
+  // 直接返回空 —— 不发 `unit:frozen`、不加霜痕、不触发裁决官Ⅱ / 执法者，
+  // 也不刷新状态。卡面一律写「冻结 1 个未冻结的敌方随从」，因此正常流程选不到这种目标；
+  // 这里是兜底，防止旧回放或异常入站绕过候选过滤。
+  if (loc.card.frozen) return { events: [], state };
+
   const e = emitter(state);
   e.push(ev(at, 'unit:frozen', { playerId: loc.playerId, uid: targetUid }));
 

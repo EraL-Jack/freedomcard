@@ -13,6 +13,7 @@ import type { CardInstance, GameState, Intent, Phase, Zone } from '@app/shared';
 import { CARD_POOL } from '@app/shared/cards';
 
 import { applyIntent, createInitialState, reduce, INTENTS } from '../index.js';
+import { freezeUnit } from '../effects/primitives.js';
 import { revealCountFor } from '../effects/star-commander.js';
 import { unitPower } from '../ops.js';
 
@@ -146,6 +147,53 @@ describe('霜痕（docs/16 §6.3.2 / D-229）', () => {
     st = run(st, intent('p1', INTENTS.effectChoose, { choice: 'f2' }));
     // 两次冻结各触发一次裁决官Ⅱ？—— Ⅱ 每回合一次，只抽 1；再加档位的抽 1 → 共 2 张
     expect(st.players['p1']!.zones.hand.length).toBe(handBefore + 2);
+  });
+});
+
+/* -------------------- 冻结目标必须是「未冻结」（H31） -------------------- */
+
+describe('H31：冻结目标限未冻结单位（Era 2026-10-19）', () => {
+  it('学徒登场时若目标已冻结 → 不弹选择、不加霜痕', () => {
+    const s = craft({
+      zones: { hand: [c('h1', 'frostApprentice')] },
+      foeZones: { board: [c('f1', 'bladeVanguard', { frozen: true })] },
+    });
+    const after = run(s, intent('p1', INTENTS.play, { uid: 'h1' }));
+    expect(after.pendingChoice).toBeNull();
+    expect(after.players['p1']!.frostMark).toBe(0);
+    expect(after.players['p2']!.zones.board[0]!.frozen).toBe(true);
+  });
+
+  it('候选列表里不含已冻结单位（2 个目标只剩 1 个可选）', () => {
+    const s = craft({
+      zones: { hand: [c('h1', 'frostApprentice')] },
+      foeZones: { board: [c('f1', 'bladeVanguard', { frozen: true }), c('f2', 'bladeVanguard')] },
+    });
+    const after = run(s, intent('p1', INTENTS.play, { uid: 'h1' }));
+    expect(after.pendingChoice?.options).toEqual(['f2']);
+  });
+
+  it('freezeUnit 对已冻结目标直接返回空（兜底：不发 unit:frozen、不加霜痕）', () => {
+    const s = craft({
+      zones: { commander: [c('cmd1', 'frostAdjudicator')] },
+      foeZones: { board: [c('f1', 'bladeVanguard', { frozen: true })] },
+    });
+    const r = freezeUnit(CTX.now, s, 'p1', 'f1', CARD_POOL);
+    expect(r.events).toEqual([]);
+    expect(r.state).toBe(s);
+  });
+
+  it('缚锁者是卡面例外：选已冻结单位 → 抽 1 张，不产生冻结', () => {
+    const s = craft({
+      zones: { hand: [c('h1', 'frostBinder')], cost: [c('k1', 'frostRecruit')] },
+      foeZones: { board: [c('f1', 'bladeVanguard', { frozen: true })] },
+    });
+    const s1 = run(s, intent('p1', INTENTS.play, { uid: 'h1' }));
+    expect(s1.pendingChoice?.kind).toBe('frost-binder-freeze');
+    const handBefore = s1.players['p1']!.zones.hand.length;
+    const after = run(s1, intent('p1', INTENTS.effectChoose, { choice: 'f1' }));
+    expect(after.players['p1']!.zones.hand.length).toBe(handBefore + 1);
+    expect(after.players['p1']!.frostMark).toBe(0);
   });
 });
 

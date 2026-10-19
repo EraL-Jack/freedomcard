@@ -3,14 +3,14 @@
  *
  * 支付语义：费用是**费用区里的卡的数量**；本次支付 `costToPay(def)` 张。
  *  - 随从：卡面费用 −1（最低 0，docs/16 §4）；
- *  - 法术 / 持续法术：卡面费用（§4.1）。
+ *  - 法术 / 设置法术：卡面费用（§4.1）。
  *
  * `maxCost` 校验（§3.3）：本回合**所有支付的总张数**不得超过上限
  * （各自回合数 → 1/3/5/10）。0 费不占额度。支付后发 `cost:spent` 记帐。
  *
  * 效果接线（ADR-0025）：
  *  - 随从 → `summonEntryEvents`（军师/队长触发器 + 各卡登场效果）；
- *  - 法术 → `spellEntryEvents`，结算后置入墓地（持续法术留在法术区）。
+ *  - 法术 → `spellEntryEvents`，结算后置入墓地（设置法术留在法术区）。
  */
 
 import {
@@ -108,7 +108,7 @@ export const playRule = (
     events.push(...summonEntryEvents(at, next, intent.playerId, uid, ctx));
   } else {
     events.push(...spellEntryEvents(at, next, intent.playerId, uid, ctx));
-    // 普通法术结算后进墓地；持续法术留在法术区（提供光环 / 触发）。
+    // 普通法术结算后进墓地；设置法术留在法术区（提供光环 / 触发）。
     if (def.type === 'spell') {
       events.push(moved(at, intent.playerId, uid, 'spell', 'graveyard'));
     }

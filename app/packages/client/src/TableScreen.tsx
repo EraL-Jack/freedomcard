@@ -135,7 +135,7 @@ const KIND_TAG_FOR_DETAIL: Readonly<Record<string, string>> = {
   commander: '指挥官',
   minion: '随从',
   spell: '法术',
-  continuous: '持续',
+  continuous: '设置',
 };
 function CardOf(props: {
   card: CardInstance;

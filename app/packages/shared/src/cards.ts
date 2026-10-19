@@ -184,7 +184,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'continuous',
     cost: 3,
     power: 0,
-    text: '【3】持续法术\n己方「炎刃」卡被除外时：抽 1 张（每回合最多触发 1 次）。',
+    text: '【3】设置法术\n己方「炎刃」卡被除外时：抽 1 张（每回合最多触发 1 次）。',
   },
 
   bladeCremation: {
@@ -221,7 +221,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     power: 0,
     text: [
       '指挥官',
-      'Ⅰ 每回合一次【2】：按霜痕层数冻结敌方随从：',
+      'Ⅰ 每回合一次【2】：按霜痕层数冻结未冻结的敌方随从：',
       '  0–2 层：冻结 1 个',
       '  3–5 层：冻结 1 个，抽 1 张',
       '  6–8 层：冻结 2 个',
@@ -247,7 +247,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'minion',
     cost: 1,
     power: 1,
-    text: '【1】随从 / 力量值1 / 伤害值1\n登场时：冻结 1 个敌方随从。',
+    text: '【1】随从 / 力量值1 / 伤害值1\n登场时：冻结 1 个未冻结的敌方随从。',
   },
 
   frostWarden: {
@@ -305,7 +305,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'minion',
     cost: 4,
     power: 4,
-    text: '【4】随从 / 力量值4 / 伤害值1\n登场时：冻结至多 2 个敌方随从。',
+    text: '【4】随从 / 力量值4 / 伤害值1\n登场时：冻结至多 2 个未冻结的敌方随从。',
   },
 
   frostJailer: {
@@ -333,7 +333,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'spell',
     cost: 1,
     power: 0,
-    text: '【1】法术\n冻结 1 个敌方随从；若其力量值大于等于 4，抽 1 张。',
+    text: '【1】法术\n冻结 1 个未冻结的敌方随从；若其力量值大于等于 4，抽 1 张。',
   },
 
   frostColdSnap: {
@@ -342,7 +342,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'spell',
     cost: 2,
     power: 0,
-    text: '【2】法术\n冻结至多 2 个敌方随从。',
+    text: '【2】法术\n冻结至多 2 个未冻结的敌方随从。',
   },
 
   frostJudgment: {
@@ -372,7 +372,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'continuous',
     cost: 3,
     power: 0,
-    text: '【3】持续法术\n持续：敌方处于冻结状态的随从力量值 -1。',
+    text: '【3】设置法术\n设置：敌方处于冻结状态的随从力量值 -1。',
   },
 
   /* ================================================================== *
@@ -527,7 +527,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'continuous',
     cost: 2,
     power: 0,
-    text: '【2】持续法术\n持续：每回合你第一次展示卡时，抽 1 张。',
+    text: '【2】设置法术\n设置：每回合你第一次展示卡时，抽 1 张。',
   },
 
   /* ================================================================== *
@@ -607,6 +607,6 @@ export const ACTIVATABLE_EFFECTS: Readonly<
     },
   ],
   frostAdjudicator: [
-    { id: '1', label: '发动 效果Ⅰ【2】：按霜痕层数冻结敌方随从', zone: 'commander' },
+    { id: '1', label: '发动 效果Ⅰ【2】：按霜痕层数冻结未冻结的敌方随从', zone: 'commander' },
   ],
 };
