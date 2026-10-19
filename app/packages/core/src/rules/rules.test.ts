@@ -31,8 +31,9 @@ import { resolveCombat } from './attack.js';
 /**
  * 卡池夹具 —— 仅供测试。
  *
- * ⚠️ 这是**测试夹具**，不是卡池数据。生产卡池（`server/src/cards.ts`）仍是空的，
- * 等 Era 给；这里编卡只是为了能跑通规则，不进入任何交付件。
+ * ⚠️ 这是**测试夹具**，不是卡池数据。真实卡池在 `packages/shared/src/cards.ts`
+ * （45 张，D-130~D-136 落地）；这里编卡是为了把规则的边界跑清楚，
+ * 与真实卡池**解耦** —— 改卡面文案不该让规则测试变红。
  */
 const CARDS: Record<string, CardDef> = {
   cmd: { defId: 'cmd', name: '指挥官', type: 'commander', cost: 0, power: 5 },
@@ -796,7 +797,7 @@ describe('打指挥官 · 伤害与胜负（ADR-0014）', () => {
     expect(foe.zones.deck.length).toBe(s.players['p2']!.zones.deck.length - 3);
   });
 
-  it('展示出来的卡只入费用区，不触发任何效果（效果清单未给）', () => {
+  it('受伤展示只把卡放进费用区，不结算任何「展示时」效果', () => {
     const { events } = runWith(cmdBattle(), hit());
     expect(events.filter((e) => e.type === 'trigger:defend').length).toBe(1);
     expect(events.some((e) => e.type === 'effect:resolved')).toBe(false);
