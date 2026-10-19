@@ -172,10 +172,27 @@ export class RoomManager {
    * 只在**未开局**（`phase === 'lobby'`）时允许；开局后锁定（`DECK_LOCKED`）。
    * 空数组 = 回到阵营默认卡组。指挥官不随之改变（仍由阵营决定）。
    */
+  /**
+   * 换卡组（D-141）—— 准备页用。
+   *
+   * 只在**未开局**（`phase === 'lobby'`）时允许；开局后锁定（`DECK_LOCKED`）。
+   * 空数组 = 回到阵营默认卡组。指挥官不随之改变（仍由阵营决定）。
+   *
+   * **BO3 局间也不能换**（H37 / Era 2026-10-20：「不允许更换卡组」）。
+   * 这一条单独判 `awaitingNext`，不只依赖 `phase` —— 局间房间仍是 `playing`，
+   * 但若将来为了让玩家点「准备」而把 `phase` 改回 `lobby`，只判 `phase` 就会**静默放开**局间换卡组。
+   */
   setDeck(roomId: string, playerId: PlayerId, deck: readonly string[]): Outcome<Room> {
     const room = this.rooms.get(roomId);
     if (!room) {
       return { ok: false, error: ROOM_ERRORS.ROOM_NOT_FOUND, message: '房间不存在' };
+    }
+    if (room.awaitingNext) {
+      return {
+        ok: false,
+        error: ROOM_ERRORS.DECK_LOCKED,
+        message: '系列赛进行中，两局之间不能更换卡组',
+      };
     }
     if (room.phase !== 'lobby') {
       return { ok: false, error: ROOM_ERRORS.DECK_LOCKED, message: '对局已开始，不能再换卡组' };

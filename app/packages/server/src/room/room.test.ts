@@ -141,6 +141,32 @@ describe('RoomManager · 自建卡组（D-141）', () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toBe('DECK_LOCKED');
   });
+
+  it('BO3 局间换卡组被拒（H37 / Era 2026-10-20：不允许更换卡组）', () => {
+    const { manager } = harness();
+    const created = manager.create({ nickname: 'A', capacity: 2, format: 'bo3' });
+    if (!created.ok) throw new Error('create failed');
+    const room = created.value.room;
+    const playerId = created.value.seat.playerId;
+
+    // 打完第 1 小局 → awaitingNext（房间仍是 playing）
+    room.phase = 'playing';
+    manager.recordGameResult(room.id, playerId);
+    expect(room.awaitingNext).toBe(true);
+
+    const duringBreak = manager.setDeck(room.id, playerId, legal);
+    expect(duringBreak.ok).toBe(false);
+    if (!duringBreak.ok) {
+      expect(duringBreak.error).toBe('DECK_LOCKED');
+      expect(duringBreak.message).toContain('两局之间');
+    }
+
+    // 关键：即使将来把局间房间改回 lobby，也不得放开 —— 单独判 awaitingNext 而不是只判 phase
+    room.phase = 'lobby';
+    const stillLocked = manager.setDeck(room.id, playerId, legal);
+    expect(stillLocked.ok).toBe(false);
+    if (!stillLocked.ok) expect(stillLocked.error).toBe('DECK_LOCKED');
+  });
 });
 
 describe('RoomManager · 断线保留与重连', () => {

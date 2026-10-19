@@ -57,6 +57,16 @@ const FX_MS: Readonly<Record<string, number>> = {
 /** 破坏（战斗导致的移入弃牌区）单独停一拍。 */
 const DESTROY_MS = 600;
 
+/**
+ * 展示节奏（Era 2026-10-20：「卡片应该在结算期间停留，而不是闪一下就没了」）。
+ *
+ * 服务端把「翻牌 → 结算展示时 → 归位」放在**同一条事件流**里。客户端逐条 reduce 时
+ * 若没有停顿，整批展示会在同一帧内跑完 —— 玩家只看到闪一下，展示区等于不存在。
+ * 因此给两个停顿：每翻一张停一下（像逐张揭牌），整批至少可见 `REVEAL_HOLD_MS` 才允许归位。
+ */
+const REVEAL_FLIP_MS = 180;
+const REVEAL_HOLD_MS = 900;
+
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 export interface LogEntry {
@@ -322,11 +332,22 @@ export function useRoom(): RoomSession {
     pumpingRef.current = true;
     // 战斗上下文标记：同一批内（相同 at）的「移入弃牌区」才算战斗破坏。
     let combatTick: number | null = null;
+    // 本批展示区第一次「有卡」的时刻 —— 归位前据此补足最短可见时长。
+    let revealShownAt: number | null = null;
     try {
       while (queueRef.current.length > 0) {
         const e = queueRef.current.shift()!;
         const prev = stateRef.current;
         if (!prev) continue; // 还没有起点状态 —— 等服务端补发快照
+
+        // 归位（`deck:put-bottom`）会让展示区立刻清空 —— 先停够时间再应用它，
+        // 否则「翻牌 → 结算 → 归位」全在同一帧，玩家看到的就是闪一下。
+        if (e.type === 'deck:put-bottom' && revealShownAt !== null) {
+          const rest = REVEAL_HOLD_MS - (Date.now() - revealShownAt);
+          if (rest > 0) await sleep(rest);
+          revealShownAt = null;
+        }
+
         const next = core.reduce(prev, e);
         stateRef.current = next;
         if (mountedRef.current) setState(next);
@@ -335,6 +356,12 @@ export function useRoom(): RoomSession {
         if (text) appendLog(text, e.at);
 
         if (e.type === 'combat:resolved') combatTick = e.at;
+
+        // 展示逐张「揭牌」的节奏：卡进展示区后停一下，让玩家看清这一张。
+        if (e.type === 'card:moved' && String(e.payload?.['to'] ?? '') === 'reveal') {
+          revealShownAt ??= Date.now();
+          await sleep(REVEAL_FLIP_MS);
+        }
 
         // 展示区（D-123）：收集本批展示的卡（uid + defId），批次以 at 区分。
         //
