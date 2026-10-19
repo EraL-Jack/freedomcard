@@ -303,8 +303,8 @@ describe('起手换牌 mulliganRule', () => {
     }
   });
 
-  it('时间窗（Era 2026-10-19）：开局后 MULLIGAN_WINDOW_MS 内可换，过后拒绝 MULLIGAN_EXPIRED', () => {
-    const s = started(); // game:started at = CTX.now = 1000 → startedAt = 1000
+  it('时间窗（Era 2026-10-19）：窗口内可换，过后拒绝 MULLIGAN_EXPIRED（按各自首个充能阶段起算，X-17）', () => {
+    const s = started(); // game:started at = CTX.now = 1000 → 先攻方 firstChargeAt = 1000
     const active = s.seats[0]!;
 
     // 窗口边缘（恰好 30s）仍可用
@@ -321,6 +321,31 @@ describe('起手换牌 mulliganRule', () => {
     });
     expect(late.ok).toBe(false);
     if (!late.ok) expect(late.error.code).toBe(RULE_ERRORS.MULLIGAN_EXPIRED);
+  });
+
+  it('X-17：后攻方在自己的第一个充能阶段（第 2 回合）也能换牌', () => {
+    // 后攻方首次拿到回合：turn 2、activeSeat 1、chargeCount 1、firstChargeAt 已写入
+    const base = craft({ phase: 'charge', turn: 2, activeSeat: 1 });
+    const p2 = base.players['p2']!;
+    const s: GameState = {
+      ...base,
+      players: { ...base.players, p2: { ...p2, chargeCount: 1, firstChargeAt: CTX.now } },
+    };
+    const after = run(s, intent('p2', INTENTS.mulligan, { returns: [] }));
+    expect(after.players['p2']!.mulliganDone).toBe(true);
+    expect(after.players['p2']!.zones.hand.length).toBe(INITIAL_HAND);
+  });
+
+  it('第二次及以后的充能阶段不可换（每人一次机会，X-17）', () => {
+    const base = craft({ phase: 'charge', turn: 3, activeSeat: 0 });
+    const p1 = base.players['p1']!;
+    const s: GameState = {
+      ...base,
+      players: { ...base.players, p1: { ...p1, chargeCount: 2, firstChargeAt: CTX.now } },
+    };
+    const r = applyIntent(s, intent('p1', INTENTS.mulligan, { returns: [] }), CTX);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.WRONG_PHASE);
   });
 });
 

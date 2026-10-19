@@ -617,14 +617,19 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   const myTurnNow = !!state && !!me && state.seats[state.activeSeat] === me;
   const canPickHand = myTurnNow && (phaseNow === 'charge' || phaseNow === 'main');
   const canBattle = myTurnNow && phaseNow === 'battle';
-  /** 起手换牌窗口（A8-3/A10-1）：第一回合充能阶段、我方回合。 */
-  const mulliganWindow = myTurnNow && phaseNow === 'charge' && state?.turn === 1;
   /**
-   * 换牌时间窗（Era 2026-10-19）：开局后 MULLIGAN_WINDOW_MS 内可换，过后按钮隐藏。
+   * 起手换牌窗口（A8-3/A10-1 + X-17）：己方第一个充能阶段（先攻方第 1 回合、
+   * 后攻方第 2 回合）、我方回合。「第一次」由 `chargeCount === 1` 判定（见 canMulligan）。
+   */
+  const mulliganWindow = myTurnNow && phaseNow === 'charge';
+  /**
+   * 换牌时间窗（Era 2026-10-19）：从「各自首次进入己方充能阶段」起算
+   * MULLIGAN_WINDOW_MS 内可换，过后按钮隐藏。
    * ⚠️ 客户端时钟与服务端可能不同步，这里只做**展示**；权威判定在服务端 mulligan.ts。
    */
+  const myFirstChargeAt = me && state ? (state.players[me]?.firstChargeAt ?? null) : null;
   const mulliganTimeOpen =
-    !state || state.startedAt === null || now - state.startedAt <= MULLIGAN_WINDOW_MS;
+    !state || myFirstChargeAt === null || now - myFirstChargeAt <= MULLIGAN_WINDOW_MS;
   const mulliganOpen = mulliganWindow && mulliganTimeOpen;
 
   // 离开可操作阶段时清掉残留选中 —— 否则置灰后取消不了，卡在「看着被选中却动不了」。
@@ -663,8 +668,8 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   }
 
   const myTurn = state.seats[state.activeSeat] === me;
-  /** 换牌可用 = 窗口内（阶段 + 时间窗）且本局还没换过（mulliganDone 每人一次，A8-3）。 */
-  const canMulligan = mulliganOpen && !mine.mulliganDone;
+  /** 换牌可用 = 窗口内（己方首个充能阶段 + 时间窗）且本局还没换过（mulliganDone 每人一次，A8-3）。 */
+  const canMulligan = mulliganOpen && mine.chargeCount === 1 && !mine.mulliganDone;
   /** 抽牌阶段且未抽：我方卡组区变为「点击抽牌」发光动作（Era 2026-10-18 手动抽牌）。 */
   const canDraw = myTurn && state.phase === 'draw' && !state.drawnThisPhase;
   // ⚠️ 客户端时钟与服务端未必同步，这里的倒计时是**示意**；权威判定在服务端（ADR-0017）。
