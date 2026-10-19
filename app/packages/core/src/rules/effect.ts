@@ -15,9 +15,27 @@ import {
   type RuleContext,
 } from '@app/shared';
 
-import { baseGuard, locate, reject, strArg } from '../ops.js';
+import { baseGuard, ev, locate, reject, strArg } from '../ops.js';
 
-import { EFFECTS, EFFECTS_BY_KIND } from '../effects/index.js';
+import { EFFECTS, EFFECTS_BY_KIND, choicePending } from '../effects/index.js';
+
+/**
+ * 选择链收尾 —— 若本次结算**没有**再挂新选择（链已结束），且队列非空，则出队重新挂起。
+ *
+ * H28 / ADR-0031：效果召唤在选择链中产生的登场选择不能立刻挂（会覆盖当前选择），
+ * 一律入队；此处是**唯一的出队点**，保证「上一轮所有待结算效果结束后，下一轮时点触发」。
+ * 对局已结束时不出队（没有玩家还能回答）。
+ */
+function promoteQueuedChoice(
+  state: GameState,
+  events: GameEvent[],
+  ctx: RuleContext,
+): GameEvent[] {
+  if (events.some((e) => e.type === 'choice:pending' || e.type === 'game:ended')) return events;
+  const head = state.pendingChoiceQueue[0];
+  if (!head) return events;
+  return [...events, ev(ctx.now, 'choice:dequeued'), choicePending(ctx.now, head)];
+}
 
 /** 发动卡面效果。 */
 export const effectActivateRule = (
@@ -61,5 +79,7 @@ export const effectChooseRule = (
   if (!module?.choose) {
     return reject(RULE_ERRORS.NOT_IMPLEMENTED, `未知的选择类型: ${pending.kind}`);
   }
-  return module.choose(state, intent, ctx, pending);
+  const res = module.choose(state, intent, ctx, pending);
+  if (!res.ok) return res;
+  return { ok: true, value: promoteQueuedChoice(state, res.value, ctx) };
 };

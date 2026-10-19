@@ -13,7 +13,7 @@
  * 卡牌钩子（ADR-0025）：
  *  - 霜律戍卫：被攻击时攻击者本回合力量 −1（先于力量快照）；
  *  - 霜律长枪兵：攻击霜冻目标时本次攻击 +2（一次性，不落状态）；
- *  - 炎刃骑士：攻击时可除外墓地一张炎刃卡，换取本回合 +1 —— 需要选择，
+ *  - 炎刃骑士：攻击时可除外弃牌区一张炎刃卡，换取本回合 +1 —— 需要选择，
  *    因此攻击被拆成「挂起选择 → 回答后结算」两段（`resolveAttackEvents` 可复用）。
  */
 
@@ -214,7 +214,7 @@ export const attackRule = (
   // docs/16 §5.5（D-227 修订）：**已删除打脸力量门槛** —— 前排为空时任何随从
   // 都能宣告打脸，直接结算伤害，不比较力量、攻击方不自爆。
 
-  // 炎刃骑士：攻击时可除外墓地一张炎刃卡换本回合 +1 —— 需要选择，先挂起。
+  // 炎刃骑士：攻击时可除外弃牌区一张炎刃卡换本回合 +1 —— 需要选择，先挂起。
   // （这是目前唯一需要「攻击前选择」的卡；新增同类卡时改成走 effects 注册表的钩子。）
   if (atkDef.defId === 'bladeKnight') {
     const gy = playerGraveyardBlade(state, me, ctx.cards);
@@ -226,7 +226,7 @@ export const attackRule = (
   return { ok: true, value: resolveAttackEvents(state, ctx, { me, foe, attackerUid, targetUid }) };
 };
 
-/** 墓地里的炎刃卡 uid 列表（骑士 / 老兵 / 凤凰共用判定口径）。 */
+/** 弃牌区里的炎刃卡 uid 列表（骑士 / 老兵 / 凤凰共用判定口径）。 */
 export function playerGraveyardBlade(
   state: GameState,
   playerId: PlayerId,

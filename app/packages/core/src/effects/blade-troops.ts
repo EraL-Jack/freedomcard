@@ -1,8 +1,8 @@
 /**
  * 炎刃随从的效果 —— docs/12 §2（ADR-0025）。
  *
- * 覆盖：卫士（登场磨牌+可选除外）、骑士（攻击时墓地换力量）、老兵（登场可选除外加抽牌）、
- * 勇士（登场按除外数成长）、凤凰（登场清空墓地炎刃并成长）。
+ * 覆盖：卫士（登场磨牌+可选除外）、骑士（攻击时弃牌区换力量）、老兵（登场可选除外加抽牌）、
+ * 勇士（登场按除外数成长）、凤凰（登场清空弃牌区炎刃并成长）。
  *
  * 队长（bladeCaptain）没有自己的模块：它是**登场时的静态光环**，
  * 结算挂在 `effects/index.ts` 的 `bladeSummonTriggerEvents`（与军师同一时点）。
@@ -26,7 +26,7 @@ import {
 } from './index.js';
 import { applyEvents, drawTop, emitter, exileCard, millTop } from './primitives.js';
 
-/** 同一玩家墓地里的炎刃卡 uid（卫士 / 老兵 / 骑士共用）。 */
+/** 同一玩家弃牌区里的炎刃卡 uid（卫士 / 老兵 / 骑士共用）。 */
 function bladeInGraveyard(
   state: GameState,
   playerId: PlayerId,
@@ -45,7 +45,7 @@ function bladeInGraveyard(
 /* --------------------------- 炎刃卫士 bladeGuard --------------------------- */
 
 /**
- * 登场时：将卡组顶一张卡置入墓地；若该卡卡名包含「炎刃」，你可以将其除外。
+ * 登场时：将卡组顶一张卡置入弃牌区；若该卡卡名包含「炎刃」，你可以将其除外。
  * 磨牌是强制的，除外是可选的（需要选择）。
  */
 export const bladeGuardEffect: EffectModule = {
@@ -86,7 +86,7 @@ export const bladeGuardEffect: EffectModule = {
 /* --------------------------- 炎刃骑士 bladeKnight --------------------------- */
 
 /**
- * 攻击时：你可以将墓地一张炎刃卡除外；若如此做，本回合此卡力量值 +1。
+ * 攻击时：你可以将弃牌区一张炎刃卡除外；若如此做，本回合此卡力量值 +1。
  *
  * 攻击被拆成两段：`attack.ts` 先挂起选择（kind `blade-knight-attack`），
  * 回答后由本模块调用 `resolveAttackEvents` 完成裁决。
@@ -132,7 +132,7 @@ export const bladeKnightEffect: EffectModule = {
 
 /* --------------------------- 炎刃老兵 bladeVeteran --------------------------- */
 
-/** 登场时：你可以将墓地一张炎刃卡除外；若如此做，抽一张牌。 */
+/** 登场时：你可以将弃牌区一张炎刃卡除外；若如此做，抽一张牌。 */
 export const bladeVeteranEffect: EffectModule = {
   onSummon(state, ctx, owner, uid) {
     const options = bladeInGraveyard(state, owner, ctx.cards);
@@ -179,7 +179,7 @@ export const bladeChampionEffect: EffectModule = {
 /* --------------------------- 炎刃凤凰 bladePhoenix --------------------------- */
 
 /**
- * 登场时：将墓地中所有炎刃卡除外；每除外一张本回合 +1（最多 +5）。
+ * 登场时：将弃牌区中所有炎刃卡除外；每除外一张本回合 +1（最多 +5）。
  * 逐张除外 → 战旗的「除外时抽牌」自然按每回合一次限流。
  */
 export const bladePhoenixEffect: EffectModule = {

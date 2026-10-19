@@ -101,6 +101,7 @@ export function createInitialState(opts: InitialStateOptions): GameState {
     winner: null,
     draw: false,
     pendingChoice: null,
+    pendingChoiceQueue: [],
   };
 }
 

@@ -289,7 +289,8 @@ function startGame(roomId: string, opts: { firstPlayerId?: string } = {}): void 
     playerId: seats[0]!,
     seq: rt.serverSeq + 1,
     reason: isNextGame ? 'next-game' : 'all-ready',
-    // BO3 第 2 小局强制换先手（docs/16 §1.3）；第 3 小局不带该字段 = 重新掷骰。
+    // BO3：第 2 小局换先手，第 3 小局由上一小局败者先攻（docs/16 §1.3 / H33）；
+    // 判和等无先手人选时不带该字段 = 按 seed 决定。
     ...(opts.firstPlayerId ? { payload: { firstPlayerId: opts.firstPlayerId } } : {}),
   };
   const result = submitSystemIntent(rt.state, intent, {
@@ -511,7 +512,7 @@ io.on('connection', (socket) => {
    * 开始下一小局 —— BO3（D-132）。
    *
    * 只有**房主**能发起：两名玩家同时点会让开局链竞争，服务端无法区分「谁的意思」。
-   * 先手由 `nextFirstPlayer` 决定（第 2 小局换人，第 3 小局重新掷骰）。
+   * 先手由 `nextFirstPlayer` 决定（第 2 小局换人；第 3 小局由上一小局败者先攻，H33 / D-145）。
    */
   socket.on(SOCKET_EVENTS.roomNextGame, (_raw: unknown, ack?: (res: unknown) => void) => {
     const playerId = socket.data.playerId as string | undefined;

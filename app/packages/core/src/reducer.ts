@@ -287,6 +287,24 @@ export function reduce(state: GameState, event: GameEvent): GameState {
     case 'choice:cleared':
       return { ...state, pendingChoice: null };
 
+    /**
+     * 排队挂起 / 出队（H28 / ADR-0031）—— 选择链进行中又有新的选择要挂时，
+     * 不能覆盖 `pendingChoice`，先入队；链条结束后由 `effect:choose` 规则层出队。
+     */
+    case 'choice:queued': {
+      const choice = event.payload?.['choice'];
+      if (!choice || typeof choice !== 'object') return state;
+      return {
+        ...state,
+        pendingChoiceQueue: [
+          ...state.pendingChoiceQueue,
+          choice as unknown as GameState['pendingChoiceQueue'][number],
+        ],
+      };
+    }
+    case 'choice:dequeued':
+      return { ...state, pendingChoiceQueue: state.pendingChoiceQueue.slice(1) };
+
     case 'unit:asleep': {
       const id = s(event, 'playerId');
       const uid = s(event, 'uid');

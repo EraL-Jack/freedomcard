@@ -571,7 +571,7 @@ describe('出牌 playRule（A5 补充 2：按张数支付）', () => {
     if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.BOARD_FULL);
   });
 
-  it('法术结算后进入墓地（设置法术留在法术区）', () => {
+  it('法术结算后进入弃牌区（设置法术留在法术区）', () => {
     const s = craft({
       phase: 'main',
       zones: { hand: [c('h1', 's1')], cost: [c('k1', 'm4')] },

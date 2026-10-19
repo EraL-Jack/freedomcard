@@ -243,6 +243,15 @@ export const choicePending = (at: number, choice: PendingChoice): GameEvent =>
 export const choiceCleared = (at: number): GameEvent => ev(at, 'choice:cleared');
 
 /**
+ * 排队一条待定选择（H28 / ADR-0031）—— 用于「选择链进行中又需要挂选择」。
+ *
+ * payload 与 `choice:pending` 同构（都是 `{ choice }`），只是落到 `pendingChoiceQueue`
+ * 而不是占用唯一的 `pendingChoice` 槽位；链条结束后由规则层出队重新挂起。
+ */
+export const choiceQueued = (at: number, choice: PendingChoice): GameEvent =>
+  ev(at, 'choice:queued', { choice: choice as unknown as Record<string, unknown> });
+
+/**
  * 登场触发器（军师 / 队长，ADR-0023 §7 + docs/12 §2.4）：
  *  - 军师：己方炎刃随从登场 → 该随从 tempPower+1（次数 = 发动时除外区炎刃数）；
  *  - 队长：**其他**炎刃随从登场 → 该随从 tempPower+1（每个队长各 +1）。
@@ -282,10 +291,12 @@ export function bladeSummonTriggerEvents(
 /**
  * 登场效果派发（由 play.ts / 效果召唤调用）。
  *
- * `allowChoice: false` 用于**已在某个待定选择链中**的召唤（如统领 1 档）：
- * `pendingChoice` 只有一个槽位，嵌套会产生「后一个覆盖前一个」。
- * 此时只结算自动部分（磨牌 / 成长 / 全体冻结），跳过需要选择的部分 ——
- * 这是当前架构的已知取舍，登记在 ADR-0025「实现边界」。
+ * **H28（Era 2026-10-19 拍板，D-145）**：效果召唤同样触发登场效果，包括需要选择的部分。
+ * `pendingChoice` 只有一个槽位，而召唤常发生在选择链内部（统领Ⅰ / 号令）——
+ * 此时把新选择**入队**（`choice:queued`），等当前链彻底结算完后，由 `effect:choose`
+ * 规则层依次出队（`choice:dequeued` + `choice:pending`）重新挂起。
+ *
+ * 自动部分（磨牌 / 成长 / 全体冻结）不受影响，仍当场结算。
  */
 export function summonEntryEvents(
   at: number,
@@ -293,7 +304,6 @@ export function summonEntryEvents(
   owner: PlayerId,
   uid: string,
   ctx: RuleContext,
-  opts: { allowChoice?: boolean } = {},
 ): GameEvent[] {
   const inst = Object.values(state.players)
     .flatMap((x) => Object.values(x.zones).flat())
@@ -301,8 +311,12 @@ export function summonEntryEvents(
   if (!inst) return [];
   const events = bladeSummonTriggerEvents(at, state, owner, uid, ctx.cards);
   const mod = EFFECTS[inst.defId];
-  if (mod?.onSummon) events.push(...mod.onSummon(state, ctx, owner, uid));
-  if (opts.allowChoice === false) return events.filter((e) => e.type !== 'choice:pending');
+  if (mod?.onSummon) {
+    for (const e of mod.onSummon(state, ctx, owner, uid)) {
+      // 链中挂选择 → 入队；payload 同构（`{ choice }`），reducer 按 type 分流。
+      events.push(state.pendingChoice && e.type === 'choice:pending' ? { ...e, type: 'choice:queued' } : e);
+    }
+  }
   return events;
 }
 

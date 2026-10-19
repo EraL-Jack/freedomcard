@@ -3,7 +3,7 @@
  *
  * 卡面原文（docs/10 转录）：
  *  Ⅰ 【2】每回合一次，可以根据除外区的卡名包含炎刃的卡的数量执行以下最多3个效果，每个效果最多一次：
- *    1个：从墓地选择一个力量值在除外区炎刃数量等级以下的随从，召唤
+ *    1个：从弃牌区选择一个力量值在除外区炎刃数量等级以下的随从，召唤
  *    3个：选择一个随从，本回合力量值+1
  *    5个：选择一个力量值在除外区炎刃数量等级以下的随从，破坏
  *    7个：选择一个随从，本回合对指挥官伤害+1
@@ -76,7 +76,7 @@ function menuChoice(
 ): GameEvent {
   const p = playerOf(state, pendingPlayer(state, sourceUid));
   const bladeCount = p ? bladeExileCount(p, ctx.cards) : 0;
-  // 可选子效果 = 已解锁 ∧ 未选过；1 档还要求墓地里有合法随从且随从区有空位
+  // 可选子效果 = 已解锁 ∧ 未选过；1 档还要求弃牌区里有合法随从且随从区有空位
   const options = unlocked(bladeCount).filter((id) => {
     if (meta.used.includes(id)) return false;
     if (id === 'l1' && p) {
@@ -232,12 +232,10 @@ export const bladeLordEffect: EffectModule = {
     const events: GameEvent[] = [];
     switch (sub) {
       case 'l1': {
-        // 从墓地召唤到随从区
+        // 从弃牌区召唤到随从区
         events.push(moved(at, me, choice, 'graveyard', 'board'));
-        // 登场触发器 / 自动登场效果；选择类登场效果跳过（同一时刻只能挂一个 pending）。
-        events.push(
-          ...summonEntryEvents(at, state, me, choice, ctx, { allowChoice: false }),
-        );
+        // 登场触发器 + 登场效果（H28：需要选择的部分排队，等统领菜单结算完再触发）。
+        events.push(...summonEntryEvents(at, state, me, choice, ctx));
         break;
       }
       case 'l3':
@@ -281,7 +279,7 @@ function targetCandidates(
   const ownBoard = p.zones.board.map((c) => ({ uid: c.uid, defId: c.defId }));
   switch (sub) {
     case 'l1':
-      // 墓地里的随从，力量值 ≤ 除外区炎刃数（墓地卡无临时修正，取卡面值）
+      // 弃牌区里的随从，力量值 ≤ 除外区炎刃数（弃牌区卡无临时修正，取卡面值）
       return p.zones.graveyard
         .filter((c) => {
           const def = ctx.cards[c.defId];

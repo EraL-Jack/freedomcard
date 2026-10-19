@@ -70,9 +70,15 @@ export interface Room {
   /**
    * 每小局的先手玩家（按局序）—— BO3「双方各先手一次」的依据（docs/16 §1.3）。
    *
-   * 第 2 小局强制由第 1 小局的后手先攻；第 3 小局重新掷骰。
+   * 第 2 小局强制由第 1 小局的后手先攻；第 3 小局由**上一小局的败者**先攻（H33，D-145）。
    */
   firstPlayers: PlayerId[];
+  /**
+   * 上一小局的败者（H33 / D-145）—— 第 3 小局「败者先攻」的依据。
+   *
+   * 判和（`winner === null`）时无败者，置 `null`，第 3 小局回落到重新掷骰。
+   */
+  lastLoser: PlayerId | null;
 }
 
 export type Outcome<T> =

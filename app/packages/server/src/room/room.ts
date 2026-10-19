@@ -112,6 +112,7 @@ export class RoomManager {
       awaitingNext: false,
       seriesWinner: null,
       firstPlayers: [],
+      lastLoser: null,
     };
     this.rooms.set(room.id, room);
     this.byCode.set(code, room.id);
@@ -204,6 +205,10 @@ export class RoomManager {
     if (!room) return null;
     room.gameNo += 1;
     if (winner) room.wins[winner] = (room.wins[winner] ?? 0) + 1;
+    // H33（D-145）：第 3 小局由上一小局的败者先攻 —— 判和时无败者，置 null 回落掷骰。
+    room.lastLoser = winner
+      ? (room.seats.find((s) => s && s.playerId !== winner)?.playerId ?? null)
+      : null;
 
     if (room.format === 'bo1') {
       room.phase = 'ended';
@@ -234,10 +239,11 @@ export class RoomManager {
   }
 
   /**
-   * 下一小局的先手人选（docs/16 §1.3）。
+   * 下一小局的先手人选（docs/16 §1.3 / H33）。
    *
    * - 第 2 小局：由第 1 小局的后手先攻 —— 「双方各先手一次」；
-   * - 第 3 小局：`null` 表示重新掷骰（条文允许「重新掷骰或败者选边」，取前者）。
+   * - 第 3 小局：由**上一小局的败者**先攻（Era 2026-10-19 拍板，取代原先的「重新掷骰」）。
+   *   判和时没有败者，返回 `null`，由调用方回落到掷骰。
    */
   nextFirstPlayer(roomId: string): PlayerId | null {
     const room = this.rooms.get(roomId);
@@ -247,7 +253,7 @@ export class RoomManager {
       if (!prev) return null;
       return room.seats.find((s) => s && s.playerId !== prev)?.playerId ?? null;
     }
-    return null;
+    return room.lastLoser;
   }
 
   /**

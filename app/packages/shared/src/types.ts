@@ -31,7 +31,7 @@ export type Faction = 'blade' | 'frost' | 'star';
 /**
  * 赛制 —— BO1 单局 / BO3 三局两胜（`docs/16` §1.3：座位偏差由赛制消化）。
  *
- * BO3 双方各先手一次；1:1 时第三局重新掷骰。
+ * BO3 双方各先手一次；1:1 时第三局由前一局败者先攻（H33 / D-145）。
  */
 export type MatchFormat = 'bo1' | 'bo3';
 
@@ -264,6 +264,14 @@ export interface GameState {
   draw: boolean;
   /** 待定选择（ADR-0023）—— 非空时阻塞除回答/认输外的所有玩家 Intent。 */
   pendingChoice: PendingChoice | null;
+  /**
+   * 排队的待定选择（H28 / ADR-0031，Era 2026-10-19 拍板）。
+   *
+   * 场景：一个选择链**尚未结束时**又需要挂起新的选择（如统领Ⅰ从弃牌区召唤带登场选择的随从）。
+   * `pendingChoice` 只有一个槽位，直接挂第二个会把前一个覆盖掉。故此时改为入队，
+   * 等当前链条彻底结算完（最后一个 `choice:cleared` 之后），再由规则层依次出队触发。
+   */
+  pendingChoiceQueue: PendingChoice[];
 }
 
 /**

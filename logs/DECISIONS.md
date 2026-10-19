@@ -758,5 +758,42 @@ E2E 里先后手由掷骰决定、起手牌由洗牌决定，两者都是随机�
   server 单测 +11、E2E +1。
 - 破坏性：**否**（`deck` 为可选字段，老客户端不传即沿用阵营默认）。
 
+## ADR-0031 · 选择链排队：效果召唤的登场选择延后触发（D-145 / H28）
 
+- 日期：2026-10-19
+- 状态：已接受（Era 拍板：「H28 效果召唤也能触发，在上一轮所有待结算的效果结束后，再在下一轮时点触发」）
+- 背景：`GameState.pendingChoice` 只有一个槽位。效果召唤常发生在选择链内部
+  （统领Ⅰ 的菜单 / 号令揭示后召唤），此前只能跳过登场效果里「需要选择」的部分，
+  否则第二个 `choice:pending` 会覆盖第一个。这导致卫士 / 老兵等登场效果在效果召唤时静默丢失。
+- 决策：
+  1. **新增状态 `GameState.pendingChoiceQueue: PendingChoice[]`** —— 排队尚未挂起的待定选择。
+  2. **新增两个事件**：`choice:queued`（入队，payload 与 `choice:pending` 同构）与
+     `choice:dequeued`（出队，shift 队首）。
+  3. **入队判定**：`summonEntryEvents` 派发登场效果时，若当前 `state.pendingChoice` 非空，
+     把结果中的 `choice:pending` 改写成 `choice:queued`；自动部分（磨牌 / 成长 / 全体冻结）仍当场结算。
+  4. **出队点唯一**：`effectChooseRule` 结算完一次回答后，若结果里**没有**新的 `choice:pending`
+     且没有 `game:ended`，且队列非空 → 追加 `choice:dequeued` + `choice:pending(队首)`。
+     即「上一轮所有待结算效果结束后，下一时点触发」。
+  5. **删除 `summonEntryEvents` 的 `allowChoice` 开关** —— 跳过分支不再存在，
+     所有召唤路径（出牌 / 统领Ⅰ / 号令）共用同一套排队行为。
+- 边界：
+  - 队列不跨对局清理（对局结束后不再受理 Intent，残留无害）；
+  - 判和 / 认输产生 `game:ended` 时不出队；
+  - 队列中的选择仍校验 `playerId`，与直接挂起完全同构，客户端无需区分。
+- 影响：`shared/src/types.ts`、`core/src/{state,reducer}.ts`、`core/src/effects/{index,blade-lord}.ts`、
+  `core/src/rules/effect.ts`、`client/src/log.ts`、`core/src/effects/effects.test.ts`（+2 条）。
+- 破坏性：**是**（效果召唤的场景里，此前被跳过的登场选择现在会真的弹出来，结算序列变化）。
 
+## ADR-0032 · BO3 第 3 局由前一局败者先攻（D-145 / H33）
+
+- 日期：2026-10-19
+- 状态：已接受（Era 拍板：「H33 败者先攻」，取代条文里的「重新掷骰或败者选边」二选一）
+- 背景：docs/16 §1.3 原文给了两个选项，D-132 取了「重新掷骰」。Era 现明确取**败者先攻**。
+- 决策：
+  1. 第 2 小局仍由第 1 小局的后手先攻（「双方各先手一次」不变）；
+  2. 第 3 小局由**上一小局的败者**先攻；
+  3. 判和（无败者）时 `lastLoser = null`，回落按 seed 决定，不做额外 UI。
+- 实现：`Room.lastLoser` 在 `recordGameResult` 写入；`nextFirstPlayer` 第 3 局返回它；
+  沿用 start 的 `payload.firstPlayerId`（仅系统来源）链路，**不改 `start.ts`**。
+- 影响：`server/src/room/{types,room}.ts`、`server/src/index.ts`（注释）、room 单测 +1。
+- 破坏性：**否**（仅赛制细节；单局规则不变）。
