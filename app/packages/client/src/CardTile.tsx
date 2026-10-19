@@ -107,8 +107,10 @@ export default function CardTile(props: CardTileProps): React.JSX.Element {
         title={props.text ?? props.name}
         data-testid="card"
       >
-        {/* 卡名条（E2E 锚点：innerText 第一行 = 卡名）；显式文字色 —— 深底上不继承出白字 */}
-        <span className="truncate rounded-sm bg-slate-950/50 px-1 text-[11px] font-medium leading-snug text-slate-100">
+        {/* 卡名条（E2E 锚点：innerText 第一行 = 卡名）；显式文字色 —— 深底上不继承出白字。
+            窄格里 5–6 字卡名（星轨观测者 / 霜律凛冬之刃）原先被 `truncate` 截成「星轨观…」——
+            卡名是玩家最需要读的信息，改为最多两行换行，宁可让插图区矮一点。 */}
+        <span className="line-clamp-2 rounded-sm bg-slate-950/50 px-1 text-[10px] font-medium leading-tight break-all text-slate-100">
           {props.name}
         </span>
         {/* 插图区占位（B7-1 素材缺）：类型色块 + 类型标签 */}
