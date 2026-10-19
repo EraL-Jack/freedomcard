@@ -11,6 +11,7 @@ import {
   RoomCreateSchema,
   RoomJoinSchema,
   RoomReconnectSchema,
+  RoomDeckSchema,
   ROOM_ERRORS,
   SOCKET_EVENTS,
   RECONNECT_GRACE_MS,
@@ -267,13 +268,18 @@ function startGame(roomId: string, opts: { firstPlayerId?: string } = {}): void 
   const factions: Record<string, Faction> = {};
   for (const s of room.seats) if (s) factions[s.playerId] = s.faction;
 
+  // 自建卡组（D-141）：只覆盖主卡组，指挥官仍由阵营决定。
+  // 入站时已用 `validateDeckList` 校验过，这里只做搬运。
+  const customDecks: Record<string, readonly string[]> = {};
+  for (const s of room.seats) if (s?.deck?.length) customDecks[s.playerId] = s.deck;
+
   // ① 先用真实座位 / 卡组建立「尚未开局」的初始状态，并作为快照下发给客户端。
   //
   //    ⚠️ 顺序不能反：`reduce` 是**增量**的，客户端必须先有起点状态，
   //    才能消化随后到来的开局事件。若先广播事件后发快照，开局那一批
   //    事件会被客户端丢弃（无从 reduce），表现为「开局日志凭空消失」。
   const prev = rt.state;
-  rt.state = seedGameState({ seats, seed: nextSeed(), factions });
+  rt.state = seedGameState({ seats, seed: nextSeed(), factions, decks: customDecks });
   broadcastSnapshot(roomId);
 
   // ② 开局仍走系统 Intent（ADR-0011）：洗牌 / 掷骰 / 发牌全部由引擎产出事件。
@@ -477,6 +483,28 @@ io.on('connection', (socket) => {
     else broadcastRoom(room.id);
 
     ack?.({ ok: true, room: roomManager.publicView(room), started: r.value.allReady });
+  });
+
+  /**
+   * 换卡组（D-141）—— **准备页**用，只在未开局时允许。
+   *
+   * 卡组只影响开局装配，局中状态不受影响，故这里不重发游戏快照，只广播房间视图。
+   * 空数组 = 回到阵营默认卡组。
+   */
+  socket.on(SOCKET_EVENTS.roomDeck, (raw: unknown, ack?: (res: unknown) => void) => {
+    const parsed = RoomDeckSchema.safeParse(raw);
+    if (!parsed.success) {
+      return ack?.({ ok: false, error: 'INVALID_PAYLOAD', message: '卡组参数不合法' });
+    }
+    const playerId = socket.data.playerId as string | undefined;
+    if (!playerId) return ack?.({ ok: false, error: ROOM_ERRORS.NOT_IN_ROOM, message: '不在房间内' });
+    const located = roomManager.locate(playerId);
+    if (!located) return ack?.({ ok: false, error: ROOM_ERRORS.NOT_IN_ROOM, message: '不在房间内' });
+
+    const r = roomManager.setDeck(located.room.id, playerId, parsed.data.deck);
+    if (!r.ok) return ack?.({ ok: false, error: r.error, message: r.message });
+    broadcastRoom(r.value.id);
+    ack?.({ ok: true, room: roomManager.publicView(r.value) });
   });
 
   /**

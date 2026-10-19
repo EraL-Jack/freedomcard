@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { IntentSchema } from '@app/shared';
+import { IntentSchema, RoomCreateSchema, RoomDeckSchema, RoomJoinSchema } from '@app/shared';
 
 /**
  * 传输层 Intent 校验自检。
@@ -46,5 +46,36 @@ describe('IntentSchema 传输层校验', () => {
   it('seq 为负数或非整数时拒绝', () => {
     expect(IntentSchema.safeParse({ ...base, seq: -1 }).success).toBe(false);
     expect(IntentSchema.safeParse({ ...base, seq: 1.5 }).success).toBe(false);
+  });
+});
+
+/**
+ * 房间入站 schema · 自建卡组（D-141）。
+ *
+ * 与 `payload` 同理：`z.object()` 默认 strip，漏声明 `deck` 会让客户端提交的 30 张
+ * 在入站被静默丢弃，服务端只会看到「没带卡组」并回退阵营默认 —— 没有任何报错。
+ * 这类问题只能在传输层钉住。
+ */
+describe('房间入站 schema · 自建卡组（D-141）', () => {
+  const deck = Array.from({ length: 30 }, () => 'bladeScout');
+
+  it('RoomCreateSchema 保留 deck', () => {
+    const parsed = RoomCreateSchema.parse({ nickname: 'Era', capacity: 2, deck });
+    expect(parsed.deck).toHaveLength(30);
+    expect(parsed.deck?.[0]).toBe('bladeScout');
+  });
+
+  it('RoomJoinSchema 保留 deck', () => {
+    const parsed = RoomJoinSchema.parse({ code: 'ABC123', nickname: 'Era', deck });
+    expect(parsed.deck).toHaveLength(30);
+  });
+
+  it('RoomDeckSchema：空数组合法（回到阵营默认），超过 30 张被拒', () => {
+    expect(RoomDeckSchema.safeParse({ deck: [] }).success).toBe(true);
+    expect(RoomDeckSchema.safeParse({ deck }).success).toBe(true);
+    expect(
+      RoomDeckSchema.safeParse({ deck: Array.from({ length: 31 }, () => 'bladeScout') }).success,
+    ).toBe(false);
+    expect(RoomDeckSchema.safeParse({}).success).toBe(false);
   });
 });

@@ -1,7 +1,15 @@
 import { useState } from 'react';
 
-import type { Faction, MatchFormat } from '@app/shared';
+import { MAIN_DECK_SIZE, type Faction, type MatchFormat } from '@app/shared';
 
+import {
+  deckDefIds,
+  deckTotal,
+  isDeckComplete,
+  loadActiveDeckId,
+  loadDecks,
+  saveActiveDeckId,
+} from './decks.js';
 import type { RoomSession } from './useRoom.js';
 
 /** 阵营选项 —— 与 shared 的 `Faction` 一一对应；空串 = 交给服务端按座位轮换。 */
@@ -33,6 +41,22 @@ export default function HomeScreen(props: {
   const [faction, setFaction] = useState<Faction | ''>('');
   const [joinFaction, setJoinFaction] = useState<Faction | ''>('');
   const [localError, setLocalError] = useState('');
+
+  /**
+   * 自建卡组（D-141）：对局前在这里选，准备页还能改。
+   *
+   * 只列「正好 30 张」的卡组可选；未凑满的置灰并显示张数，避免把非法卡组发出去。
+   * 选择落 localStorage，与准备页共用同一个「当前卡组」。
+   */
+  const [decks] = useState(loadDecks);
+  const [deckId, setDeckId] = useState(loadActiveDeckId);
+  const chosenDeck = decks.find((d) => d.id === deckId && isDeckComplete(d)) ?? null;
+  const chosenDefIds = chosenDeck ? deckDefIds(chosenDeck) : undefined;
+
+  const pickDeck = (id: string): void => {
+    setDeckId(id);
+    saveActiveDeckId(id);
+  };
 
   /** 建房 / 加房前的**本地**校验 —— 不发请求就能拦住的错误，不要等服务器打回。 */
   const createOrJoin = (action: (name: string) => void): void => {
@@ -75,6 +99,32 @@ export default function HomeScreen(props: {
             placeholder="玩家"
             data-testid="nickname"
           />
+        </label>
+
+        {/* 自建卡组（D-141）：建房与加入都用这里的选择；准备页还能改 */}
+        <label className="block">
+          <span className="text-xs text-slate-400">我的卡组（不选 = 阵营默认）</span>
+          <select
+            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2"
+            value={deckId}
+            onChange={(e) => pickDeck(e.target.value)}
+            data-testid="deck-choice"
+          >
+            <option value="">阵营默认卡组</option>
+            {decks.map((d) => {
+              const n = deckTotal(d);
+              return (
+                <option key={d.id} value={d.id} disabled={!isDeckComplete(d)}>
+                  {d.name}（{n}/{MAIN_DECK_SIZE} 张{isDeckComplete(d) ? '' : '，未完成'}）
+                </option>
+              );
+            })}
+          </select>
+          {decks.length === 0 ? (
+            <p className="mt-1 text-[11px] text-slate-500">
+              还没有自建卡组，点下方「编辑卡组」可以新建。
+            </p>
+          ) : null}
         </label>
 
         <label className="block">
@@ -128,7 +178,7 @@ export default function HomeScreen(props: {
             createOrJoin((name) => {
               // 服务端上限 8：超范围在这里折回，不要等服务器打回。
               const n = Math.min(8, Math.max(1, Math.round(Number(capacity) || 2)));
-              session.create(name, n, format, faction || undefined);
+              session.create(name, n, format, faction || undefined, chosenDefIds);
             })
           }
           data-testid="create"
@@ -166,7 +216,11 @@ export default function HomeScreen(props: {
         <button
           type="button"
           className="w-full rounded bg-sky-700 px-4 py-3 disabled:opacity-50"
-          onClick={() => createOrJoin((name) => session.join(code, name, joinFaction || undefined))}
+          onClick={() =>
+            createOrJoin((name) =>
+              session.join(code, name, joinFaction || undefined, chosenDefIds),
+            )
+          }
           disabled={!code.trim()}
           data-testid="join"
         >

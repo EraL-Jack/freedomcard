@@ -1,12 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 
 import * as core from '@app/core';
-import type { CardInstance, GameState, PlayerId, PlayerState, Zone } from '@app/shared';
+import { MAIN_DECK_SIZE, type CardInstance, type GameState, type PlayerId, type PlayerState, type Zone } from '@app/shared';
 
 import { ACTIVATABLE_EFFECTS, CARD_POOL } from '@app/shared/cards';
 import { MULLIGAN_WINDOW_MS } from '@app/shared/constants';
 
 import CardTile from './CardTile.js';
+import {
+  deckDefIds,
+  deckTotal,
+  isDeckComplete,
+  loadActiveDeckId,
+  loadDecks,
+  saveActiveDeckId,
+} from './decks.js';
 import { KEYWORD_NOTE, PHASE_LABEL } from './labels.js';
 import type { RoomView } from './types.js';
 import type { Fx, RoomSession } from './useRoom.js';
@@ -582,8 +590,22 @@ function RevealBox(props: {
   );
 }
 
-function WaitingRoom({ session }: { session: RoomSession }): React.JSX.Element {  const { room, me, ready, notice, leave } = session;
+function WaitingRoom({ session }: { session: RoomSession }): React.JSX.Element {
+  const { room, me, ready, notice, leave, setDeck } = session;
   const meReady = room?.seats.find((s) => s && s.playerId === me)?.ready ?? false;
+
+  /**
+   * 卡组（D-141）—— 准备页可改，准备后锁定（服务端同样只接受未开局）。
+   * 选择存本机；发给服务端的是展开后的 30 个 defId，空数组 = 阵营默认。
+   */
+  const [decks] = useState(loadDecks);
+  const [deckId, setDeckId] = useState(loadActiveDeckId);
+  const pickDeck = (id: string): void => {
+    setDeckId(id);
+    saveActiveDeckId(id);
+    const d = decks.find((x) => x.id === id && isDeckComplete(x));
+    setDeck(d ? deckDefIds(d) : []);
+  };
 
   return (
     <div className="flex flex-col items-center justify-center gap-3 p-6 text-center">
@@ -609,6 +631,28 @@ function WaitingRoom({ session }: { session: RoomSession }): React.JSX.Element {
           </li>
         ))}
       </ul>
+      {/* 卡组（D-141）：准备前可换；准备后锁定，避免开局瞬间还在改 */}
+      {!meReady && decks.length > 0 ? (
+        <label className="block w-full max-w-xs text-left">
+          <span className="text-xs text-slate-400">我的卡组</span>
+          <select
+            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm"
+            value={deckId}
+            onChange={(e) => pickDeck(e.target.value)}
+            data-testid="waiting-deck"
+          >
+            <option value="">阵营默认卡组</option>
+            {decks.map((d) => {
+              const n = deckTotal(d);
+              return (
+                <option key={d.id} value={d.id} disabled={!isDeckComplete(d)}>
+                  {d.name}（{n}/{MAIN_DECK_SIZE} 张{isDeckComplete(d) ? '' : '，未完成'}）
+                </option>
+              );
+            })}
+          </select>
+        </label>
+      ) : null}
       {/* 已准备后按钮不展示（Era 2026-10-19），状态用纯文本呈现 */}
       {meReady ? (
         <p className="text-sm text-emerald-300" data-testid="ready-done">

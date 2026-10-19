@@ -1,4 +1,6 @@
-import type { Faction, PlayerId } from '@app/shared';
+import { MAIN_DECK_SIZE, MAX_COPIES, type Faction, type PlayerId } from '@app/shared';
+
+import { CARD_POOL } from './cards.js';
 
 /**
  * Demo 用默认卡组 —— ADR-0018 / ADR-0025 / D-235。
@@ -100,6 +102,34 @@ export const FACTION_DECKS: Readonly<Record<Faction, FactionDeck>> = {
   frost: { commander: FROST_COMMANDER_ID, deck: FROST_MAIN_DECK, recipe: FROST_MAIN_DECK_RECIPE },
   star: { commander: STAR_COMMANDER_ID, deck: STAR_MAIN_DECK, recipe: STAR_MAIN_DECK_RECIPE },
 };
+
+/**
+ * 校验客户端提交的主卡组（D-141）。
+ *
+ * 返回 `null` = 合法；否则返回**直接给玩家看的人话原因**。
+ *
+ * 与 `core.checkDeck` 同口径（30 张 / 同名 ≤3 / 不含指挥官 / 卡必须存在），
+ * 区别是这里校验的是「刚收到的 defId 列表」，还没装配成 `PlayerState`。
+ * 卡组只含主卡组：指挥官仍由席位阵营决定。
+ */
+export function validateDeckList(defIds: readonly string[]): string | null {
+  if (defIds.length !== MAIN_DECK_SIZE) {
+    return `主卡组应为 ${MAIN_DECK_SIZE} 张，当前 ${defIds.length} 张`;
+  }
+  const copies = new Map<string, number>();
+  for (const id of defIds) {
+    const def = CARD_POOL[id];
+    if (!def) return `卡组里有未知卡牌：${id}`;
+    if (def.type === 'commander') return `主卡组不能包含指挥官：${def.name}`;
+    copies.set(id, (copies.get(id) ?? 0) + 1);
+  }
+  for (const [id, n] of copies) {
+    if (n > MAX_COPIES) {
+      return `同名卡不得超过 ${MAX_COPIES} 张：${CARD_POOL[id]?.name ?? id}（当前 ${n} 张）`;
+    }
+  }
+  return null;
+}
 
 /** 座位轮换默认阵营（未显式选择时）。 */
 const ROTATION: readonly Faction[] = ['blade', 'frost', 'star'];

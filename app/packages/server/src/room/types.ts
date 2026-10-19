@@ -35,6 +35,14 @@ export interface Seat {
    * 缺省时由服务端按座位轮换（老客户端不带该字段也要能用）。
    */
   faction: Faction;
+  /**
+   * 自建主卡组（D-141）—— 30 个 `defId`，入站已用 `validateDeckList` 校验过。
+   *
+   * `undefined` = 使用阵营默认卡组（客户端提交空数组等价于回到默认）。
+   * 只在未开局时可改，开局后锁定（`DECK_LOCKED`）。
+   * 指挥官**始终**由阵营决定，`deck` 只覆盖主卡组那 30 张。
+   */
+  deck?: readonly string[];
 }
 
 export interface Room {

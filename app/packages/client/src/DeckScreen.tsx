@@ -5,56 +5,32 @@ import { MAIN_DECK_SIZE, MAX_COPIES } from '@app/shared';
 import { CARD_POOL } from '@app/shared/cards';
 
 import CardTile from './CardTile.js';
+import { deckTotal, loadDecks, saveDecks, type SavedDeck } from './decks.js';
 
 /**
  * 卡组编辑 —— B1 页面清单要求「需要」，B1 补充 2 要求**支持多个卡组保存**。
  *
- * ⚠️ **当前尚未接入开局**：服务端开局桥取的是 `deck-pool.ts` 的 Demo 卡组
- * （ADR-0018 的占位数据）。本界面可以正常编辑与保存卡组，
- * 但「把玩家自己的卡组交给服务端」需要一条卡组提交协议 —— 那是 Era 的
- * 输入范围（卡组怎么交给服务端、什么时候交），故先留接口不做，见 `docs/01` §1.3。
+ * D-141：编辑好的卡组已接入开局 —— 正好 30 张的卡组可在**建房/加入时**与
+ * **准备页**选用（`HomeScreen` / `WaitingRoom` 的下拉），服务端校验后按它装配主卡组。
+ * 指挥官不随卡组提交：仍由席位阵营决定。
  */
-
-interface Deck {
-  id: string;
-  name: string;
-  /** defId → 张数。 */
-  cards: Record<string, number>;
-}
-
-const LS_DECKS = 'fc.decks';
-
-function load(): Deck[] {
-  try {
-    const raw = localStorage.getItem(LS_DECKS);
-    if (!raw) return [];
-    const parsed: unknown = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as Deck[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function save(decks: Deck[]): void {
-  localStorage.setItem(LS_DECKS, JSON.stringify(decks));
-}
 
 const POOL = Object.values(CARD_POOL).filter((c) => c.type !== 'commander');
 
 export default function DeckScreen({ onBack }: { onBack: () => void }): React.JSX.Element {
-  const [decks, setDecks] = useState<Deck[]>(load);
-  const [active, setActive] = useState<string | null>(() => load()[0]?.id ?? null);
+  const [decks, setDecks] = useState<SavedDeck[]>(loadDecks);
+  const [active, setActive] = useState<string | null>(() => loadDecks()[0]?.id ?? null);
 
   const deck = decks.find((d) => d.id === active) ?? null;
-  const total = deck ? Object.values(deck.cards).reduce((a, b) => a + b, 0) : 0;
+  const total = deck ? deckTotal(deck) : 0;
 
-  const commit = (next: Deck[]): void => {
+  const commit = (next: SavedDeck[]): void => {
     setDecks(next);
-    save(next);
+    saveDecks(next);
   };
 
   const create = (): void => {
-    const d: Deck = { id: String(Date.now()), name: `卡组 ${decks.length + 1}`, cards: {} };
+    const d: SavedDeck = { id: String(Date.now()), name: `卡组 ${decks.length + 1}`, cards: {} };
     commit([...decks, d]);
     setActive(d.id);
   };
@@ -158,7 +134,7 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
       ) : null}
 
       <p className="mt-auto text-[11px] text-slate-500">
-        卡组保存于本机浏览器；尚未接入开局（服务端当前使用 Demo 占位卡组）。
+        卡组保存于本机浏览器；凑满 {MAIN_DECK_SIZE} 张即可在开局时选用（指挥官仍由阵营决定）。
       </p>
     </main>
   );

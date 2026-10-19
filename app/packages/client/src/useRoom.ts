@@ -102,9 +102,19 @@ export interface RoomSession {
   /**
    * 建房 —— `format` 是赛制（BO1/BO3，D-132），`faction` 是本方阵营（D-235）。
    * 两者都由建房方在界面上选择，服务端据此建立房间与卡组。
+   *
+   * `deck` 是自建主卡组（D-141）：30 个 `defId`；不传 = 用阵营默认卡组。
    */
-  create(nickname: string, capacity: number, format?: MatchFormat, faction?: Faction): void;
-  join(code: string, nickname: string, faction?: Faction): void;
+  create(
+    nickname: string,
+    capacity: number,
+    format?: MatchFormat,
+    faction?: Faction,
+    deck?: string[],
+  ): void;
+  join(code: string, nickname: string, faction?: Faction, deck?: string[]): void;
+  /** 准备页换卡组（D-141）—— 未开局时可用；空数组 = 回到阵营默认。 */
+  setDeck(deck: string[]): void;
   /** 开始下一小局（仅房主可用，BO3）。 */
   nextGame(): void;
   leave(): void;
@@ -456,11 +466,24 @@ export function useRoom(): RoomSession {
   };
 
   const create = useCallback(
-    (nickname: string, capacity: number, format: MatchFormat = 'bo1', faction?: Faction): void => {
+    (
+      nickname: string,
+      capacity: number,
+      format: MatchFormat = 'bo1',
+      faction?: Faction,
+      deck?: string[],
+    ): void => {
       localStorage.setItem(LS.nickname, nickname);
       socket.emit(
         SOCKET_EVENTS.roomCreate,
-        { nickname: nickname || '玩家', capacity, format, ...(faction ? { faction } : {}) },
+        {
+          nickname: nickname || '玩家',
+          capacity,
+          format,
+          ...(faction ? { faction } : {}),
+          // D-141：只有正好 30 张才会传；否则交给阵营默认。
+          ...(deck && deck.length > 0 ? { deck } : {}),
+        },
         (res: Ack) => {
           if (acceptIdentity(res)) setNotice(`已建房，房间码 ${res.room?.code ?? ''}`);
         },
@@ -469,15 +492,31 @@ export function useRoom(): RoomSession {
     [],
   );
 
-  const join = useCallback((code: string, nickname: string, faction?: Faction): void => {
-    localStorage.setItem(LS.nickname, nickname);
-    socket.emit(
-      SOCKET_EVENTS.roomJoin,
-      { code: code.trim(), nickname: nickname || '玩家', ...(faction ? { faction } : {}) },
-      (res: Ack) => {
-        if (acceptIdentity(res)) setNotice(`已加入房间 ${res.room?.code ?? ''}`);
-      },
-    );
+  const join = useCallback(
+    (code: string, nickname: string, faction?: Faction, deck?: string[]): void => {
+      localStorage.setItem(LS.nickname, nickname);
+      socket.emit(
+        SOCKET_EVENTS.roomJoin,
+        {
+          code: code.trim(),
+          nickname: nickname || '玩家',
+          ...(faction ? { faction } : {}),
+          ...(deck && deck.length > 0 ? { deck } : {}),
+        },
+        (res: Ack) => {
+          if (acceptIdentity(res)) setNotice(`已加入房间 ${res.room?.code ?? ''}`);
+        },
+      );
+    },
+    [],
+  );
+
+  /** 准备页换卡组（D-141）—— 服务端只在未开局时接受。 */
+  const setDeck = useCallback((deck: string[]): void => {
+    socket.emit(SOCKET_EVENTS.roomDeck, { deck }, (res: Ack) => {
+      if (!res.ok) return setNotice(`换卡组失败：${res.error ?? '未知错误'}`);
+      if (res.room) setRoom(res.room);
+    });
   }, []);
 
   /** 开始下一小局（BO3）—— 仅房主可发起，服务端会校验。 */
@@ -554,6 +593,7 @@ export function useRoom(): RoomSession {
     notice,
     create,
     join,
+    setDeck,
     nextGame,
     leave,
     ready,
