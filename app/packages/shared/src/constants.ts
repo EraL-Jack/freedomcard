@@ -77,6 +77,26 @@ export const ROOM_ERRORS = {
 
 export type RoomErrorCode = (typeof ROOM_ERRORS)[keyof typeof ROOM_ERRORS];
 
+/**
+ * 房间错误码 → 中文（D-157）。
+ *
+ * 放在 shared 而不是客户端：**类型可以强制穷尽** —— 以后新增错误码，
+ * 少写一条文案就会编译失败，而不是等玩家看到「操作失败（NOT_HOST）」。
+ * 服务端回包若带了 `message`，仍以 `message` 为准（更具体）。
+ */
+export const ROOM_ERROR_TEXT: Readonly<Record<RoomErrorCode, string>> = {
+  ROOM_NOT_FOUND: '房间不存在',
+  ROOM_FULL: '房间已满',
+  ROOM_ENDED: '对局已结束',
+  INVALID_TOKEN: '重连凭据无效，请重新加入房间',
+  GRACE_EXPIRED: '断线超过 60 秒，席位已释放',
+  NOT_IN_ROOM: '你不在任何房间里',
+  NOT_HOST: '只有房主能开始下一局',
+  NO_NEXT_GAME: '当前没有等待开局的下一局',
+  INVALID_DECK: '卡组不合法（需 30 张、同名 ≤3、不含指挥官）',
+  DECK_LOCKED: '对局已开始，不能再换卡组',
+};
+
 /* ------------------------------------------------------------------ *
  * 玩法常量 —— 全部照抄 `docs/06` A 组的 Era 输入，不得自行推算。
  * 每条都注明来源，便于日后核对。

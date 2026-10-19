@@ -2404,3 +2404,20 @@ Era 2026-10-19 一次性拍板，逐条落地：
   主页与对战桌截图确认没有「亮底按钮变白字」之类的连带问题。
 - 验证：typecheck 0 / lint 0 / E2E **19** / build gzip **140.30 kB**。
 - 破坏性：**否**（颜色修复；不涉及布局与规则）。
+
+## D-157 房间错误码文案表移入 shared + 三条通知不再直出错误码
+
+- **怎么发现的**：核对「错误信息必须人话」这条老约定时发现 —— 客户端自己维护的
+  `ROOM_ERROR_TEXT` 把 `ROOM_NOT_FOUND` 写成了 **`NOT_FOUND`**（键名对不上，映射永远命中不了），
+  且缺 5 个码（`GRACE_EXPIRED` / `NOT_HOST` / `NO_NEXT_GAME` / `INVALID_DECK` / `DECK_LOCKED`）。
+  服务端大多数分支都带了中文 `message`，所以这些洞平时被盖住了；一旦某条路径只回码，
+  玩家就会看到「操作失败（ROOM_NOT_FOUND）」。
+- 另有三处通知**绕过** `failText` 直接拼错误码：
+  开始下一局（`开始下一局失败：NOT_HOST`）、离开、准备 —— 同样是对玩家说天书。
+- 改动：
+  - `ROOM_ERROR_TEXT` 移到 `shared/src/constants.ts`，类型写成 `Record<RoomErrorCode, string>`
+    —— **新增错误码少写文案会编译失败**，不再依赖人工核对。
+  - `useRoom` 删掉本地表，`failText` 直接用共享表；三条通知统一走 `failText`。
+  - 测试：`schema.test.ts` 新增「每个错误码都有中文文案，且不是错误码本身」。server **74**。
+- 验证：core **162** / server **74** / E2E **19** / typecheck 0 / lint 0 / build gzip **140.30 kB**。
+- 破坏性：**否**（纯文案与映射归属）。
