@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
 import { startGame, newClient } from './helpers.js';
 
@@ -192,4 +192,44 @@ test('自建卡组：对局前选中，开局后使用该卡组（D-141）', asy
 
   // 默认炎刃卡组里没有霜律卡 —— 手牌出现「霜律」即证明自建卡组生效
   await expect(host.getByTestId('hand')).toContainText('霜律', { timeout: 10_000 });
+});
+
+/**
+ * 认输入口 + BO3 第 3 局败者先攻（D-147 / H33）。
+ *
+ * 此前客户端只有「离开」，而离开在 BO3 里判负**整个系列赛** —— 没法只输一局，
+ * 也导致「打到 1:1」这条链路无法端到端验证。补上认输按钮后一并覆盖：
+ * 第 1 局 host 认输 → 第 2 局 guest 认输（1:1）→ 第 3 局先手应是第 2 局败者 guest。
+ *
+ * 判据用起手张数：先手 5 张、后手 6 张（docs/16 §1.2）。
+ */
+test('认输只判负本局；BO3 第 3 局由上一局败者先攻（D-147 / H33）', async ({ browser }) => {
+  const { host, guest } = await startGame(browser, { format: 'bo3' });
+  const handCount = (p: Page): Promise<number> =>
+    p.getByTestId('hand').locator('[data-testid="card"]').count();
+
+  // 第 1 小局：host 认输（两段式确认）→ guest 胜，系列赛 0:1，房间进入「等待下一局」
+  await host.getByTestId('concede').click();
+  await host.getByTestId('concede-confirm').click();
+  await expect(host.getByTestId('game-result')).toHaveText('本局败北', { timeout: 20_000 });
+  await expect(guest.getByTestId('game-result')).toHaveText('本局胜利', { timeout: 20_000 });
+  // 认输 ≠ 离开：房主仍能开下一局（离开会直接把 seriesWinner 写死）
+  await expect(host.getByTestId('next-game')).toBeVisible({ timeout: 10_000 });
+
+  // 第 2 小局：guest 认输 → host 胜 → 1:1
+  await host.getByTestId('next-game').click();
+  await expect(guest.getByTestId('turn')).toBeVisible({ timeout: 20_000 });
+  await guest.getByTestId('concede').click();
+  await guest.getByTestId('concede-confirm').click();
+  await expect(host.getByTestId('game-result')).toHaveText('本局胜利', { timeout: 20_000 });
+  await expect(host.getByTestId('series-score')).toContainText('我 1 : 1 对手', {
+    timeout: 10_000,
+  });
+
+  // 第 3 小局：先手 = 第 2 局败者 guest（H33 取代原先的重新掷骰）
+  await host.getByTestId('next-game').click();
+  await expect(host.getByTestId('series')).toContainText('第 3 局', { timeout: 20_000 });
+  await expect.poll(() => handCount(guest)).toBe(5);
+  await expect.poll(() => handCount(host)).toBe(6);
+  await expect(guest.getByText('你的回合')).toBeVisible({ timeout: 10_000 });
 });

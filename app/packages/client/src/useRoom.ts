@@ -138,6 +138,11 @@ export interface RoomSession {
   activateEffect(uid: string, effect: string): void;
   /** 回答待定选择（choice 为选项 id 或 'pass'）。 */
   chooseEffect(choice: string): void;
+  /**
+   * 认输（docs/06 A3-4「随时认输」，D-147）—— 只判负**本局**；
+   * BO3 里房间转入「等待下一局」，与「离开」（判负整个系列赛）不同。
+   */
+  concede(): void;
   dismiss(): void;
 }
 
@@ -614,6 +619,7 @@ export function useRoom(): RoomSession {
     mulligan: (returns) => send(core.INTENTS.mulligan, { returns }),
     activateEffect: (uid, effect) => send(core.INTENTS.effectActivate, { uid, effect }),
     chooseEffect: (choice) => send(core.INTENTS.effectChoose, { choice }),
+    concede: () => send(core.INTENTS.concede),
     dismiss,
   };
 }

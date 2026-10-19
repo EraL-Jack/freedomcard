@@ -704,6 +704,14 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   // （充能规则上允许任意数量（X-2），但协议支持逐张发，多张充能 = 连续多次单张操作。）
   const [picked, setPicked] = useState<string | null>(null);
   const [attacker, setAttacker] = useState<string | null>(null);
+  /**
+   * 认输二次确认（D-147）。
+   *
+   * `concede` 规则（docs/06 A3-4「随时认输」）早就实现了，但一直没有 UI 入口 ——
+   * 玩家想认输只能点「离开」，而在 BO3 里离开 = 判负**整个系列赛**，差别很大。
+   * 认输不可撤销，故做成两段式：第一次点变红并改文案，第二次才真的发。
+   */
+  const [concedeArmed, setConcedeArmed] = useState(false);
   /** 详情浮层里正在查看的卡（Era 2026-10-18：卡牌携带效果必须可查看）。 */
   const [detailCard, setDetailCard] = useState<CardInstance | null>(null);
   /**
@@ -1413,6 +1421,25 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
             取消攻击
           </button>
         ) : null}
+        <button
+          type="button"
+          className={
+            concedeArmed
+              ? 'rounded bg-rose-700 px-3 py-2 text-xs font-medium sm:text-sm'
+              : 'rounded bg-slate-800 px-3 py-2 text-xs sm:text-sm'
+          }
+          onClick={() => {
+            if (!concedeArmed) {
+              setConcedeArmed(true);
+              return;
+            }
+            setConcedeArmed(false);
+            session.concede();
+          }}
+          data-testid={concedeArmed ? 'concede-confirm' : 'concede'}
+        >
+          {concedeArmed ? '确认认输（本局判负）' : '认输'}
+        </button>
         <button
           type="button"
           className="rounded bg-slate-800 px-3 py-2 text-xs sm:text-sm"
