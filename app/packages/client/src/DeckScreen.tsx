@@ -79,7 +79,12 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
             {d.name}
           </button>
         ))}
-        <button type="button" className="rounded bg-emerald-800 px-3 py-2 text-sm" onClick={create}>
+        <button
+          type="button"
+          className="rounded bg-emerald-800 px-3 py-2 text-sm"
+          onClick={create}
+          data-testid="deck-new"
+        >
           新建卡组
         </button>
         {deck ? (
@@ -149,6 +154,7 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
                     className="rounded bg-slate-700 px-2 py-1 text-xs"
                     onClick={() => bump(def.defId, -1)}
                     disabled={n === 0}
+                    data-testid={`deck-remove-${def.defId}`}
                   >
                     −
                   </button>
@@ -158,6 +164,7 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
                     className="rounded bg-slate-700 px-2 py-1 text-xs"
                     onClick={() => bump(def.defId, 1)}
                     disabled={n >= MAX_COPIES}
+                    data-testid={`deck-add-${def.defId}`}
                   >
                     ＋
                   </button>

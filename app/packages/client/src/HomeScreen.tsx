@@ -95,7 +95,12 @@ export default function HomeScreen(props: {
           <input
             className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2"
             value={nickname}
-            onChange={(e) => setNickname(e.target.value)}
+            /* 边输边存（D-158）：原来只在建房/加入时才落盘，于是「输昵称 → 去编辑卡组 → 返回」
+               昵称就没了。HomeScreen 每次挂载都从 localStorage 初始化，存晚了等于没存。 */
+            onChange={(e) => {
+              setNickname(e.target.value);
+              localStorage.setItem('fc.nickname', e.target.value);
+            }}
             placeholder="玩家"
             data-testid="nickname"
           />
