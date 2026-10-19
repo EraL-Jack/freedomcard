@@ -797,3 +797,18 @@ E2E 里先后手由掷骰决定、起手牌由洗牌决定，两者都是随机�
   沿用 start 的 `payload.firstPlayerId`（仅系统来源）链路，**不改 `start.ts`**。
 - 影响：`server/src/room/{types,room}.ts`、`server/src/index.ts`（注释）、room 单测 +1。
 - 破坏性：**否**（仅赛制细节；单局规则不变）。
+
+## ADR-0033 · 展示时序：先置底、再结算（D-146 / H35）
+
+- 日期：2026-10-19
+- 状态：已接受（Era 2026-10-19 回复「继续」，未反对推荐方案）
+- 背景：展示（docs/17 §2.1）在结算「展示时」效果期间可能触发抽牌。若展示卡尚未离场，
+  抽牌会取到同批次的卡，`deck:put-bottom` 对已不在牌库的 uid 静默跳过 ——
+  该卡既被算作「已展示」（效果触发过一次）又留在手牌，下次展示会再次触发。
+- 决策：**展示批次先整体置入牌库底，再按翻开顺序逐张结算「展示时」**。
+  等于「翻开 → 整批离场 → 结算」，抽牌取牌库下一张，位置与张数都确定。
+- 实现：`revealFromDeck` 在 `card:revealed` 之后**立即** push `deck:put-bottom`；
+  调用方（`starRevealEvents`）在其后结算星轨加成 / 星轨环 / 各卡 `onReveal`。
+- 影响：`docs/17` §2.1（原文为相反表述，已纠正）、`docs/09` H35 销项、
+  `core/src/effects/growth.test.ts`（+1 条）、`client/src/TableScreen.tsx`（排队提示）。
+- 破坏性：**否**（实现早已如此，本次为定稿 + 纠正文档 + 补断言）。
