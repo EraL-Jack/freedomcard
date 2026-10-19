@@ -10,7 +10,7 @@
  *
  * 效果接线（ADR-0025）：
  *  - 随从 → `summonEntryEvents`（军师/队长触发器 + 各卡登场效果）；
- *  - 法术 → `spellEntryEvents`，结算后置入墓地（设置法术留在法术区）。
+ *  - 法术 → `spellEntryEvents`，结算后置入弃牌区（设置法术留在法术区）。
  */
 
 import {
@@ -108,7 +108,7 @@ export const playRule = (
     events.push(...summonEntryEvents(at, next, intent.playerId, uid, ctx));
   } else {
     events.push(...spellEntryEvents(at, next, intent.playerId, uid, ctx));
-    // 普通法术结算后进墓地；设置法术留在法术区（提供光环 / 触发）。
+    // 普通法术结算后进弃牌区；设置法术留在法术区（提供光环 / 触发）。
     if (def.type === 'spell') {
       events.push(moved(at, intent.playerId, uid, 'spell', 'graveyard'));
     }

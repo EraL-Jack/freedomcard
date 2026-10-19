@@ -308,7 +308,7 @@ describe('RoomManager · 赛制与系列赛（D-132）', () => {
     expect(room.gameNo).toBe(1);
   });
 
-  it('下一局先手：第 2 小局换人，第 3 小局重新掷骰（null）', () => {
+  it('下一局先手：第 2 小局换人，第 3 小局由上一小局败者先攻（H33）', () => {
     const s = bo3();
     const room = s.manager.getRoom(s.roomId)!;
     room.firstPlayers.push(s.host); // 第 1 小局先手 = host
@@ -317,7 +317,17 @@ describe('RoomManager · 赛制与系列赛（D-132）', () => {
 
     s.manager.markNextGameStarted(s.roomId);
     room.firstPlayers.push(s.guest);
-    s.manager.recordGameResult(s.roomId, s.guest);
+    s.manager.recordGameResult(s.roomId, s.guest); // 第 2 小局 guest 胜 → 败者 host
+    expect(s.manager.getRoom(s.roomId)!.lastLoser).toBe(s.host);
+    expect(s.manager.nextFirstPlayer(s.roomId)).toBe(s.host);
+  });
+
+  it('第 3 小局前判和时无败者 → 先手回落到掷骰（null）', () => {
+    const s = bo3();
+    s.manager.recordGameResult(s.roomId, s.host);
+    s.manager.markNextGameStarted(s.roomId);
+    s.manager.recordGameResult(s.roomId, null); // 判和
+    expect(s.manager.getRoom(s.roomId)!.lastLoser).toBeNull();
     expect(s.manager.nextFirstPlayer(s.roomId)).toBeNull();
   });
 

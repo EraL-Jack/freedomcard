@@ -181,7 +181,7 @@ describe('炎刃随从效果（docs/12 §2）', () => {
     expect(unitPower(after, CARD_POOL, 'h1')).toBe(10); // 7 + 3
   });
 
-  it('凤凰：登场清空墓地炎刃并每张 +1（上限 +5）', () => {
+  it('凤凰：登场清空弃牌区炎刃并每张 +1（上限 +5）', () => {
     const graveyard = Array.from({ length: 6 }, (_, i) => c(`g${i}`, 'bladeVanguard'));
     const s = craft({
       zones: {
@@ -191,13 +191,13 @@ describe('炎刃随从效果（docs/12 §2）', () => {
       },
     });
     const after = run(s, intent('p1', INTENTS.play, { uid: 'h1' }));
-    // 6 张墓地 + 6 张支付（炎刃新兵）全部被除外
+    // 6 张弃牌区 + 6 张支付（炎刃新兵）全部被除外
     expect(after.players['p1']!.zones.exile.length).toBe(12);
     expect(after.players['p1']!.zones.graveyard.length).toBe(0);
     expect(unitPower(after, CARD_POOL, 'h1')).toBe(12); // 7 + 5（上限）
   });
 
-  it('骑士：攻击时可除外墓地炎刃换 +1，参与当次裁决', () => {
+  it('骑士：攻击时可除外弃牌区炎刃换 +1，参与当次裁决', () => {
     const s = craft({
       phase: 'battle',
       zones: {
@@ -214,7 +214,7 @@ describe('炎刃随从效果（docs/12 §2）', () => {
     expect(unitPower(after, CARD_POOL, 'a1')).toBe(5); // 4 + 1（本回合）
   });
 
-  it('老兵：登场可除外墓地炎刃换抽 1', () => {
+  it('老兵：登场可除外弃牌区炎刃换抽 1', () => {
     const s = craft({
       zones: {
         hand: [c('h1', 'bladeVeteran')],
@@ -250,7 +250,7 @@ describe('炎刃随从效果（docs/12 §2）', () => {
         },
       },
     };
-    // 没有指挥官实例 → 改用骑士攻击路径需要墓地/攻击；这里直接构造除外事件走 exileCard 的等价链路：
+    // 没有指挥官实例 → 改用骑士攻击路径需要弃牌区/攻击；这里直接构造除外事件走 exileCard 的等价链路：
     // 卫士登场磨到炎刃卡后选择除外
     const guardState: GameState = {
       ...withHand,
@@ -289,7 +289,7 @@ describe('炎刃随从效果（docs/12 §2）', () => {
     expect(unitPower(after, CARD_POOL, 'b1')).toBe(5); // 2 + 3
   });
 
-  it('焚典：展示 4 张，选炎刃卡除外，其余进墓地', () => {
+  it('焚典：展示 4 张，选炎刃卡除外，其余进弃牌区', () => {
     const s = craft({
       zones: {
         hand: [c('h1', 'bladeCremation')],

@@ -2,7 +2,7 @@
  * 炎刃法术 —— docs/12 §2.3（ADR-0025）。
  *
  * - 炎刃战术 `bladeTactics`：选择一个己方随从，本回合 +2（除外区炎刃 ≥ 3 时 +3）。
- * - 炎刃焚典 `bladeCremation`：展示卡组顶 4 张，任意数量炎刃卡除外，其余进墓地。
+ * - 炎刃焚典 `bladeCremation`：展示卡组顶 4 张，任意数量炎刃卡除外，其余进弃牌区。
  *
  * 战旗 `bladeBanner` 没有模块：它的「除外时抽 1」挂在 `primitives.exileCard`，
  * 保证**所有**除外路径都触发（骑士 / 老兵 / 凤凰 / 焚典 / 统领Ⅱ）。
@@ -68,7 +68,7 @@ function revealedUids(pending: { meta?: Record<string, unknown> }): string[] {
   return Array.isArray(v) ? (v.filter((x) => typeof x === 'string') as string[]) : [];
 }
 
-/** 把 `left` 里仍在卡组的卡全部置入墓地（「其余置入墓地」）。 */
+/** 把 `left` 里仍在卡组的卡全部置入弃牌区（「其余置入弃牌区」）。 */
 function millRemaining(
   at: number,
   state: GameState,
@@ -102,7 +102,7 @@ export const bladeCremationEffect: EffectModule = {
       return def !== undefined && isBladeCard(def);
     });
     if (bladeLeft.length === 0) {
-      // 没有可除外的炎刃卡 → 全部进墓地，不弹空选择
+      // 没有可除外的炎刃卡 → 全部进弃牌区，不弹空选择
       events.push(...top.map((c) => moved(at, owner, c.uid, 'deck', 'graveyard')));
       return events;
     }
@@ -127,7 +127,7 @@ export const bladeCremationEffect: EffectModule = {
     const choice = strArg(intent.payload?.['choice']) ?? '';
     const left = revealedUids(pending);
 
-    // 结束选择：其余全部进墓地
+    // 结束选择：其余全部进弃牌区
     if (choice === 'pass') {
       const events = millRemaining(at, state, me, left);
       return { ok: true, value: [...events, choiceCleared(at)] };

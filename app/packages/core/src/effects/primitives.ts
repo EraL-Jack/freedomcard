@@ -119,7 +119,7 @@ export interface RevealResult {
  * 故先把这批卡挪到牌库底，再逐张结算「展示时」—— 触发读到的是卡定义，
  * 不依赖它在牌堆里的位置。
  *
- * 牌库不足时把墓地洗回（沿用 A9 补充 2 的 reshuffle，与抽牌同一口径）。
+ * 牌库不足时把弃牌区洗回（沿用 A9 补充 2 的 reshuffle，与抽牌同一口径）。
  */
 export function revealFromDeck(
   at: number,
@@ -133,7 +133,7 @@ export function revealFromDeck(
   if (!p || n <= 0) return { events: [], revealed: [], state };
   const e = emitter(state);
 
-  // 牌库不足 → 墓地洗回。显式用 `card:moved` 把墓地卡搬回牌库，再整体重排：
+  // 牌库不足 → 弃牌区洗回。显式用 `card:moved` 把弃牌区卡搬回牌库，再整体重排：
   // `deck:shuffled` 只会重排「已在卡组里的卡」，不会替我们搬区域。
   if (e.state.players[playerId]!.zones.deck.length < n) {
     const gy = e.state.players[playerId]!.zones.graveyard;

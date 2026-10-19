@@ -38,7 +38,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     text: [
       '指挥官',
       'Ⅰ 每回合一次【2】：按除外区「炎刃」卡的数量，执行以下最多 3 个效果（每个效果最多一次）：',
-      '  1 个：从你的墓地选择 1 个力量值不高于该数量的随从，召唤',
+      '  1 个：从你的弃牌区选择 1 个力量值不高于该数量的随从，召唤',
       '  3 个：选择 1 个己方随从，本回合力量值 +1',
       '  5 个：选择 1 个力量值不高于该数量的敌方随从，破坏',
       '  7 个：选择 1 个己方随从，本回合对指挥官伤害 +1',
@@ -113,7 +113,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     keywords: [KEYWORD_TAUNT],
     text: [
       '【2】随从 / 力量值2 / 伤害值1 / 嘲讽',
-      '登场时：将卡组顶 1 张卡置入墓地；若该卡为「炎刃」卡，你可以将其除外。',
+      '登场时：将卡组顶 1 张卡置入弃牌区；若该卡为「炎刃」卡，你可以将其除外。',
     ].join('\n'),
   },
 
@@ -125,7 +125,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     power: 4,
     text: [
       '【3】随从 / 力量值4 / 伤害值1',
-      '攻击时：你可以将墓地 1 张「炎刃」卡除外；若如此做，本回合此卡力量值 +1。',
+      '攻击时：你可以将弃牌区 1 张「炎刃」卡除外；若如此做，本回合此卡力量值 +1。',
     ].join('\n'),
   },
 
@@ -149,7 +149,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     power: 6,
     text: [
       '【5】随从 / 力量值6 / 伤害值1',
-      '登场时：你可以将墓地 1 张「炎刃」卡除外；若如此做，抽 1 张。',
+      '登场时：你可以将弃牌区 1 张「炎刃」卡除外；若如此做，抽 1 张。',
     ].join('\n'),
   },
 
@@ -193,7 +193,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'spell',
     cost: 2,
     power: 0,
-    text: '【2】法术\n展示卡组顶 4 张卡。将其中任意数量的「炎刃」卡除外，其余置入墓地。',
+    text: '【2】法术\n展示卡组顶 4 张卡。将其中任意数量的「炎刃」卡除外，其余置入弃牌区。',
   },
 
   bladePhoenix: {
@@ -205,7 +205,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     damage: 2,
     text: [
       '【7】随从 / 力量值7 / 伤害值2',
-      '登场时：将你墓地中所有「炎刃」卡除外；每除外 1 张，本回合此卡力量值 +1（最多 +5）。',
+      '登场时：将你弃牌区中所有「炎刃」卡除外；每除外 1 张，本回合此卡力量值 +1（最多 +5）。',
     ].join('\n'),
   },
 
@@ -557,7 +557,7 @@ export const CARD_POOL: Record<string, CardDef> = {
  * **衍生物清单** —— 不进卡组、不参与同名上限校验、不计入 30 张主卡组。
  *
  * 单独列出是为了让 `checkDeck` 与卡组构筑逻辑能显式排除它们：
- * 衍生物被破坏后进墓地，但**不参与洗回**（docs/17 §4）。
+ * 衍生物被破坏后进弃牌区，但**不参与洗回**（docs/17 §4）。
  */
 export const TOKEN_CARD_IDS: readonly string[] = ['starSpirit1', 'starSpirit3'];
 

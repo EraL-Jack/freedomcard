@@ -19,6 +19,7 @@ import {
 import { CARD_POOL } from '@app/shared/cards';
 
 import { applyIntent, createInitialState, reduce, INTENTS } from '../index.js';
+import { summonEntryEvents } from '../effects/index.js';
 import { unitPower } from '../ops.js';
 
 const CTX: RuleContext = { now: 1000, cards: CARD_POOL };
@@ -195,15 +196,56 @@ describe('统领 Ⅰ：按除外区炎刃数分档', () => {
     expect(s.players['p1']!.zones.board[0]!.attackRefresh).toBe(true);
   });
 
-  it('1 档：从墓地召唤力量值 ≤ 炎刃数的随从', () => {
+  it('1 档：从弃牌区召唤力量值 ≤ 炎刃数的随从', () => {
     let s = base();
     s = run(s, intent('p1', INTENTS.effectActivate, { uid: 'lord1', effect: '1' }));
     s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'l1' }));
-    // 支付【2】进墓地的 k1/k2 也是合法候选（bladeRecruit power 1 ≤ 3）
+    // 支付【2】进弃牌区的 k1/k2 也是合法候选（bladeRecruit power 1 ≤ 3）
     expect(s.pendingChoice?.options).toEqual(['g1', 'k1', 'k2']);
     s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'g1' }));
     expect(s.players['p1']!.zones.board.map((x) => x.uid)).toContain('g1');
     expect(s.players['p1']!.zones.graveyard.map((x) => x.uid)).not.toContain('g1');
+  });
+
+  it('1 档召唤带登场选择的随从：选择排队，统领链结束后才触发（H28）', () => {
+    // 夹具牌库全为炎刃卡 → 卫士登场磨到的一定是炎刃，必然弹「是否除外」。
+    let s = craft({
+      zones: {
+        commander: [LORD],
+        cost: [c('k1', 'bladeRecruit'), c('k2', 'bladeRecruit')],
+        exile: [c('x1', 'bladeVanguard'), c('x2', 'bladeScout'), c('x3', 'bladeOrder')],
+        graveyard: [c('g1', 'bladeGuard')],
+        board: [c('b1', 'bladeRecruit')],
+      },
+    });
+    s = run(s, intent('p1', INTENTS.effectActivate, { uid: 'lord1', effect: '1' }));
+    s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'l1' }));
+    s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'g1' }));
+
+    // 关键：卫士的登场选择**没有**覆盖统领菜单，而是入队
+    expect(s.pendingChoice?.kind).toBe('blade-lord-1');
+    expect(s.pendingChoiceQueue).toHaveLength(1);
+    expect(s.pendingChoiceQueue[0]!.kind).toBe('blade-guard-exile');
+    expect(s.pendingChoiceQueue[0]!.sourceUid).toBe('g1');
+
+    // 统领链结束 → 队列出队，挂起卫士的选择
+    s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'pass' }));
+    expect(s.pendingChoice?.kind).toBe('blade-guard-exile');
+    expect(s.pendingChoiceQueue).toHaveLength(0);
+
+    // 回答卫士：不除外，收尾
+    s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'pass' }));
+    expect(s.pendingChoice).toBeNull();
+  });
+
+  it('不在选择链中时，登场选择直接挂起而非入队（H28 边界）', () => {
+    const s = craft({
+      zones: { graveyard: [c('g1', 'bladeGuard')] },
+    });
+    // 直接派发登场效果：此时 pendingChoice 为 null → 应发 choice:pending
+    const evs = summonEntryEvents(1000, s, 'p1', 'g1', CTX);
+    expect(evs.some((e) => e.type === 'choice:pending')).toBe(true);
+    expect(evs.some((e) => e.type === 'choice:queued')).toBe(false);
   });
 
   it('费用不足 2 张时不可发动', () => {

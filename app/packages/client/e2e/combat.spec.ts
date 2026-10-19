@@ -77,7 +77,7 @@ test('出随从 → 战斗阶段发起攻击 → 力量值裁决并结算', asyn
     })
     .toBe(true);
 
-  // 我方弃牌区必须真的渲染出来（此前 B2 原文没给它位置，玩家看不到自己的墓地）
+  // 我方弃牌区必须真的渲染出来（此前 B2 原文没给它位置，玩家看不到这一区）
   expect(Number.isFinite(myGraveBefore)).toBe(true);
 });
 

@@ -209,7 +209,7 @@ describe('星轨（docs/17 / D-230）', () => {
     expect(revealCountFor(99)).toBe(4);
   });
 
-  it('星图：展示 1 张 → 星轨 +1、该卡回到牌库底（不进手牌、不进墓地）', () => {
+  it('星图：展示 1 张 → 星轨 +1、该卡回到牌库底（不进手牌、不进弃牌区）', () => {
     const s = craft({
       commander: 'starWatcher',
       zones: {

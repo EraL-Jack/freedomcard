@@ -162,7 +162,9 @@ export function describeEvent(
     /* ---- 效果系统（ADR-0023）：内部记账事件不进日志，玩家可见的给中文 ---- */
     case 'choice:pending':
     case 'choice:cleared':
-      return null; // 选择的挂起/清除由浮层呈现，日志不需要
+    case 'choice:queued':
+    case 'choice:dequeued':
+      return null; // 选择的挂起/排队/清除由浮层呈现，日志不需要
 
     case 'effect:used':
       return `${who(names, str('playerId'))} 发动效果`;

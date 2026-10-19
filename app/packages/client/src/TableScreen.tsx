@@ -474,7 +474,7 @@ function ChoiceOverlay(props: {
 }): React.JSX.Element {
   const { choice } = props;
   const SUB_LABEL: Readonly<Record<string, string>> = {
-    l1: '1档：从墓地召唤随从（力量 ≤ 炎刃数）',
+    l1: '1档：从弃牌区召唤随从（力量 ≤ 炎刃数）',
     l3: '3档：一个随从本回合力量 +1',
     l5: '5档：破坏一个随从（力量 ≤ 炎刃数）',
     l7: '7档：一个随从本回合对指挥官伤害 +1',
@@ -487,10 +487,10 @@ function ChoiceOverlay(props: {
     'blade-scout-exile': '展示到炎刃斥候 —— 是否将其除外？',
     'blade-order-summon': '号令：选择要召唤的随从',
     'blade-guard-exile': '卫士：展示到炎刃卡 —— 是否将其除外？',
-    'blade-knight-attack': '骑士：可除外墓地一张炎刃卡，换本回合力量 +1',
-    'blade-veteran-exile': '老兵：可除外墓地一张炎刃卡，换抽一张牌',
+    'blade-knight-attack': '骑士：可除外弃牌区一张炎刃卡，换本回合力量 +1',
+    'blade-veteran-exile': '老兵：可除外弃牌区一张炎刃卡，换抽一张牌',
     'blade-tactics-target': '战术：选择一个己方随从（本回合力量 +2/+3）',
-    'blade-cremation': '焚典：选择要除外的炎刃卡（其余进墓地）',
+    'blade-cremation': '焚典：选择要除外的炎刃卡（其余进弃牌区）',
     'frost-adjudicator-1': '裁决官Ⅰ：按霜痕层数冻结未冻结的敌方随从',
     'frost-apprentice-freeze': '学徒：冻结一个未冻结的敌方随从',
     'frost-binder-freeze': '缚锁者：冻结一个敌方随从（已冻结则改为抽 1 张）',
@@ -1213,7 +1213,7 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
 
           {/* ⑤ 我方五区 —— 与第 ② 排（对方五区）**严格镜像**（Era 2026-10-14）。
               ② 卡组/法术/指挥官/弃牌/除外 → ⑤ 除外/弃牌/指挥官/法术/卡组。
-              原第 2 格是「费用区」，导致我方**没有弃牌区**（玩家看不到自己的墓地）；
+              原第 2 格是「费用区」，导致我方**看不到自己的弃牌区**；
               费用区在第 ④ 排已有一格，故此处换成弃牌区不丢信息。
               flex-1 平分桌高。 */}
           <section className="grid min-h-0 flex-1 auto-rows-fr grid-cols-5 gap-1">
