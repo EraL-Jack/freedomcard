@@ -78,6 +78,13 @@ export function createInitialState(opts: InitialStateOptions): GameState {
       turnTriggers: [],
       usedCostThisTurn: 0,
       commanderAttacked: false,
+      // 成长资源（D-229 / D-230）—— 永久累积，回合切换不清零。
+      frostMark: 0,
+      starTrack: 0,
+      // 回合级临时修正 —— `turn:changed` 清零。
+      commanderDamageBonus: 0,
+      nextMinionDiscount: 0,
+      tokenSeq: 0,
     };
   }
   return {

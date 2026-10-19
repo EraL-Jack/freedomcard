@@ -27,11 +27,10 @@ import { drawCards, ev, deckShuffled, rngAdvance } from '../ops.js';
 import { nextInt, shuffle } from '../rng.js';
 import { commanderUid } from '../state.js';
 import { checkDeck } from '../deck.js';
-import { syncCommanderGrowth } from './commander-growth.js';
 
 export const startRule = (
   state: GameState,
-  _intent: Intent,
+  intent: Intent,
   ctx: RuleContext,
 ): Result<GameEvent[], Rejection> => {
   if (state.started) {
@@ -66,19 +65,34 @@ export const startRule = (
     shuffled.set(id, s.items);
   }
 
-  // ② 掷骰定先后手（A2-4：1d6 较大者先攻）
-  // ⚠️ 假设（已登记假设清单）：点数相同的处理 Era 未给，此处按「重掷直到不同」。
+  // ② 定先后手（A2-4：1d6 较大者先攻）
+  //
+  //   BO3 第 2 小局要求「双方各先手一次」（docs/16 §1.3），此时由会话层指定先手 ——
+  //   `payload.firstPlayerId` 只允许是**在座玩家之一**，且只接受系统 Intent：
+  //   玩家自己发这个字段等于掷骰作弊，故非系统来源一律忽略。
   const a = state.seats[0]!;
   const b = state.seats[1]!;
-  const roll = rollSequence(cursor);
-  cursor = roll.cursor;
+  const forced =
+    intent.actor === 'system' && typeof intent.payload?.['firstPlayerId'] === 'string'
+      ? String(intent.payload['firstPlayerId'])
+      : '';
+  const seats = forced === a || forced === b ? [forced, forced === a ? b : a] : null;
 
-  const seats = roll.a > roll.b ? [a, b] : [b, a];
-  events.push(rngAdvance(at, roll.steps));
-  events.push(ev(at, 'game:started', { seats, rolls: { [a]: roll.a, [b]: roll.b } }));
+  let order: [PlayerId, PlayerId];
+  if (seats) {
+    order = seats as [PlayerId, PlayerId];
+    events.push(ev(at, 'game:started', { seats: order, forced: true }));
+  } else {
+    const roll = rollSequence(cursor);
+    cursor = roll.cursor;
+    order = roll.a > roll.b ? [a, b] : [b, a];
+    events.push(rngAdvance(at, roll.steps));
+    events.push(ev(at, 'game:started', { seats: order, rolls: { [a]: roll.a, [b]: roll.b } }));
+  }
+  const seatsOut = order;
 
   // ③ 揭示指挥官（X-1：第一个充能阶段揭示后直接置入指挥官区）
-  for (const id of seats) {
+  for (const id of seatsOut) {
     events.push(
       ev(at, 'commander:revealed', {
         playerId: id,
@@ -89,16 +103,15 @@ export const startRule = (
   }
 
   // ④ 第一回合的充能阶段（docs/16 §1/§2，D-227 修订）：
-  //    **先攻首回合自动充能 0 张**（后攻与后续回合仍是 2 张）；
-  //    指挥官力量同步到第 1 轮（双方均为 1）。
-  const firstPlayer = seats[0]!;
+  //    **先攻首回合自动充能 0 张**（后攻与后续回合仍是 2 张）。
+  //    指挥官没有力量值（docs/16 §6.2.1 / D-230），故不再同步任何档位。
+  const firstPlayer = seatsOut[0]!;
   const firstDeck = shuffled.get(firstPlayer) ?? [];
-  events.push(...syncCommanderGrowth(state, 1, ctx));
 
   // ⑤ 发起手牌（docs/16 §1）：先手 5 张、后手 6 张。
-  for (const id of seats) {
+  for (const id of seatsOut) {
     const deckNow = id === firstPlayer ? firstDeck : (shuffled.get(id) ?? []);
-    const count = id === seats[0] ? INITIAL_HAND : SECOND_PLAYER_HAND;
+    const count = id === firstPlayer ? INITIAL_HAND : SECOND_PLAYER_HAND;
     const drawn = drawCards(at, id, { deck: deckNow, graveyard: [] }, count, cursor);
     events.push(...drawn.events);
   }

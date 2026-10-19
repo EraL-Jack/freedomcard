@@ -111,7 +111,7 @@ export function describeEvent(
       return `${cardName(defIdOf(state, str('uid')))} 进入休眠`;
 
     case 'unit:frozen':
-      return `${cardName(defIdOf(state, str('uid')))} 被霜冻（跳过下次重置）`;
+      return `${cardName(defIdOf(state, str('uid')))} 被冻结（跳过下次重置）`;
 
     case 'commander:attacked':
       return `${who(names, str('playerId'))} 的指挥官发起攻击`;
@@ -124,6 +124,25 @@ export function describeEvent(
 
     case 'card:revealed':
       return `展示：${cardName(defIdOf(state, str('uid')))}`;
+
+    /* ---- D-229 / D-230：成长资源与新事件 ---- */
+    case 'frost:mark':
+      return `${who(names, str('playerId'))} 获得 ${num('amount') ?? 1} 层霜痕`;
+
+    case 'star:mark':
+      return `${who(names, str('playerId'))} 获得 ${num('amount') ?? 1} 层星轨`;
+
+    case 'commander:damage-bonus':
+      return `${who(names, str('playerId'))} 的指挥官本回合伤害 +${num('amount') ?? 1}`;
+
+    case 'cost:discount':
+      return `${who(names, str('playerId'))} 的下一张随从费用 -${num('amount') ?? 1}`;
+
+    case 'card:created':
+      return `${cardName(str('defId'))} 被召唤`;
+
+    case 'deck:put-bottom':
+      return null; // 展示后的归位，展示那一行已经说清楚了
 
     case 'combat:resolved':
       return `裁决 ${num('atkPower')} vs ${num('defPower')} → ${OUTCOME_LABEL[str('outcome') ?? ''] ?? '?'}`;

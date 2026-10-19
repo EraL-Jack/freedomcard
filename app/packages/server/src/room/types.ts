@@ -1,4 +1,4 @@
-import type { PlayerId } from '@app/shared';
+import type { Faction, MatchFormat, PlayerId } from '@app/shared';
 import type { RoomErrorCode } from '@app/shared/constants';
 
 /**
@@ -6,6 +6,9 @@ import type { RoomErrorCode } from '@app/shared/constants';
  *
  * 房间容量、胜负、回合等一概不在此定义：容量由建房方传入（Era 未定人数，不预设 2），
  * 玩法字段等 `docs/06` A 组输入后进入 `GameState`。
+ *
+ * ⚠️ 例外是**赛制与系列赛比分**（D-132）：它们跨越多局 `GameState`，
+ * 天然不属于单局状态，故落在房间层。单局规则（血量 / 回合 / 胜负）仍在引擎里。
  */
 
 export type RoomPhase = 'lobby' | 'playing' | 'ended';
@@ -27,6 +30,11 @@ export interface Seat {
    * 属于**房间层事实**（玩家的操作意愿），不是玩法状态，故放在这里而非 `GameState`。
    */
   ready: boolean;
+  /**
+   * 阵营（D-235）—— 建房 / 加入时由玩家选择，决定这一席位的 30 张主卡组与指挥官。
+   * 缺省时由服务端按座位轮换（老客户端不带该字段也要能用）。
+   */
+  faction: Faction;
 }
 
 export interface Room {
@@ -37,6 +45,26 @@ export interface Room {
   hostId: PlayerId;
   seats: (Seat | null)[];
   createdAt: number;
+  /**
+   * 赛制 —— BO1 单局 / BO3 三局两胜（D-132）。
+   *
+   * docs/16 §1.3：先手胜率约 56.5%，不靠规则继续压，改用「BO3 双方各先手一次」消化。
+   */
+  format: MatchFormat;
+  /** 系列赛比分。键只包含在座玩家。 */
+  wins: Record<PlayerId, number>;
+  /** 已完成的小局数（0 = 一局都没打完）。 */
+  gameNo: number;
+  /** 上一小局已结束、系列赛未分胜负 —— 等待房主开始下一小局。 */
+  awaitingNext: boolean;
+  /** 系列赛胜者（拿满 2 胜 / 对手离场）。未分胜负为 null。 */
+  seriesWinner: PlayerId | null;
+  /**
+   * 每小局的先手玩家（按局序）—— BO3「双方各先手一次」的依据（docs/16 §1.3）。
+   *
+   * 第 2 小局强制由第 1 小局的后手先攻；第 3 小局重新掷骰。
+   */
+  firstPlayers: PlayerId[];
 }
 
 export type Outcome<T> =

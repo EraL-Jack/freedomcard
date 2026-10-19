@@ -1,7 +1,13 @@
+import type { Faction, MatchFormat, PlayerId } from '@app/shared';
 import { RECONNECT_GRACE_MS, ROOM_ERRORS } from '@app/shared/constants';
-import type { PlayerId } from '@app/shared';
 
 import type { Clock, IdGen, Outcome, Room, Seat } from './types.js';
+
+/** 座位轮换的默认阵营 —— 未显式选择时，让相邻两席尽量不同（star 留给第三席）。 */
+const DEFAULT_FACTIONS: readonly Faction[] = ['blade', 'frost', 'star'];
+
+/** BO3 拿满几胜算赢下系列赛。 */
+const WINS_TO_TAKE_SERIES = 2;
 
 export interface JoinInfo {
   room: Room;
@@ -40,7 +46,12 @@ export class RoomManager {
     this.graceMs = deps.graceMs ?? RECONNECT_GRACE_MS;
   }
 
-  create(input: { nickname: string; capacity: number }): Outcome<JoinInfo> {
+  create(input: {
+    nickname: string;
+    capacity: number;
+    format?: MatchFormat;
+    faction?: Faction;
+  }): Outcome<JoinInfo> {
     if (input.capacity < 1) {
       return { ok: false, error: ROOM_ERRORS.ROOM_NOT_FOUND, message: '房间容量必须 >= 1' };
     }
@@ -58,6 +69,7 @@ export class RoomManager {
       lastSeq: 0,
       disconnectedAt: null,
       ready: false,
+      faction: input.faction ?? DEFAULT_FACTIONS[0]!,
     };
     const room: Room = {
       id: this.ids.id(),
@@ -67,6 +79,13 @@ export class RoomManager {
       hostId: playerId,
       seats: Array.from({ length: input.capacity }, (_, i) => (i === 0 ? seat : null)),
       createdAt: this.clock.now(),
+      // D-132：赛制由建房方选择，缺省 BO1（老客户端不带该字段）。
+      format: input.format ?? 'bo1',
+      wins: { [playerId]: 0 },
+      gameNo: 0,
+      awaitingNext: false,
+      seriesWinner: null,
+      firstPlayers: [],
     };
     this.rooms.set(room.id, room);
     this.byCode.set(code, room.id);
@@ -74,7 +93,7 @@ export class RoomManager {
     return { ok: true, value: { room, seat } };
   }
 
-  join(input: { code: string; nickname: string }): Outcome<JoinInfo> {
+  join(input: { code: string; nickname: string; faction?: Faction }): Outcome<JoinInfo> {
     const roomId = this.byCode.get(input.code);
     if (!roomId) {
       return { ok: false, error: ROOM_ERRORS.ROOM_NOT_FOUND, message: '房间不存在' };
@@ -101,10 +120,85 @@ export class RoomManager {
       lastSeq: 0,
       disconnectedAt: null,
       ready: false,
+      faction: input.faction ?? DEFAULT_FACTIONS[free % DEFAULT_FACTIONS.length]!,
     };
     room.seats[free] = seat;
+    room.wins[playerId] = 0;
     this.byPlayer.set(playerId, { roomId: room.id, token });
     return { ok: true, value: { room, seat } };
+  }
+
+  /**
+   * 记录一小局的结果（D-132）。
+   *
+   * - BO1：直接结束房间；
+   * - BO3：有人拿到 2 胜 → 结束；否则进入「等待下一小局」，由房主发起。
+   * - 平局（40 轮判和）不计分，但同样消耗一局。
+   */
+  recordGameResult(roomId: string, winner: PlayerId | null): Room | null {
+    const room = this.rooms.get(roomId);
+    if (!room) return null;
+    room.gameNo += 1;
+    if (winner) room.wins[winner] = (room.wins[winner] ?? 0) + 1;
+
+    if (room.format === 'bo1') {
+      room.phase = 'ended';
+      room.seriesWinner = winner;
+      room.awaitingNext = false;
+      return room;
+    }
+
+    const leader = Object.entries(room.wins).find(([, w]) => w >= WINS_TO_TAKE_SERIES);
+    if (leader) {
+      room.phase = 'ended';
+      room.seriesWinner = leader[0];
+      room.awaitingNext = false;
+    } else {
+      // 系列赛继续：房间留在 playing（只是这一小局结束了），由房主发起下一局。
+      room.phase = 'playing';
+      room.awaitingNext = true;
+    }
+    return room;
+  }
+
+  /** 房主开始下一小局 —— 清掉等待标记。 */
+  markNextGameStarted(roomId: string): Room | null {
+    const room = this.rooms.get(roomId);
+    if (!room) return null;
+    room.awaitingNext = false;
+    return room;
+  }
+
+  /**
+   * 下一小局的先手人选（docs/16 §1.3）。
+   *
+   * - 第 2 小局：由第 1 小局的后手先攻 —— 「双方各先手一次」；
+   * - 第 3 小局：`null` 表示重新掷骰（条文允许「重新掷骰或败者选边」，取前者）。
+   */
+  nextFirstPlayer(roomId: string): PlayerId | null {
+    const room = this.rooms.get(roomId);
+    if (!room) return null;
+    if (room.gameNo === 1) {
+      const prev = room.firstPlayers[0];
+      if (!prev) return null;
+      return room.seats.find((s) => s && s.playerId !== prev)?.playerId ?? null;
+    }
+    return null;
+  }
+
+  /**
+   * 系列赛判负（对局中离场 / 认输后不再继续）。
+   *
+   * 与 `recordGameResult` 分开：离场不是「打完一局」，不该给小局计数 +1，
+   * 但它必须结束整个系列赛，否则留下的人会卡在「等待下一局」。
+   */
+  forfeitSeries(roomId: string, loser: PlayerId): Room | null {
+    const room = this.rooms.get(roomId);
+    if (!room) return null;
+    room.phase = 'ended';
+    room.awaitingNext = false;
+    room.seriesWinner = room.seats.find((s) => s && s.playerId !== loser)?.playerId ?? null;
+    return room;
   }
 
   /**
@@ -231,6 +325,13 @@ export class RoomManager {
       phase: room.phase,
       capacity: room.capacity,
       hostId: room.hostId,
+      // D-132：赛制与系列赛比分 —— 客户端据此显示「第 2 局 1:0」与「开始下一局」。
+      format: room.format,
+      gameNo: room.gameNo,
+      wins: { ...room.wins },
+      awaitingNext: room.awaitingNext,
+      seriesWinner: room.seriesWinner,
+      firstPlayers: [...room.firstPlayers],
       seats: room.seats.map((s) =>
         s
           ? {
@@ -240,6 +341,7 @@ export class RoomManager {
               connected: s.connected,
               // ADR-0019：准备状态属于房间层事实，不含任何玩法信息。
               ready: s.ready,
+              faction: s.faction,
             }
           : null,
       ),

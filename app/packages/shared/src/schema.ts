@@ -34,17 +34,31 @@ export const EchoSchema = z.object({
 });
 
 /**
+ * 阵营与赛制 —— 建房 / 加入时由玩家选择（D-132 / D-235）。
+ *
+ * 值是**协议的一部分**：客户端与服务端都按这三个字符串通信，改动等于改协议。
+ */
+export const FactionSchema = z.enum(['blade', 'frost', 'star']);
+export const MatchFormatSchema = z.enum(['bo1', 'bo3']);
+
+/**
  * 房间入站 payload。
  * `capacity` 由客户端传入 —— 项目**不预设人数**（A 组未定），因此这里没有默认值兜底。
+ *
+ * `format` / `faction` 缺省时由服务端取默认值（BO1 / 按座位轮换阵营）：
+ * 老客户端不带这两个字段也要能建房，故用 `optional()` 而不是必填。
  */
 export const RoomCreateSchema = z.object({
   nickname: z.string().min(1).max(24),
   capacity: z.number().int().min(1).max(8),
+  format: MatchFormatSchema.optional(),
+  faction: FactionSchema.optional(),
 });
 
 export const RoomJoinSchema = z.object({
   code: z.string().min(1),
   nickname: z.string().min(1).max(24),
+  faction: FactionSchema.optional(),
 });
 
 export const RoomReconnectSchema = z.object({

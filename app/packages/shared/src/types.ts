@@ -17,6 +17,20 @@ export type IntentActor = 'player' | 'system';
 export type CardType = 'commander' | 'minion' | 'spell' | 'continuous';
 
 /**
+ * 阵营 —— 三套卡组各自的体系（`docs/12` 炎刃 / 霜律，`docs/17` 星轨）。
+ *
+ * 建房与加入时由玩家选择（D-235）；服务端据此装配 30 张主卡组 + 指挥官。
+ */
+export type Faction = 'blade' | 'frost' | 'star';
+
+/**
+ * 赛制 —— BO1 单局 / BO3 三局两胜（`docs/16` §1.3：座位偏差由赛制消化）。
+ *
+ * BO3 双方各先手一次；1:1 时第三局重新掷骰。
+ */
+export type MatchFormat = 'bo1' | 'bo3';
+
+/**
  * 区域 —— ADR-0012，与 `docs/06` B2 布局逐项对应。
  *
  * ⚠️ **命名别名（ADR-0015）**：Era 的输入里，同一个区域出现过三个名字 ——
@@ -98,6 +112,14 @@ export interface CardInstance {
    * 该控制者回合的结束阶段解除（仍休眠）。不叠加：重复冻结只刷新一次跳过。
    */
   frozen?: boolean;
+  /**
+   * 「展示时：本回合此卡力量值 +N」落在**尚未在场**的卡上时的暂存位
+   * （docs/17 §6.3 方案 A / D-235）。
+   *
+   * 被展示的卡可能还在卡组或手牌：把它记成「本回合它登场时获得 +N」，
+   * 登场（`card:moved` → board）时由 reducer 消费成本回合 `tempPower`。
+   */
+  pendingPowerBuff?: number;
 }
 
 /** 回合内触发器（军师类「本回合获得效果」，ADR-0023 §7）。 */
@@ -178,6 +200,29 @@ export interface PlayerState {
   usedCostThisTurn: number;
   /** 本回合指挥官是否已攻击（docs/16 §6.1：每个己方战斗阶段一次）。回合切换清零。 */
   commanderAttacked: boolean;
+  /**
+   * **霜痕**（docs/16 §6.3.2 / D-229）：每当一个敌方随从被冻结，获得 1 层。
+   * 永久累积，不随冻结解除或随从离场而消失 —— 霜律的成长资源。
+   */
+  frostMark: number;
+  /**
+   * **星轨**（docs/17 §2.2 / D-230）：每展示 1 张卡 +1 层，永久累积、不清零 ——
+   * 星轨的成长资源，只决定指挥官一次展示几张。
+   */
+  starTrack: number;
+  /**
+   * 本回合指挥官攻击的伤害加成（星轨侍僧「展示时：本回合你的指挥官伤害值 +1」）。
+   * **不可叠加**：同一回合再翻到侍僧不再增加。回合切换清零。
+   */
+  commanderDamageBonus: number;
+  /** 本回合打出下一张随从的额外减费（星轨传令）。回合切换清零，打出任意随从后消耗。 */
+  nextMinionDiscount: number;
+  /**
+   * 衍生物序号 —— `card:created` 事件的 uid 来源（docs/17 §4：星灵）。
+   *
+   * 必须入状态：uid 要进 `stateHash`，用随机 id 会让两端哈希不一致（同 `makeUid` 的理由）。
+   */
+  tokenSeq: number;
 }
 
 /** 对局状态 —— 结构见 ADR-0012。 */

@@ -8,6 +8,8 @@ export type {
   Result,
   RuleContext,
   CardType,
+  Faction,
+  MatchFormat,
   Zone,
   Phase,
   CardDef,
@@ -41,6 +43,10 @@ export {
   COST_INCOME_PER_TURN,
   MINION_COST_DISCOUNT,
   COMMANDER_ATTACK_DAMAGE,
+  COMMANDER_SKILL_COST,
+  FROST_MARK_TIERS,
+  STAR_TRACK_TIERS,
+  STAR_TRACK_BASE_REVEAL,
   DAMAGE_TIER_MAX_LOW,
   DAMAGE_TIER_MAX_MID,
   TURN_LIMIT_ROUNDS,
@@ -66,4 +72,12 @@ export type { RuleErrorCode } from './constants.js';
  * ⚠️ 客户端必须走**子路径** `@app/shared/cards`，不要从本文件（`.`）导入 ——
  * 本文件会经 `schema.js` 拉入 zod，实测首屏 +24 kB gzip。
  */
-export { CARD_POOL, PLACEHOLDER_CARD_IDS, isBladeCard, isFrostCard, ACTIVATABLE_EFFECTS } from './cards.js';
+export {
+  CARD_POOL,
+  PLACEHOLDER_CARD_IDS,
+  TOKEN_CARD_IDS,
+  isBladeCard,
+  isFrostCard,
+  isStarCard,
+  ACTIVATABLE_EFFECTS,
+} from './cards.js';

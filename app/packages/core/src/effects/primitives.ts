@@ -10,16 +10,19 @@
  */
 
 import {
+  BOARD_SLOTS,
   type CardDef,
   type CardInstance,
   type GameEvent,
   type GameState,
   type PlayerId,
+  type RuleContext,
 } from '@app/shared';
 import { isBladeCard } from '@app/shared/cards';
 
-import { drawCards, ev, locate, takeFromDeck } from '../ops.js';
+import { drawCards, ev, locate, moved, takeFromDeck } from '../ops.js';
 import { reduce } from '../reducer.js';
+import { shuffle } from '../rng.js';
 
 /** 把一批事件就地应用到状态（效果内部推演用）。 */
 export function applyEvents(state: GameState, events: readonly GameEvent[]): GameState {
@@ -96,6 +99,87 @@ export function millTop(
   return { events: d.events, taken: d.taken, state: applyEvents(state, d.events) };
 }
 
+/* ------------------------------ 展示 ------------------------------ */
+
+export interface RevealResult {
+  events: GameEvent[];
+  /** 被展示的卡（按翻开顺序）。调用方据此做后续选择（如「凝视星空」选 1 张进手牌）。 */
+  revealed: CardInstance[];
+  state: GameState;
+}
+
+/**
+ * **展示**（docs/17 §2.1 / D-230）：从卡组顶依次翻开 `n` 张，公开给双方，
+ * 结算完毕按原顺序置入**牌库底**。
+ *
+ * 与抽牌的区别：不进手牌、不烧牌库、触发「展示时」效果。
+ *
+ * ⚠️ **置底早于触发**（实现口径，登记假设 H35）：若等触发结算完再置底，
+ * 触发里的抽牌会把「已展示但还没归位」的卡抽走，与「展示后回牌库底」矛盾。
+ * 故先把这批卡挪到牌库底，再逐张结算「展示时」—— 触发读到的是卡定义，
+ * 不依赖它在牌堆里的位置。
+ *
+ * 牌库不足时把墓地洗回（沿用 A9 补充 2 的 reshuffle，与抽牌同一口径）。
+ */
+export function revealFromDeck(
+  at: number,
+  state: GameState,
+  playerId: PlayerId,
+  n: number,
+  ctx: RuleContext,
+  reason = 'reveal',
+): RevealResult {
+  const p = state.players[playerId];
+  if (!p || n <= 0) return { events: [], revealed: [], state };
+  const e = emitter(state);
+
+  // 牌库不足 → 墓地洗回。显式用 `card:moved` 把墓地卡搬回牌库，再整体重排：
+  // `deck:shuffled` 只会重排「已在卡组里的卡」，不会替我们搬区域。
+  if (e.state.players[playerId]!.zones.deck.length < n) {
+    const gy = e.state.players[playerId]!.zones.graveyard;
+    if (gy.length > 0) {
+      for (const c of gy) e.push(moved(at, playerId, c.uid, 'graveyard', 'deck'));
+      const deckNow = e.state.players[playerId]!.zones.deck;
+      const s = shuffle(e.state.rngCursor, deckNow);
+      e.push(ev(at, 'rng:advance', { steps: Math.max(0, deckNow.length - 1) }));
+      e.push(ev(at, 'deck:shuffled', { playerId, order: s.items.map((c) => c.uid) }));
+    }
+  }
+
+  const deck = e.state.players[playerId]!.zones.deck;
+  const top = deck.slice(0, Math.min(n, deck.length));
+  if (top.length === 0) return { events: e.events, revealed: [], state: e.state };
+
+  for (const c of top) {
+    e.push(ev(at, 'card:revealed', { playerId, uid: c.uid, from: 'deck', reason }));
+  }
+  // 按原顺序置底（docs/17 §2.1）
+  e.push(ev(at, 'deck:put-bottom', { playerId, order: top.map((c) => c.uid) }));
+  return { events: e.events, revealed: top, state: e.state };
+}
+
+/**
+ * 召唤一个**衍生物**（docs/17 §4：星灵）。
+ *
+ * 衍生物在卡池里有定义但没有实例，故不能用 `card:moved` —— 用 `card:created`
+ * 由 reducer 追加实例。uid 由 `PlayerState.tokenSeq` 决定，保证回放可复现。
+ */
+export function summonToken(
+  at: number,
+  state: GameState,
+  owner: PlayerId,
+  defId: string,
+  ctx: RuleContext,
+): GameEvent[] {
+  const p = state.players[owner];
+  if (!p) return [];
+  const def = ctx.cards[defId];
+  if (!def) return [];
+  if (p.zones.board.length >= BOARD_SLOTS) return [];
+  const uid = `${owner}#token${p.tokenSeq}`;
+  return [ev(at, 'card:created', { playerId: owner, uid, defId, to: 'board' })];
+}
+
 /* ------------------------------ 除外 ------------------------------ */
 
 /**
@@ -157,6 +241,13 @@ export function freezeUnit(
 
   const byP = e.state.players[by];
   if (!byP) return { events: e.events, state: e.state };
+
+  // 霜痕（docs/16 §6.3.2 / D-229）：**冻结敌方随从**即 +1 层，永久累积、不清零。
+  // 与「裁决官 Ⅲ」同一口径 —— 卡面写的是被动，故挂在所有冻结来源共用的这里，
+  // 不会出现「某张卡的冻结不给霜痕」。
+  if (loc.playerId !== by) {
+    e.push(ev(at, 'frost:mark', { playerId: by, amount: 1 }));
+  }
 
   // 裁决官Ⅱ（被动）：仅当施加者是霜律裁决官持有者时生效。
   // 卡面「当一个敌方随从被霜冻时」—— 被冻的是对方的随从，故只在 by 的对手场上时触发；

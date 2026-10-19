@@ -49,9 +49,11 @@ test('卡牌详情：点「?」按钮可查看完整效果文本（Era 2026-10-1
   await commander.locator('[data-testid="card-detail"]').click();
   const overlay = host.getByTestId('card-detail-overlay');
   await expect(overlay).toBeVisible();
-  // 完整效果文本必须可见（不只是卡面摘要）—— 取统领效果 Ⅱ 的原文片段
-  await expect(overlay).toContainText('可以将一张手牌除外');
-  await expect(overlay).toContainText('成长档位');
+  // 完整效果文本必须可见（不只是卡面摘要）—— 取统领效果 Ⅱ 的规范写法片段（docs/18）
+  await expect(overlay).toContainText('将 1 张手牌除外');
+  // 指挥官没有力量值（docs/16 §6.2.1 / D-230）：详情里不再出现力量值与成长档位
+  await expect(overlay).not.toContainText('成长档位');
+  await expect(overlay).not.toContainText('· 力 ');
 
   await host.getByTestId('card-detail-close').click();
   await expect(overlay).toHaveCount(0);
@@ -85,4 +87,48 @@ test('统领效果Ⅱ：发动 → 选择手牌 → 除外（ADR-0023 / X-16）'
     timeout: 10_000,
   });
   await expect(p.getByTestId('zone-exile').nth(1)).toContainText('1', { timeout: 10_000 });
+});
+
+test('赛制与阵营：建房选 BO3 + 星轨，开局显示比分与星轨资源（D-132 / D-235）', async ({ browser }) => {
+  const { host, guest } = await startGame(browser, {
+    format: 'bo3',
+    hostFaction: 'star',
+    guestFaction: 'frost',
+  });
+
+  // 赛制标记：BO3 才显示「第 N 局 · 比分 X : Y」
+  await expect(host.getByTestId('series')).toContainText('比分', { timeout: 15_000 });
+  await expect(host.getByTestId('series')).toContainText('第 1 局');
+
+  // 阵营选的星轨 → 我方指挥官是星轨观测者，成长资源是「星轨 N」
+  await expect(host.getByTestId('zone-commander').nth(1)).toContainText('星轨观测者', {
+    timeout: 15_000,
+  });
+  await expect(host.getByTestId('my-growth')).toContainText('星轨', { timeout: 10_000 });
+
+  // 对手选霜律 → 在 guest 自己的界面里，nth(1) 是「我方指挥官」= 霜律裁决官
+  await expect(guest.getByTestId('zone-commander').nth(1)).toContainText('霜律裁决官', {
+    timeout: 15_000,
+  });
+  // guest 看到的对方（host）指挥官是星轨观测者
+  await expect(guest.getByTestId('zone-commander').nth(0)).toContainText('星轨观测者', {
+    timeout: 15_000,
+  });
+
+  // BO1 房间不出现赛制条（避免占位噪音）
+  const bo1 = await startGame(browser);
+  await expect(bo1.host.getByTestId('series')).toHaveCount(0);
+});
+
+test('BO3 中一方离开：系列赛直接判负，不再停在「等待下一局」(D-132)', async ({ browser }) => {
+  const { host, guest } = await startGame(browser, { format: 'bo3' });
+  await expect(guest.getByTestId('turn')).toBeVisible({ timeout: 15_000 });
+
+  // 离开者：返回主界面 = leave（服务端系统代认输 + 判负系列赛）
+  await guest.getByTestId('leave').click();
+
+  // 留下的人看到结束面板与比分，且不应出现「开始下一局」
+  await expect(host.getByTestId('game-result')).toBeVisible({ timeout: 20_000 });
+  await expect(host.getByTestId('series-score')).toContainText('BO3', { timeout: 10_000 });
+  await expect(host.getByTestId('next-game')).toHaveCount(0);
 });

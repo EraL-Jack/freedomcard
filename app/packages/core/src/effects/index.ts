@@ -11,6 +11,7 @@
  */
 
 import {
+  COMMANDER_SKILL_COST,
   RULE_ERRORS,
   type CardDef,
   type GameEvent,
@@ -52,6 +53,25 @@ import {
   frostNightwatchEffect,
   frostWinterbladeEffect,
 } from './frost-troops.js';
+import { starWatcherEffect } from './star-commander.js';
+import {
+  starBlessingEffect,
+  starChartEffect,
+  starFallEffect,
+  starGazeEffect,
+} from './star-arcana.js';
+import {
+  starAcolyteEffect,
+  starArcherEffect,
+  starGiantEffect,
+  starGuardEffect,
+  starHeraldEffect,
+  starLancerEffect,
+  starScoutEffect,
+  starSovereignEffect,
+  starWeaverEffect,
+} from './star-troops.js';
+import { applyEvents, drawTop, emitter, revealFromDeck } from './primitives.js';
 
 /** 效果模块接口。 */
 export interface EffectModule {
@@ -71,6 +91,25 @@ export interface EffectModule {
   onSummon?(state: GameState, ctx: RuleContext, owner: PlayerId, uid: string): GameEvent[];
   /** 法术 / 持续法术出牌后结算（卡已进入法术区）。 */
   onPlay?(state: GameState, ctx: RuleContext, owner: PlayerId, uid: string): GameEvent[];
+  /**
+   * **展示时**（docs/17 §2.1 / D-230）：该卡从卡组顶被展示时触发。
+   *
+   * 与 `onSummon` 的区别：展示的卡**没有进场**，效果只结算「即时收益」
+   * （加星轨、直伤、召唤、抽牌、减费）；「本回合此卡力量值 +N」这类
+   * 只对已在场的同名卡生效，不在场时由 `card:pending-buff` 暂存到登场。
+   */
+  onReveal?(state: GameState, ctx: RuleContext, owner: PlayerId, uid: string): GameEvent[];
+  /**
+   * 指挥官攻击时的可选前置动作（星轨观测者：付 1 费展示）。
+   *
+   * 由 `commander-attack.ts` 在**结算伤害之前**调用 —— 顺序有意义：
+   * 「展示时：本回合指挥官伤害 +1」要能吃到当回合的攻击（docs/17 §6.1）。
+   */
+  onCommanderAttack?(
+    state: GameState,
+    intent: Intent,
+    ctx: RuleContext,
+  ): Result<GameEvent[], Rejection>;
 }
 
 /** 按卡定义派发。 */
@@ -95,6 +134,21 @@ export const EFFECTS: Readonly<Record<string, EffectModule>> = {
   frostColdSnap: frostColdSnapEffect,
   frostJudgment: frostJudgmentEffect,
   frostFinalJudgment: frostFinalJudgmentEffect,
+  /* 星轨（docs/17） */
+  starWatcher: starWatcherEffect,
+  starScout: starScoutEffect,
+  starAcolyte: starAcolyteEffect,
+  starArcher: starArcherEffect,
+  starGuard: starGuardEffect,
+  starWeaver: starWeaverEffect,
+  starLancer: starLancerEffect,
+  starHerald: starHeraldEffect,
+  starGiant: starGiantEffect,
+  starSovereign: starSovereignEffect,
+  starChart: starChartEffect,
+  starFall: starFallEffect,
+  starGaze: starGazeEffect,
+  starBlessing: starBlessingEffect,
 };
 
 /** 按待定选择种类反查模块（choose 阶段只有 kind 可查）。 */
@@ -116,6 +170,7 @@ export const EFFECTS_BY_KIND: Readonly<Record<string, EffectModule>> = {
   'frost-edict-freeze': frostEdictEffect,
   'frost-coldsnap-freeze': frostColdSnapEffect,
   'frost-judgment-target': frostJudgmentEffect,
+  'star-gaze-pick': starGazeEffect,
 };
 
 /* ------------------------------ 共享助手 ------------------------------ */
@@ -134,16 +189,14 @@ export function effectKey(uid: string, effectId: string): string {
 }
 
 /**
- * 指挥官技能的基础费用（docs/16 §6.4 / D-228 定稿）：
- * **3 − 当前档位**，最低 0 —— 第 1 轮 2 费、第 2 轮 1 费、第 3 轮起 0 费。
+ * 指挥官技能费用 —— **固定 `COMMANDER_SKILL_COST`（2 费）**。
  *
- * 档位用 `commanderPowerIndex`（开局 = 1，第 3 轮 = 3）。基础值 3 是规则条文，
- * 不是从卡面推的 —— 卡面原文写的是【2】，D-228 明确改为「随力量档位递减」。
+ * 沿革：卡面原文写【2】；D-228 曾改为「3 − 力量档位」随时间递减；
+ * **D-229 撤销了这套通用成长**（各指挥官改用专属资源：炎刃除外区 / 霜律霜痕 / 星轨层数），
+ * 于是技能费用回到卡面的固定 2 费。
  */
-export const COMMANDER_SKILL_BASE_COST = 3;
-
-export function commanderSkillCost(p: PlayerState): number {
-  return Math.max(0, COMMANDER_SKILL_BASE_COST - p.commanderPowerIndex);
+export function commanderSkillCost(_p: PlayerState): number {
+  return COMMANDER_SKILL_COST;
 }
 
 /** 已用过则拒绝。 */
@@ -268,5 +321,57 @@ export function spellEntryEvents(
   const mod = EFFECTS[inst.defId];
   return mod?.onPlay ? mod.onPlay(state, ctx, owner, uid) : [];
 }
+
+/**
+ * **展示**（docs/17 §2.1）+ 星轨结算 —— 星轨三处展示入口（指挥官攻击 / 星图 / 凝视星空）
+ * 共用，保证「展示 → 星轨 +1 → 触发展示时」的次序只有一份实现。
+ *
+ * 次序：
+ *  1. `revealFromDeck`：翻牌、公开、按原顺序置牌库底；
+ *  2. 指挥官是星轨观测者 → 每展示 1 张，星轨 +1（Ⅱ 被动）；
+ *  3. 星轨环：本回合第一次展示时抽 1 张；
+ *  4. 逐张结算「展示时」效果（按翻开顺序）。
+ */
+export function starRevealEvents(
+  at: number,
+  state: GameState,
+  owner: PlayerId,
+  n: number,
+  ctx: RuleContext,
+): { events: GameEvent[]; revealed: { uid: string; defId: string }[] } {
+  const r = revealFromDeck(at, state, owner, n, ctx, 'star-reveal');
+  const e = emitter(r.state);
+
+  const cmd = e.state.players[owner]?.zones.commander[0];
+  if (cmd && ctx.cards[cmd.defId]?.defId === 'starWatcher' && r.revealed.length > 0) {
+    e.push(ev(at, 'star:mark', { playerId: owner, amount: r.revealed.length }));
+  }
+
+  // 星轨环（持续）：每回合**第一次**展示时抽 1 张。
+  const p = e.state.players[owner];
+  if (p) {
+    for (const c of p.zones.spell) {
+      if (c.defId !== 'starOrbit') continue;
+      const key = `${c.uid}:orbit`;
+      if (e.state.players[owner]!.effectsUsed.includes(key)) continue;
+      e.push(ev(at, 'effect:used', { playerId: owner, key }));
+      e.push(...drawTop(at, e.state, owner, 1).events);
+    }
+  }
+
+  for (const card of r.revealed) {
+    const mod = EFFECTS[card.defId];
+    if (!mod?.onReveal) continue;
+    e.push(...mod.onReveal(e.state, ctx, owner, card.uid));
+  }
+
+  return {
+    events: [...r.events, ...e.events],
+    revealed: r.revealed.map((c) => ({ uid: c.uid, defId: c.defId })),
+  };
+}
+
+/** 内部用：把事件应用到状态（供效果模块做多步推演）。 */
+export { applyEvents };
 
 export { reject, unitPower };

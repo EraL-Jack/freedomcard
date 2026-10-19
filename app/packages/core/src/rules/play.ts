@@ -65,7 +65,9 @@ export const playRule = (
     return { ok: false, error: { code: RULE_ERRORS.BOARD_FULL, message: `随从区已满（${BOARD_SLOTS}）` } };
   }
 
-  const pay = costToPay(def);
+  // 随从减费（docs/16 §4）+ 星轨传令的「下一张随从费用 -1」（docs/17）。
+  const basePay = costToPay(def);
+  const pay = def.type === 'minion' ? Math.max(0, basePay - p.nextMinionDiscount) : basePay;
 
   // A5 补充 2：费用区张数必须够
   if (p.zones.cost.length < pay) {
@@ -94,6 +96,10 @@ export const playRule = (
     events.push(moved(at, intent.playerId, p.zones.cost[i]!.uid, 'cost', 'graveyard'));
   }
   if (pay > 0) events.push(ev(at, 'cost:spent', { playerId: intent.playerId, amount: pay }));
+  // 星轨传令的减费只作用于**下一张**随从 —— 打出即消耗。
+  if (def.type === 'minion' && p.nextMinionDiscount > 0) {
+    events.push(ev(at, 'cost:discount', { playerId: intent.playerId, value: 0 }));
+  }
   events.push(moved(at, intent.playerId, uid, 'hand', dest));
 
   // 效果接线：先推演移动事件（效果读的是登场/入区后的场面）。

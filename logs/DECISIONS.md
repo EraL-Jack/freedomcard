@@ -637,3 +637,56 @@ E2E 里先后手由掷骰决定、起手牌由洗牌决定，两者都是随机�
   实现为 `effects/index.ts` 的 `commanderSkillCost()`，统领Ⅰ与裁决官Ⅰ共用。
 - 影响：`rules/start.ts`（移除首回合收入）、`rules/attack.ts`（打脸直接结算）、
   `effects/{blade-lord,frost-commander}.ts`（技能费用）、`shared/src/cards.ts`（文本）。
+
+## ADR-0026 · 赛制可选 BO1/BO3（D-132）
+
+- 日期：2026-10-19
+- 状态：已接受（Era：「在建房界面选择 Bo1 还是 bo3」）
+- 背景：`docs/16` §1.3 明确「座位偏差由赛制消化，不由规则硬压」——删掉打脸门槛后
+  先手胜率仍约 56.5%，条文要求用 BO3「双方各先手一次」消化，而不是继续削先手。
+- 决策：
+  1. **建房时选择** `format: 'bo1' | 'bo3'`，缺省 BO1（老客户端不带该字段仍可用）。
+  2. **系列赛状态放在房间层**（`wins` / `gameNo` / `awaitingNext` / `firstPlayers` /
+     `seriesWinner`）—— 它跨越多局 `GameState`，不属于任何单局状态。
+  3. **BO3 三局两胜**：拿满 2 胜结束；平局不计分但消耗一局。
+  4. **先后手**：第 1 局掷骰；第 2 局由第 1 局的后手先攻（各先手一次）；
+     第 3 局重新掷骰（登记假设 H33）。实现为 `start` Intent 的
+     `payload.firstPlayerId`，**只接受系统来源**，玩家带上该字段一律忽略（防伪造）。
+  5. **局间节奏**：小局结束不发新快照，房间进入 `awaitingNext`，由**房主**点
+     「开始第 N 局」（登记假设 H36）。自动续局会让玩家看不清结算。
+  6. **离场 = 判负整个系列赛**（`forfeitSeries`），不留「等待下一局」，否则留下的人
+     会卡在空白页（D-122 同类问题）。
+- 影响：`shared/src/{constants,types,schema}.ts`（`SOCKET_EVENTS.roomNextGame`、
+  `MatchFormat`、房间入站字段）、`server/src/{index.ts,room/{types,room}.ts}`、
+  客户端 `HomeScreen`（赛制选择）、`useRoom`（`nextGame`）、`TableScreen`
+  （比分条 / 结算面板 / 下一局按钮）、E2E helpers 与 `game.spec`。
+- 破坏性：**否**（新增字段均可缺省）。
+
+## ADR-0027 · 专属成长资源与「展示」机制（D-134 / D-135）
+
+- 日期：2026-10-19
+- 状态：已接受（`docs/16` D-229 撤销通用成长；`docs/17` D-230 新增星轨卡组）
+- 决策：
+  1. **撤销 D-228 的「技能费用 = 3 − 档位」**，指挥官技能恢复卡面的固定 **2 费**
+     （`COMMANDER_SKILL_COST`）。
+  2. **指挥官没有力量值**（docs/16 §6.2.1）：`unitPower` 不再读 `powerCurve`；
+     删除 `commander-growth.ts` 与两处同步调用；客户端不显示指挥官的力量值/费用。
+  3. **霜痕**（`PlayerState.frostMark`）：每冻结 1 个**敌方**随从 +1 层，永久累积。
+     挂在 `primitives.freezeUnit`（所有冻结来源共用），与「裁决官 Ⅲ」同一口径。
+  4. **裁决官Ⅰ 按霜痕分档**：0–2 冻 1；3–5 冻 1 + 抽 1；6–8 冻 2；9+ 冻 2 + 抽 1。
+     「冻结 2 个」实现为**连续两次 `pendingChoice`**（单槽位，不能一次给两个目标）。
+  5. **展示**（`revealFromDeck`）：卡组顶翻 N 张 → 公开（`card:revealed`）→
+     **立即按原顺序置入牌库底**（`deck:put-bottom`）→ 逐张结算「展示时」
+     （登记假设 H35：置底先于触发，避免触发内抽牌抽走已展示的卡）。
+  6. **星轨**（`PlayerState.starTrack`）：每展示 1 张 +1 层，永久累积；
+     指挥官 `starWatcher` 攻击时可选付 1 费展示 2/3/4 张（**先展示、后结算伤害**）。
+  7. **展示时的「本回合此卡 +N 力」**：卡不在场时记 `CardInstance.pendingPowerBuff`，
+     登场时由 reducer 消费成本回合 `tempPower`（docs/17 §6.3 方案 A）。
+  8. **衍生物**用 `card:created` 事件入场（`PlayerState.tokenSeq` 决定 uid，保证回放可复现）。
+  9. **阵营选择**（D-235）：建房/加入时可指定 `blade | frost | star`，服务端据此装配
+     对应 30 张卡组；未指定时按座位轮换。
+- 影响：`shared/src/{constants,types,cards,index}.ts`、`core/src/{reducer,state,ops}.ts`、
+  `core/src/effects/{primitives,index,frost-commander,star-*}*.ts`、
+  `core/src/rules/{start,play,commander-attack}.ts`、`server/src/deck-pool.ts`、
+  客户端卡面/日志/详情/比分条。
+- 破坏性：**是**（卡池 45 张、新增成长资源与展示机制；旧回放结算不再等价）。

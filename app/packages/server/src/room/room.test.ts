@@ -149,3 +149,98 @@ describe('RoomManager · 离开与房主移交', () => {
     if (!r.ok) expect(r.error).toBe('NOT_IN_ROOM');
   });
 });
+
+describe('RoomManager · 赛制与系列赛（D-132）', () => {
+  /** 建一个 BO3 房并拉满两席。 */
+  function bo3() {
+    const h = harness();
+    const created = h.manager.create({ nickname: 'A', capacity: 2, format: 'bo3', faction: 'blade' });
+    if (!created.ok) throw new Error('create failed');
+    const joined = h.manager.join({
+      code: created.value.room.code,
+      nickname: 'B',
+      faction: 'star',
+    });
+    if (!joined.ok) throw new Error('join failed');
+    return {
+      ...h,
+      roomId: created.value.room.id,
+      host: created.value.seat.playerId,
+      guest: joined.value.seat.playerId,
+    };
+  }
+
+  it('默认 BO1；显式 BO3 会被记录，阵营随席位保存', () => {
+    const { manager } = harness();
+    const bo1 = manager.create({ nickname: 'A', capacity: 2 });
+    if (!bo1.ok) throw new Error('create failed');
+    expect(bo1.value.room.format).toBe('bo1');
+
+    const s = bo3();
+    const room = s.manager.getRoom(s.roomId)!;
+    expect(room.format).toBe('bo3');
+    expect(room.seats[0]!.faction).toBe('blade');
+    expect(room.seats[1]!.faction).toBe('star');
+  });
+
+  it('BO1：一小局后房间直接结束', () => {
+    const { manager } = harness();
+    const created = manager.create({ nickname: 'A', capacity: 2 });
+    if (!created.ok) throw new Error('create failed');
+    const joined = manager.join({ code: created.value.room.code, nickname: 'B' });
+    if (!joined.ok) throw new Error('join failed');
+    const room = manager.recordGameResult(created.value.room.id, created.value.seat.playerId);
+    expect(room?.phase).toBe('ended');
+    expect(room?.seriesWinner).toBe(created.value.seat.playerId);
+    expect(room?.awaitingNext).toBe(false);
+  });
+
+  it('BO3：1 胜后进入「等待下一局」，2 胜才结束', () => {
+    const s = bo3();
+    let room = s.manager.recordGameResult(s.roomId, s.host)!;
+    expect(room.phase).toBe('playing');
+    expect(room.awaitingNext).toBe(true);
+    expect(room.wins[s.host]).toBe(1);
+    expect(room.gameNo).toBe(1);
+
+    room = s.manager.recordGameResult(s.roomId, s.guest)!;
+    expect(room.awaitingNext).toBe(true);
+    expect(room.gameNo).toBe(2);
+
+    room = s.manager.recordGameResult(s.roomId, s.host)!;
+    expect(room.phase).toBe('ended');
+    expect(room.seriesWinner).toBe(s.host);
+    expect(room.gameNo).toBe(3);
+  });
+
+  it('BO3：平局不计分但照样进入下一局', () => {
+    const s = bo3();
+    const room = s.manager.recordGameResult(s.roomId, null)!;
+    expect(room.awaitingNext).toBe(true);
+    expect(room.wins[s.host]).toBe(0);
+    expect(room.wins[s.guest]).toBe(0);
+    expect(room.gameNo).toBe(1);
+  });
+
+  it('下一局先手：第 2 小局换人，第 3 小局重新掷骰（null）', () => {
+    const s = bo3();
+    const room = s.manager.getRoom(s.roomId)!;
+    room.firstPlayers.push(s.host); // 第 1 小局先手 = host
+    s.manager.recordGameResult(s.roomId, s.host);
+    expect(s.manager.nextFirstPlayer(s.roomId)).toBe(s.guest);
+
+    s.manager.markNextGameStarted(s.roomId);
+    room.firstPlayers.push(s.guest);
+    s.manager.recordGameResult(s.roomId, s.guest);
+    expect(s.manager.nextFirstPlayer(s.roomId)).toBeNull();
+  });
+
+  it('离场判负整个系列赛（不留「等待下一局」）', () => {
+    const s = bo3();
+    s.manager.recordGameResult(s.roomId, s.host);
+    const room = s.manager.forfeitSeries(s.roomId, s.guest)!;
+    expect(room.phase).toBe('ended');
+    expect(room.awaitingNext).toBe(false);
+    expect(room.seriesWinner).toBe(s.host);
+  });
+});

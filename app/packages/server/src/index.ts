@@ -11,9 +11,11 @@ import {
   RoomCreateSchema,
   RoomJoinSchema,
   RoomReconnectSchema,
+  ROOM_ERRORS,
   SOCKET_EVENTS,
   RECONNECT_GRACE_MS,
   TURN_TIMEOUT_MS,
+  type Faction,
   type GameState,
   type EchoPayload,
   type Intent,
@@ -179,7 +181,7 @@ function handleTurnTimeout(roomId: string): void {
   const rt = runtimes.get(roomId);
   const room = roomManager.getRoom(roomId);
   if (!rt || !room) return;
-  if (room.phase !== 'playing' || rt.state.winner !== null) return;
+  if (room.phase !== 'playing' || gameOver(rt.state) || room.awaitingNext) return;
 
   const active = core.activePlayer(rt.state);
   if (!active) return;
@@ -201,12 +203,37 @@ function handleTurnTimeout(roomId: string): void {
   });
   rt.state = result.state;
 
-  if (rt.state.winner !== null) {
-    room.phase = 'ended';
-    rt.timer.clear();
+  if (rt.state.winner !== null || rt.state.draw) {
+    finishGame(roomId);
   } else {
     rt.timer.arm(); // 已进入下一回合 —— 重新计时
   }
+  broadcastRoom(roomId);
+}
+
+/** 一小局是否已结束（血空 / 认输 / 40 轮判和）。 */
+function gameOver(state: GameState): boolean {
+  return state.winner !== null || state.draw;
+}
+
+/**
+ * 一小局结束 —— 记分并决定是否进入下一小局（D-132 BO1/BO3）。
+ *
+ * BO3 未分胜负时房间仍留在 `playing`，但 `awaitingNext = true`：
+ * 客户端据此显示「本局结束 + 比分 + 开始下一局」，房主点按钮后才开下一局。
+ * 直接在服务端自动开局会让玩家来不及看清结算（Era 的「停顿一下」口径）。
+ */
+function finishGame(roomId: string): void {
+  const rt = runtimes.get(roomId);
+  const room = roomManager.getRoom(roomId);
+  if (!rt || !room) return;
+  rt.timer.clear();
+  if (!gameOver(rt.state)) return;
+  roomManager.recordGameResult(roomId, rt.state.winner);
+  fastify.log.info(
+    { roomId, winner: rt.state.winner, draw: rt.state.draw, gameNo: room.gameNo, format: room.format },
+    '小局结束',
+  );
   broadcastRoom(roomId);
 }
 
@@ -223,14 +250,22 @@ function handleTurnTimeout(roomId: string): void {
  *
  * ⚠️ **幂等**：`seeded` 只在这里置 true，重复触发不会二次开局。
  */
-function startGame(roomId: string): void {
+function startGame(roomId: string, opts: { firstPlayerId?: string } = {}): void {
   const rt = runtimes.get(roomId);
   const room = roomManager.getRoom(roomId);
   if (!rt || !room) return;
-  if (rt.seeded || room.phase !== 'lobby') return;
+  // 允许两种入口：lobby 首次开局，以及 BO3 的「等待下一小局」。
+  // 其它情况一律忽略 —— 重复 ready / 连点开始不能把对局重置。
+  const isFirstGame = room.phase === 'lobby' && !rt.seeded;
+  const isNextGame = room.awaitingNext;
+  if (!isFirstGame && !isNextGame) return;
 
   const seats = room.seats.flatMap((s) => (s ? [s.playerId] : []));
   if (seats.length < 2) return;
+
+  // 阵营（D-235）：建房 / 加入时选定，开局时装配对应的 30 张主卡组 + 指挥官。
+  const factions: Record<string, Faction> = {};
+  for (const s of room.seats) if (s) factions[s.playerId] = s.faction;
 
   // ① 先用真实座位 / 卡组建立「尚未开局」的初始状态，并作为快照下发给客户端。
   //
@@ -238,7 +273,7 @@ function startGame(roomId: string): void {
   //    才能消化随后到来的开局事件。若先广播事件后发快照，开局那一批
   //    事件会被客户端丢弃（无从 reduce），表现为「开局日志凭空消失」。
   const prev = rt.state;
-  rt.state = seedGameState({ seats, seed: nextSeed() });
+  rt.state = seedGameState({ seats, seed: nextSeed(), factions });
   broadcastSnapshot(roomId);
 
   // ② 开局仍走系统 Intent（ADR-0011）：洗牌 / 掷骰 / 发牌全部由引擎产出事件。
@@ -247,7 +282,9 @@ function startGame(roomId: string): void {
     actor: 'system',
     playerId: seats[0]!,
     seq: rt.serverSeq + 1,
-    reason: 'all-ready',
+    reason: isNextGame ? 'next-game' : 'all-ready',
+    // BO3 第 2 小局强制换先手（docs/16 §1.3）；第 3 小局不带该字段 = 重新掷骰。
+    ...(opts.firstPlayerId ? { payload: { firstPlayerId: opts.firstPlayerId } } : {}),
   };
   const result = submitSystemIntent(rt.state, intent, {
     engine,
@@ -268,7 +305,11 @@ function startGame(roomId: string): void {
   rt.state = result.state;
   rt.seeded = true;
   room.phase = 'playing';
-  // 开局后即进入第一回合的充能阶段 —— 开始计时（ADR-0017）。
+  roomManager.markNextGameStarted(roomId);
+  // 记录本局先手（BO3 第 2 小局据此换人）
+  const first = rt.state.seats[0];
+  if (first) room.firstPlayers.push(first);
+  // 新一局重新计时（上一局结束时已 clear）。
   rt.timer.arm();
   // 再发一次快照：这次才带上计时截止时刻（首次快照在 arm 之前，只能给 deadline = 0）。
   broadcastSnapshot(roomId);
@@ -363,8 +404,7 @@ io.on('connection', (socket) => {
         error: 'INVALID_PAYLOAD',
         message: '参数不合法：昵称需 1–24 个字，人数需 1–8 的整数',
       });
-    const r = roomManager.create(parsed.data);
-    if (!r.ok) return ack?.({ ok: false, error: r.error, message: r.message });
+    const r = roomManager.create(parsed.data);    if (!r.ok) return ack?.({ ok: false, error: r.error, message: r.message });
     socket.data.playerId = r.value.seat.playerId;
     void socket.join(r.value.room.id);
     runtimeOf(r.value.room.id);
@@ -439,6 +479,39 @@ io.on('connection', (socket) => {
     ack?.({ ok: true, room: roomManager.publicView(room), started: r.value.allReady });
   });
 
+  /**
+   * 开始下一小局 —— BO3（D-132）。
+   *
+   * 只有**房主**能发起：两名玩家同时点会让开局链竞争，服务端无法区分「谁的意思」。
+   * 先手由 `nextFirstPlayer` 决定（第 2 小局换人，第 3 小局重新掷骰）。
+   */
+  socket.on(SOCKET_EVENTS.roomNextGame, (_raw: unknown, ack?: (res: unknown) => void) => {
+    const playerId = socket.data.playerId as string | undefined;
+    if (!playerId) return ack?.({ ok: false, error: ROOM_ERRORS.NOT_IN_ROOM, message: '不在房间内' });
+
+    const located = roomManager.locate(playerId);
+    if (!located) return ack?.({ ok: false, error: ROOM_ERRORS.NOT_IN_ROOM, message: '不在房间内' });
+    const room = located.room;
+    if (room.hostId !== playerId) {
+      return ack?.({ ok: false, error: ROOM_ERRORS.NOT_HOST, message: '只有房主能开始下一局' });
+    }
+    if (!room.awaitingNext) {
+      return ack?.({
+        ok: false,
+        error: ROOM_ERRORS.NO_NEXT_GAME,
+        message: '当前没有待开始的小局',
+      });
+    }
+    // 有人已离开 → 席位不足 2，开不了下一局（正常流程下 leave 会先判负系列赛，
+    // 这里再兜一层，避免出现「按钮可点但开局静默失败」）。
+    if (room.seats.filter(Boolean).length < 2) {
+      return ack?.({ ok: false, error: ROOM_ERRORS.ROOM_ENDED, message: '对手已离开，系列赛结束' });
+    }
+
+    startGame(room.id, { firstPlayerId: roomManager.nextFirstPlayer(room.id) ?? undefined });
+    ack?.({ ok: true, room: roomManager.publicView(room) });
+  });
+
   socket.on(SOCKET_EVENTS.roomLeave, (_raw: unknown, ack?: (res: unknown) => void) => {
     const playerId = socket.data.playerId as string | undefined;
     if (!playerId) return ack?.({ ok: false, error: 'NOT_IN_ROOM' });
@@ -450,6 +523,8 @@ io.on('connection', (socket) => {
     // 对局进行中离场 = 系统代为认输（Era 2026-10-18：一方离开后另一方卡在空白页）。
     // 走系统 Intent 而非直接改状态 —— 结算仍由引擎产出标准 game:ended 事件，
     // 留下的玩家按正常事件流收到「对局结束」，不需要客户端特例。
+    //
+    // D-132：离场同时**判负整个系列赛** —— 否则 BO3 会停在「等待下一局」。
     if (before) {
       const rt = runtimes.get(before.room.id);
       if (rt && rt.state.started && rt.state.winner === null && playerId in rt.state.players) {
@@ -468,10 +543,13 @@ io.on('connection', (socket) => {
           emit: (out) => emitGameOut(before.room.id, rt, out),
         });
         rt.state = result.state;
-        if (rt.state.winner !== null) {
-          before.room.phase = 'ended';
+        if (gameOver(rt.state)) {
           rt.timer.clear();
+          roomManager.forfeitSeries(before.room.id, playerId);
         }
+      } else if (rt && before.room.awaitingNext) {
+        // 小局之间离开同样结束系列赛：否则留下的人卡在「等待房主开始下一局」。
+        roomManager.forfeitSeries(before.room.id, playerId);
       }
     }
 
@@ -508,9 +586,8 @@ io.on('connection', (socket) => {
     // 只有**被接受**的操作才重新计时：被拒绝 / 重复的 Intent 不续命，
     // 否则发一串非法操作就能无限拖时间，超时保护当场失效（ADR-0017 §2）。
     if (result.out.kind === 'accepted') {
-      if (rt.state.winner !== null) {
-        located.room.phase = 'ended';
-        rt.timer.clear();
+      if (gameOver(rt.state)) {
+        finishGame(located.room.id);
       } else {
         rt.timer.arm();
       }

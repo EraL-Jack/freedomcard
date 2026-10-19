@@ -2,28 +2,26 @@ import { KEYWORD_TAUNT } from './constants.js';
 import type { CardDef } from './types.js';
 
 /**
- * 卡池（卡定义表）—— **双阵营 30 张**（炎刃 15 + 霜律 15）。
+ * 卡池（卡定义表）—— **三阵营 45 张 + 2 张衍生物**（炎刃 15 + 霜律 15 + 星轨 15）。
  *
  * ## 数据来源
  *
- * 1. **Era 原始 5 张**（`docs/10` 转录件）：`cost` / `power` / `type` / `text` 照抄卡面，
- *    不改编排。
- * 2. **8 张原占位卡**：Era 2026-10-19 采纳 `docs/12` 设计稿，**数值不动、补上效果文本**，
- *    由 `PLACEHOLDER_CARD_IDS` 移出，转为正式卡。
- * 3. **炎刃新增 2 张**（`bladeCremation` / `bladePhoenix`）与**霜律 15 张**：
- *    来自 `docs/12`，Era 2026-10-19 指示直接实现。
+ * 1. **Era 原始 5 张**（`docs/10` 转录件）：`cost` / `power` / `type` / `text` 照抄卡面。
+ * 2. **`docs/12`**：炎刃 15 张 + 霜律 15 张（D-225 / D-229 修订）。
+ * 3. **`docs/17`**：星轨 15 张（D-230 新增阵营）。
+ * 4. **`docs/18-卡牌文本规范`**：卡面统一为「什么时候 → 花多少 → 做什么」，
+ *    `【N】` 只出现在首行与时机之后；力量值变化写 `力量值 +N`。
  *
  * ## 纪律
  *
  * - `text` 是**卡面原文**，供 UI 展示与人工核对；效果的可执行实现在
  *   `core/src/effects/*`（一卡一模块），不解析此文本。
- * - `damage` 只在卡面写明时写入；未写的按 `DEFAULT_DAMAGE`（X-5）。
- *   但打脸伤害现在按力量分档（docs/16 §5.5），`damage` 是**例外覆盖**。
- * - 霜冻不是卡面关键词常量，而是实例状态位（ADR-0025）—— 卡面文本里写「霜冻」即可。
- *
- * ⚠️ 指挥官技能费用：卡面原文写的是【2】，`docs/16` §6.4（D-228）定稿为
- * **基础 3 费、每提升一档 −1（2/1/0）**，故两处 `text` 已按新口径标注「3-档位」。
- * 这是 Era 的规则修订，不是我方改写卡面。
+ * - `damage` 只在卡面写明时写入；未写的按力量分档（docs/16 §5.5），
+ *   `damage` 是**例外覆盖**。
+ * - 冻结不是卡面关键词常量，而是实例状态位（ADR-0025）—— 卡面文本里写「冻结」即可。
+ * - **指挥官没有力量值**（docs/16 §6.2.1）：首行只写「指挥官」，
+ *   `powerCurve` 字段保留作历史、不参与任何判定。
+ * - 指挥官技能费用固定 **2 费**（D-229 撤销 D-228 的「3 − 档位」）。
  */
 
 export const CARD_POOL: Record<string, CardDef> = {
@@ -38,15 +36,16 @@ export const CARD_POOL: Record<string, CardDef> = {
     cost: 0,
     power: 0,
     text: [
-      '力量值0-1-3-5 力量值提升，在每回合充能阶段执行',
-      'Ⅰ 【3-档位】每回合一次，可以根据除外区的卡名包含炎刃的卡的数量执行以下最多3个效果，每个效果最多一次：',
-      '1个：从墓地选择一个力量值在除外区炎刃数量等级以下的随从，召唤',
-      '3个：选择一个随从，本回合力量值+1',
-      '5个：选择一个力量值在除外区炎刃数量等级以下的随从，破坏',
-      '7个：选择一个随从，本回合对指挥官伤害+1',
-      '9个：选择一个随从，一回合一次，攻击后重置',
-      'Ⅱ 每回合一次，可以将一张手牌除外。',
+      '指挥官',
+      'Ⅰ 每回合一次【2】：按除外区「炎刃」卡的数量，执行以下最多 3 个效果（每个效果最多一次）：',
+      '  1 个：从你的墓地选择 1 个力量值不高于该数量的随从，召唤',
+      '  3 个：选择 1 个己方随从，本回合力量值 +1',
+      '  5 个：选择 1 个力量值不高于该数量的敌方随从，破坏',
+      '  7 个：选择 1 个己方随从，本回合对指挥官伤害 +1',
+      '  9 个：选择 1 个己方随从，本回合攻击后重置（每回合最多 1 次）',
+      'Ⅱ 每回合一次：将 1 张手牌除外。',
     ].join('\n'),
+    // 历史字段：指挥官力量值已取消（docs/16 §6.2.1），保留仅为旧数据兼容。
     powerCurve: [0, 1, 3, 5],
   },
 
@@ -56,6 +55,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'minion',
     cost: 1,
     power: 2,
+    text: '【1】随从 / 力量值2 / 伤害值1',
   },
 
   bladeScout: {
@@ -64,7 +64,11 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'minion',
     cost: 0,
     power: 1,
-    text: '这张牌从卡组展示时，可以被除外，如果除外且被展示的这张卡本应置入伤害区，将卡组顶一张卡片置入伤害区。',
+    // Era 原文不动（docs/12 §7.5 例外清单）
+    text:
+      '【0】随从 / 力量值1 / 伤害值1\n' +
+      '这张牌从卡组展示时，可以被除外，如果除外且被展示的这张卡本应置入伤害区，\n' +
+      '将卡组顶一张卡片置入伤害区。',
   },
 
   bladeTactician: {
@@ -73,9 +77,12 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'minion',
     cost: 1,
     power: 1,
-    text:
-      '每回合一次，这张卡在场时，这个回合获得效果【每当有一个【炎刃】随从登场，' +
+    // Era 原文不动（docs/12 §7.5 例外清单）
+    text: [
+      '【1】随从 / 力量值1 / 伤害值1',
+      '每回合一次，这张卡在场时，这个回合获得效果【每当有一个【炎刃】随从登场，',
       '那个随从力量值+1，这个效果这个回合最多发动次数为指挥官当前除外区的炎刃个数】。',
+    ].join('\n'),
   },
 
   bladeOrder: {
@@ -84,7 +91,8 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'spell',
     cost: 1,
     power: 0,
-    text: '展示卡组顶7张卡，选择其中一个力量值在你除外区的炎刃数量以下的随从召唤。',
+    // Era 原文不动（docs/12 §7.5 例外清单）
+    text: '【1】法术\n展示卡组顶7张卡，选择其中一个力量值在你除外区的炎刃数量以下的随从召唤。',
   },
 
   bladeRecruit: {
@@ -93,6 +101,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'minion',
     cost: 0,
     power: 1,
+    text: '【0】随从 / 力量值1 / 伤害值1',
   },
 
   bladeGuard: {
@@ -102,7 +111,10 @@ export const CARD_POOL: Record<string, CardDef> = {
     cost: 2,
     power: 2,
     keywords: [KEYWORD_TAUNT],
-    text: '登场时：将卡组顶一张卡置入墓地；若该卡卡名包含「炎刃」，你可以将其除外。',
+    text: [
+      '【2】随从 / 力量值2 / 伤害值1 / 嘲讽',
+      '登场时：将卡组顶 1 张卡置入墓地；若该卡为「炎刃」卡，你可以将其除外。',
+    ].join('\n'),
   },
 
   bladeKnight: {
@@ -111,7 +123,10 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'minion',
     cost: 3,
     power: 4,
-    text: '攻击时：你可以将墓地一张卡名包含「炎刃」的卡除外；若如此做，本回合此卡力量值+1。',
+    text: [
+      '【3】随从 / 力量值4 / 伤害值1',
+      '攻击时：你可以将墓地 1 张「炎刃」卡除外；若如此做，本回合此卡力量值 +1。',
+    ].join('\n'),
   },
 
   bladeCaptain: {
@@ -120,7 +135,10 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'minion',
     cost: 4,
     power: 5,
-    text: '每当你有一个其他卡名包含「炎刃」的随从登场时，该随从本回合力量值+1。',
+    text: [
+      '【4】随从 / 力量值5 / 伤害值1',
+      '其他己方「炎刃」随从登场时：该随从本回合力量值 +1。',
+    ].join('\n'),
   },
 
   bladeVeteran: {
@@ -129,7 +147,10 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'minion',
     cost: 5,
     power: 6,
-    text: '登场时：你可以将墓地一张卡名包含「炎刃」的卡除外；若如此做，抽一张牌。',
+    text: [
+      '【5】随从 / 力量值6 / 伤害值1',
+      '登场时：你可以将墓地 1 张「炎刃」卡除外；若如此做，抽 1 张。',
+    ].join('\n'),
   },
 
   bladeChampion: {
@@ -138,7 +159,10 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'minion',
     cost: 6,
     power: 7,
-    text: '登场时：你的除外区每有3张卡名包含「炎刃」的卡，本回合此卡力量值+1（最多+3）。',
+    text: [
+      '【6】随从 / 力量值7 / 伤害值1',
+      '登场时：你的除外区每有 3 张「炎刃」卡，本回合此卡力量值 +1（最多 +3）。',
+    ].join('\n'),
   },
 
   bladeTactics: {
@@ -147,7 +171,11 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'spell',
     cost: 2,
     power: 0,
-    text: '选择一个己方随从：本回合其力量值+2。若你的除外区有3张以上卡名包含「炎刃」的卡，改为+3。',
+    text: [
+      '【2】法术',
+      '选择 1 个己方随从：本回合其力量值 +2。',
+      '若你的除外区有 3 张及以上「炎刃」卡，改为 +3。',
+    ].join('\n'),
   },
 
   bladeBanner: {
@@ -156,7 +184,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'continuous',
     cost: 3,
     power: 0,
-    text: '每回合一次：当一张卡名包含「炎刃」的卡被除外时，抽一张牌。',
+    text: '【3】持续法术\n己方「炎刃」卡被除外时：抽 1 张（每回合最多触发 1 次）。',
   },
 
   bladeCremation: {
@@ -165,7 +193,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'spell',
     cost: 2,
     power: 0,
-    text: '展示卡组顶4张卡。将其中任意数量的卡名包含「炎刃」的卡除外，其余置入墓地。',
+    text: '【2】法术\n展示卡组顶 4 张卡。将其中任意数量的「炎刃」卡除外，其余置入墓地。',
   },
 
   bladePhoenix: {
@@ -175,7 +203,10 @@ export const CARD_POOL: Record<string, CardDef> = {
     cost: 7,
     power: 7,
     damage: 2,
-    text: '登场时：将你墓地中所有卡名包含「炎刃」的卡除外。每除外一张，本回合此卡力量值+1（最多+5）。',
+    text: [
+      '【7】随从 / 力量值7 / 伤害值2',
+      '登场时：将你墓地中所有「炎刃」卡除外；每除外 1 张，本回合此卡力量值 +1（最多 +5）。',
+    ].join('\n'),
   },
 
   /* ================================================================== *
@@ -189,14 +220,26 @@ export const CARD_POOL: Record<string, CardDef> = {
     cost: 0,
     power: 0,
     text: [
-      '力量值0-1-2-4 力量值提升，在每回合充能阶段执行',
-      'Ⅰ 【3-档位】每回合一次：霜冻一个敌方随从。',
-      'Ⅱ 每回合一次：当一个敌方随从被霜冻时，抽一张牌。',
+      '指挥官',
+      'Ⅰ 每回合一次【2】：按霜痕层数冻结敌方随从：',
+      '  0–2 层：冻结 1 个',
+      '  3–5 层：冻结 1 个，抽 1 张',
+      '  6–8 层：冻结 2 个',
+      '  9 层及以上：冻结 2 个，抽 1 张',
+      'Ⅱ 敌方随从被冻结时：抽 1 张（每回合最多触发 1 次）。',
+      'Ⅲ 敌方随从被冻结时：你获得 1 层霜痕（永久累积，不清零）。',
     ].join('\n'),
     powerCurve: [0, 1, 2, 4],
   },
 
-  frostRecruit: { defId: 'frostRecruit', name: '霜律新兵', type: 'minion', cost: 0, power: 1 },
+  frostRecruit: {
+    defId: 'frostRecruit',
+    name: '霜律新兵',
+    type: 'minion',
+    cost: 0,
+    power: 1,
+    text: '【0】随从 / 力量值1 / 伤害值1',
+  },
 
   frostApprentice: {
     defId: 'frostApprentice',
@@ -204,7 +247,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'minion',
     cost: 1,
     power: 1,
-    text: '登场时：霜冻一个敌方随从。',
+    text: '【1】随从 / 力量值1 / 伤害值1\n登场时：冻结 1 个敌方随从。',
   },
 
   frostWarden: {
@@ -214,7 +257,10 @@ export const CARD_POOL: Record<string, CardDef> = {
     cost: 1,
     power: 1,
     keywords: [KEYWORD_TAUNT],
-    text: '当此卡被攻击时，攻击者本回合力量值-1。',
+    text: [
+      '【1】随从 / 力量值1 / 伤害值1 / 嘲讽',
+      '被攻击时：攻击者本回合力量值 -1。',
+    ].join('\n'),
   },
 
   frostBinder: {
@@ -223,7 +269,10 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'minion',
     cost: 2,
     power: 2,
-    text: '登场时：霜冻一个敌方随从；若该随从已处于霜冻状态，改为抽一张牌。',
+    text: [
+      '【2】随从 / 力量值2 / 伤害值1',
+      '登场时：冻结 1 个敌方随从；若该随从已处于冻结状态，改为抽 1 张。',
+    ].join('\n'),
   },
 
   frostLancer: {
@@ -232,7 +281,10 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'minion',
     cost: 2,
     power: 2,
-    text: '此卡攻击处于霜冻状态的随从时，力量值+2。',
+    text: [
+      '【2】随从 / 力量值2 / 伤害值1',
+      '攻击时：若目标处于冻结状态，本回合此卡力量值 +2。',
+    ].join('\n'),
   },
 
   frostEnforcer: {
@@ -241,7 +293,10 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'minion',
     cost: 3,
     power: 3,
-    text: '每当一个敌方随从被霜冻时，本回合此卡力量值+1，每回合最多+2。',
+    text: [
+      '【3】随从 / 力量值3 / 伤害值1',
+      '敌方随从被冻结时：本回合此卡力量值 +1（每回合最多 +2）。',
+    ].join('\n'),
   },
 
   frostNightwatch: {
@@ -250,7 +305,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'minion',
     cost: 4,
     power: 4,
-    text: '登场时：霜冻至多两个敌方随从。',
+    text: '【4】随从 / 力量值4 / 伤害值1\n登场时：冻结至多 2 个敌方随从。',
   },
 
   frostJailer: {
@@ -259,7 +314,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'minion',
     cost: 5,
     power: 5,
-    text: '登场时：霜冻所有敌方随从。',
+    text: '【5】随从 / 力量值5 / 伤害值1\n登场时：冻结所有敌方随从。',
   },
 
   frostWinterblade: {
@@ -269,7 +324,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     cost: 6,
     power: 6,
     damage: 2,
-    text: '登场时：霜冻所有敌方随从。',
+    text: '【6】随从 / 力量值6 / 伤害值2\n登场时：冻结所有敌方随从。',
   },
 
   frostEdict: {
@@ -278,7 +333,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'spell',
     cost: 1,
     power: 0,
-    text: '霜冻一个敌方随从；若其力量值大于等于4，抽一张牌。',
+    text: '【1】法术\n冻结 1 个敌方随从；若其力量值大于等于 4，抽 1 张。',
   },
 
   frostColdSnap: {
@@ -287,7 +342,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'spell',
     cost: 2,
     power: 0,
-    text: '霜冻至多两个敌方随从。',
+    text: '【2】法术\n冻结至多 2 个敌方随从。',
   },
 
   frostJudgment: {
@@ -296,7 +351,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'spell',
     cost: 3,
     power: 0,
-    text: '选择一个敌方随从：若它处于霜冻状态，破坏它；否则霜冻它。',
+    text: '【3】法术\n选择 1 个敌方随从：若它处于冻结状态，破坏它；否则冻结它。',
   },
 
   frostFinalJudgment: {
@@ -305,7 +360,10 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'spell',
     cost: 5,
     power: 0,
-    text: '破坏所有处于霜冻状态的敌方随从。每破坏一个，对敌方指挥官造成1点伤害。',
+    text: [
+      '【5】法术',
+      '破坏所有处于冻结状态的敌方随从。每破坏 1 个，对敌方指挥官造成 1 点伤害。',
+    ].join('\n'),
   },
 
   frostDomain: {
@@ -314,16 +372,200 @@ export const CARD_POOL: Record<string, CardDef> = {
     type: 'continuous',
     cost: 3,
     power: 0,
-    text: '敌方处于霜冻状态的随从力量值-1。',
+    text: '【3】持续法术\n持续：敌方处于冻结状态的随从力量值 -1。',
+  },
+
+  /* ================================================================== *
+   * 星轨（Star Track）—— 15 张（docs/17 / D-230）
+   * ================================================================== */
+
+  starWatcher: {
+    defId: 'starWatcher',
+    name: '星轨观测者',
+    type: 'commander',
+    cost: 0,
+    power: 0,
+    text: [
+      '指挥官',
+      'Ⅰ 攻击时【1】：按星轨层数从卡组顶展示，触发其中所有「展示时」效果，然后将这些卡按原顺序置入牌库底：',
+      '  0–2 层：2 张',
+      '  3–5 层：3 张',
+      '  6 层及以上：4 张',
+      'Ⅱ 每当你展示 1 张卡时：获得 1 层星轨（永久累积，不清零）。',
+    ].join('\n'),
+  },
+
+  starScout: {
+    defId: 'starScout',
+    name: '星轨斥候',
+    type: 'minion',
+    cost: 0,
+    power: 1,
+    text: '【0】随从 / 力量值1 / 伤害值1\n展示时：获得 1 层星轨。',
+  },
+
+  starAcolyte: {
+    defId: 'starAcolyte',
+    name: '星轨侍僧',
+    type: 'minion',
+    cost: 1,
+    power: 1,
+    text: '【1】随从 / 力量值1 / 伤害值1\n展示时：本回合你的指挥官伤害值 +1（不可叠加）。',
+  },
+
+  starArcher: {
+    defId: 'starArcher',
+    name: '星轨弓手',
+    type: 'minion',
+    cost: 1,
+    power: 2,
+    text: [
+      '【1】随从 / 力量值2 / 伤害值1',
+      '展示时：对敌方指挥官造成 1 点伤害（每回合最多触发 1 次）。',
+    ].join('\n'),
+  },
+
+  starGuard: {
+    defId: 'starGuard',
+    name: '星轨守卫',
+    type: 'minion',
+    cost: 2,
+    power: 2,
+    keywords: [KEYWORD_TAUNT],
+    text: '【2】随从 / 力量值2 / 伤害值1 / 嘲讽\n展示时：抽 1 张。',
+  },
+
+  starWeaver: {
+    defId: 'starWeaver',
+    name: '星轨织者',
+    type: 'minion',
+    cost: 2,
+    power: 2,
+    text: '【2】随从 / 力量值2 / 伤害值1\n展示时：召唤 1 个星灵（力量值1 / 伤害值1）。',
+  },
+
+  starLancer: {
+    defId: 'starLancer',
+    name: '星轨枪手',
+    type: 'minion',
+    cost: 3,
+    power: 3,
+    text: '【3】随从 / 力量值3 / 伤害值1\n展示时：本回合此卡力量值 +2。',
+  },
+
+  starHerald: {
+    defId: 'starHerald',
+    name: '星轨传令',
+    type: 'minion',
+    cost: 3,
+    power: 3,
+    text: '【3】随从 / 力量值3 / 伤害值1\n展示时：本回合你打出的下一张随从费用 -1。',
+  },
+
+  starGiant: {
+    defId: 'starGiant',
+    name: '星轨巨像',
+    type: 'minion',
+    cost: 5,
+    power: 6,
+    text: '【5】随从 / 力量值6 / 伤害值1\n展示时：本回合此卡力量值 +1。',
+  },
+
+  starSovereign: {
+    defId: 'starSovereign',
+    name: '星轨君王',
+    type: 'minion',
+    cost: 6,
+    power: 7,
+    damage: 2,
+    text: '【6】随从 / 力量值7 / 伤害值2\n展示时：召唤 1 个星灵（力量值3 / 伤害值3）。',
+  },
+
+  starChart: {
+    defId: 'starChart',
+    name: '星图',
+    type: 'spell',
+    cost: 2,
+    power: 0,
+    text: '【2】法术\n展示卡组顶 1 张卡，触发其中所有「展示时」效果，然后将它置入牌库底。',
+  },
+
+  starFall: {
+    defId: 'starFall',
+    name: '星陨',
+    type: 'spell',
+    cost: 2,
+    power: 0,
+    text: '【2】法术\n对敌方指挥官造成 2 点伤害。',
+  },
+
+  starGaze: {
+    defId: 'starGaze',
+    name: '凝视星空',
+    type: 'spell',
+    cost: 3,
+    power: 0,
+    text: [
+      '【3】法术',
+      '展示卡组顶 2 张卡，触发其中所有「展示时」效果。',
+      '然后选择其中 1 张加入手牌，其余按原顺序置入牌库底。',
+    ].join('\n'),
+  },
+
+  starBlessing: {
+    defId: 'starBlessing',
+    name: '星赐',
+    type: 'spell',
+    cost: 3,
+    power: 0,
+    text: '【3】法术\n本回合你的所有随从力量值 +1。',
+  },
+
+  starOrbit: {
+    defId: 'starOrbit',
+    name: '星轨环',
+    type: 'continuous',
+    cost: 2,
+    power: 0,
+    text: '【2】持续法术\n持续：每回合你第一次展示卡时，抽 1 张。',
+  },
+
+  /* ================================================================== *
+   * 衍生物 —— 只能被效果召唤，不进卡组（docs/17 §4）
+   * ================================================================== */
+
+  starSpirit1: {
+    defId: 'starSpirit1',
+    name: '星灵',
+    type: 'minion',
+    cost: 0,
+    power: 1,
+    text: '【0】随从 / 力量值1 / 伤害值1',
+  },
+
+  starSpirit3: {
+    defId: 'starSpirit3',
+    name: '星灵',
+    type: 'minion',
+    cost: 0,
+    power: 3,
+    text: '【0】随从 / 力量值3 / 伤害值1',
   },
 };
+
+/**
+ * **衍生物清单** —— 不进卡组、不参与同名上限校验、不计入 30 张主卡组。
+ *
+ * 单独列出是为了让 `checkDeck` 与卡组构筑逻辑能显式排除它们：
+ * 衍生物被破坏后进墓地，但**不参与洗回**（docs/17 §4）。
+ */
+export const TOKEN_CARD_IDS: readonly string[] = ['starSpirit1', 'starSpirit3'];
 
 /**
  * **占位卡清单** —— 已清空（ADR-0025）。
  *
  * 原 8 张占位卡在 `docs/12` 采纳后转为正式卡（数值不变、补上效果文本）。
- * 保留这个导出的空数组是为了让既有测试与文档引用不中断；
- * 将来若再出现临时数据，仍应在此显式枚举。
+ * 保留这个导出的空数组是为了让既有测试与文档引用不中断。
  */
 export const PLACEHOLDER_CARD_IDS: readonly string[] = [];
 
@@ -337,27 +579,34 @@ export function isFrostCard(def: CardDef): boolean {
   return def.name.includes('霜律');
 }
 
+/** 星轨体系判定 —— 与 `isBladeCard` 同口径。 */
+export function isStarCard(def: CardDef): boolean {
+  return def.name.includes('星轨') || def.name === '星灵';
+}
+
 /**
  * 可主动发动的效果清单（客户端渲染用；服务端仍按 `EFFECTS` 注册表裁决）。
  *
  * 放在 shared 是因为**卡面效果属于卡数据**，客户端需要知道该给哪些卡显示发动按钮。
  * 具体能否发动（回合 / 次数 / 费用 / 目标）一律由服务端判断，客户端只做展示门槛。
+ *
+ * ⚠️ `id` 与 `core/src/effects/*` 的 effectId 一一对应，改名等于改协议。
  */
 export const ACTIVATABLE_EFFECTS: Readonly<
   Record<string, readonly { id: string; label: string; zone: 'commander' | 'board' }[]>
 > = {
   bladeLord: [
-    { id: '1', label: '发动 效果Ⅰ：付 3−档位 张费用（2/1/0），按除外区「炎刃」数执行至多 3 项', zone: 'commander' },
-    { id: '2', label: '发动 效果Ⅱ：将一张手牌除外', zone: 'commander' },
+    { id: '1', label: '发动 效果Ⅰ【2】：按除外区「炎刃」数执行至多 3 项', zone: 'commander' },
+    { id: '2', label: '发动 效果Ⅱ：将 1 张手牌除外', zone: 'commander' },
   ],
   bladeTactician: [
     {
       id: '1',
-      label: '发动：本回合己方炎刃随从登场时力量 +1（次数 = 除外区炎刃数）',
+      label: '发动：本回合己方「炎刃」随从登场时力量值 +1（次数 = 除外区「炎刃」数）',
       zone: 'board',
     },
   ],
   frostAdjudicator: [
-    { id: '1', label: '发动 效果Ⅰ：付 3−档位 张费用（2/1/0），霜冻一个敌方随从', zone: 'commander' },
+    { id: '1', label: '发动 效果Ⅰ【2】：按霜痕层数冻结敌方随从', zone: 'commander' },
   ],
 };

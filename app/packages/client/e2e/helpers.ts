@@ -19,12 +19,19 @@ export async function newClient(browser: Browser, nickname: string): Promise<Pag
 }
 
 /** 建房 + 加入 + 双方准备，返回两个已开局的页面。 */
-export async function startGame(browser: Browser): Promise<{ host: Page; guest: Page; code: string }> {
+export async function startGame(
+  browser: Browser,
+  opts: { format?: 'bo1' | 'bo3'; hostFaction?: string; guestFaction?: string } = {},
+): Promise<{ host: Page; guest: Page; code: string }> {
   const host = await newClient(browser, 'Host');
+  // D-132：赛制在**建房**时选（BO1 默认），D-235：阵营也在这里选。
+  if (opts.format) await host.getByTestId('format').selectOption(opts.format);
+  if (opts.hostFaction) await host.getByTestId('faction').selectOption(opts.hostFaction);
   await host.getByTestId('create').click();
   const code = ((await host.getByTestId('room-code').textContent()) ?? '').trim();
 
   const guest = await newClient(browser, 'Guest');
+  if (opts.guestFaction) await guest.getByTestId('join-faction').selectOption(opts.guestFaction);
   await guest.getByTestId('code').fill(code);
   await guest.getByTestId('join').click();
   await expect(guest.getByTestId('ready')).toBeVisible({ timeout: 10_000 });
