@@ -71,7 +71,7 @@ import {
   starSovereignEffect,
   starWeaverEffect,
 } from './star-troops.js';
-import { applyEvents, drawTop, emitter, revealFromDeck } from './primitives.js';
+import { applyEvents, drawTop, emitter, putRevealedBottom, revealFromDeck } from './primitives.js';
 
 /** 效果模块接口。 */
 export interface EffectModule {
@@ -338,13 +338,17 @@ export function spellEntryEvents(
 
 /**
  * **展示**（docs/17 §2.1）+ 星轨结算 —— 星轨三处展示入口（指挥官攻击 / 星图 / 凝视星空）
- * 共用，保证「展示 → 星轨 +1 → 触发展示时」的次序只有一份实现。
+ * 共用，保证「展示 → 星轨 +1 → 触发展示时 → 归位」的次序只有一份实现。
  *
  * 次序：
- *  1. `revealFromDeck`：翻牌、公开、按原顺序置牌库底；
+ *  1. `revealFromDeck`：翻牌、**移入展示区**、公开；
  *  2. 指挥官是星轨观测者 → 每展示 1 张，星轨 +1（Ⅱ 被动）；
  *  3. 星轨环：本回合第一次展示时抽 1 张；
- *  4. 逐张结算「展示时」效果（按翻开顺序）。
+ *  4. 逐张结算「展示时」效果（按翻开顺序）；
+ *  5. 结算完毕，把仍在展示区的卡按原顺序送回牌库底。
+ *
+ * 第 1 步先离场、第 5 步才回底，就是 Era 2026-10-20 的口径「效果执行的时候放在展示区」：
+ * 效果期间卡停在展示区，玩家看得见，而抽牌也抽不走它们。
  */
 export function starRevealEvents(
   at: number,
@@ -378,6 +382,16 @@ export function starRevealEvents(
     if (!mod?.onReveal) continue;
     e.push(...mod.onReveal(e.state, ctx, owner, card.uid));
   }
+
+  // 结算完才归位：`e.state` 已是全部效果应用后的状态，只把仍在展示区的卡送回牌库底。
+  e.push(
+    ...putRevealedBottom(
+      at,
+      e.state,
+      owner,
+      r.revealed.map((c) => c.uid),
+    ),
+  );
 
   return {
     events: [...r.events, ...e.events],

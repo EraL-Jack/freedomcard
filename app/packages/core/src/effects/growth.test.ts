@@ -256,7 +256,8 @@ describe('星轨（docs/17 / D-230）', () => {
     const after = run(s, intent('p1', INTENTS.commanderAttack, { reveal: true }));
     const p1 = after.players['p1']!;
 
-    // ① 守卫抽到的是第 4 张 —— 证明 3 张展示卡**已经先置底**、不再占用牌库顶
+    // ① 守卫抽到的是第 4 张 —— 证明 3 张展示卡**在结算前就离开了牌库**（进了展示区），
+    //    不再占用牌库顶；归位发生在效果结算完之后（见下一条用例）
     expect(p1.zones.hand.map((x) => x.uid)).toContain(fourth);
     expect(shown.some((u) => p1.zones.hand.some((x) => x.uid === u))).toBe(false);
 
@@ -268,6 +269,71 @@ describe('星轨（docs/17 / D-230）', () => {
 
     // ④ 展示时效果各触发一次：弓手 1 点 + 指挥官攻击本身 1 点 = 8 − 2
     expect(after.players['p2']!.health).toBe(6);
+  });
+
+  it('展示期间卡片停在展示区，结算完才回牌库底（Era 2026-10-20）', () => {
+    const s = craft({
+      phase: 'battle',
+      commander: 'starWatcher',
+      zones: { commander: [c('cmd1', 'starWatcher')], cost: [c('k1', 'frostRecruit')] },
+      deck: [
+        'starGuard',
+        'starScout',
+        'starArcher',
+        'starWeaver',
+        'frostRecruit',
+        'frostRecruit',
+        'frostRecruit',
+        'frostRecruit',
+      ],
+      star: 3,
+    });
+    const shown = s.players['p1']!.zones.deck.slice(0, 3).map((x) => x.uid);
+
+    const r = applyIntent(s, intent('p1', INTENTS.commanderAttack, { reveal: true }), CTX);
+    if (!r.ok) throw new Error(`意外拒绝: ${r.error.code} ${r.error.message}`);
+    const events = r.value;
+
+    let mid = s;
+    let revealed = 0;
+    let lastRevealAt = -1;
+    let markAt = -1;
+    let putBottomAt = -1;
+    for (const [i, e] of events.entries()) {
+      mid = reduce(mid, e);
+
+      if (e.type === 'card:revealed') {
+        // 只检查星轨的「展示」批次 —— 指挥官造成伤害时的「受伤展示」是另一条路径
+        // （展示后直接进费用区，卡片本来就离场，不经过展示区）。
+        if (String(e.payload?.['reason'] ?? '') !== 'star-reveal') continue;
+        revealed += 1;
+        lastRevealAt = i;
+        const uid = String(e.payload?.['uid'] ?? '');
+        // 翻开那一刻：卡已经在展示区、已经不在卡组 —— 不是「先置底再看」
+        expect(mid.players['p1']!.zones.reveal.some((x) => x.uid === uid)).toBe(true);
+        expect(mid.players['p1']!.zones.deck.some((x) => x.uid === uid)).toBe(false);
+      }
+
+      if (e.type === 'star:mark') markAt = i;
+
+      if (e.type === 'deck:put-bottom') {
+        putBottomAt = i;
+        // 归位发生在三张都翻完之后，且这一刻三张一起离开展示区
+        expect(revealed).toBe(3);
+        expect(mid.players['p1']!.zones.reveal).toEqual([]);
+      }
+    }
+
+    // 归位排在这一批的**末尾**：翻完 → 结算（星轨 +1 / 守卫抽牌 / 弓手伤害）→ 才归位。
+    // 若归位紧跟在翻牌之后（中间没有任何效果），卡片就只是「过一下展示区」。
+    expect(putBottomAt).toBeGreaterThan(-1);
+    expect(putBottomAt).toBeGreaterThan(lastRevealAt + 1);
+    expect(markAt).toBeGreaterThan(lastRevealAt);
+    expect(markAt).toBeLessThan(putBottomAt);
+
+    // 收尾：展示区清空、三张按原顺序回到牌库底
+    expect(mid.players['p1']!.zones.reveal).toEqual([]);
+    expect(mid.players['p1']!.zones.deck.slice(-3).map((x) => x.uid)).toEqual(shown);
   });
 
   it('指挥官攻击（付 1 费展示）：先展示再结算 1 点伤害', () => {

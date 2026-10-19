@@ -93,6 +93,10 @@ export function describeEvent(
     case 'card:moved': {
       const from = str('from');
       const to = str('to');
+      // 展示区是**内部中转**（Era 2026-10-20）：进出展示区不写日志，
+      // 玩家只需要看到「展示：X」（card:revealed），否则会多出两条无信息的位移行。
+      if (to === 'reveal') return null;
+      if (from === 'reveal') return null;
       const name = cardName(defIdOf(state, str('uid')));
       if (from === 'deck' && to === 'hand') return `${who(names, str('playerId'))} 抽到 ${name}`;
       if (from === 'board' && to === 'graveyard') return `${name} 被破坏`;

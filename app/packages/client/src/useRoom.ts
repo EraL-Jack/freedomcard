@@ -336,15 +336,21 @@ export function useRoom(): RoomSession {
 
         if (e.type === 'combat:resolved') combatTick = e.at;
 
-        // 展示区（D-123）：收集本批展示的卡（uid + defId），批次以 at 区分
+        // 展示区（D-123）：收集本批展示的卡（uid + defId），批次以 at 区分。
+        //
+        // ⚠️ 只收集**没有进入真实展示区**的卡（Era 2026-10-20 起 `reveal` 是状态里的区域）。
+        // 星轨的「展示 → 结算 → 归位」由服务端状态驱动：卡在这段时间里就在 `zones.reveal`，
+        // 置底后自动消失 —— 不能用这里的客户端回执替它，否则归位后还会留在屏幕上。
+        // 这里的回执只服务「看一眼但不离场」的翻牌（焚典 / 号令 / 指挥官受伤展示）。
         if (e.type === 'card:revealed') {
           const pid = String(e.payload?.['playerId'] ?? '');
           const uid = String(e.payload?.['uid'] ?? '');
+          const inRevealZone = (next.players[pid]?.zones.reveal ?? []).some((x) => x.uid === uid);
           const defId =
             Object.values(next.players)
               .flatMap((x) => Object.values(x.zones).flat())
               .find((x) => x.uid === uid)?.defId ?? '';
-          if (pid && uid) {
+          if (pid && uid && !inRevealZone) {
             const sameBatch = revealTickRef.current[pid] === e.at;
             revealTickRef.current[pid] = e.at;
             setRevealed((prev) => ({

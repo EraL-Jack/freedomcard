@@ -107,24 +107,40 @@ export function reduce(state: GameState, event: GameEvent): GameState {
       });
     }
 
-    /** 牌库置底（docs/17 §2.1 展示）：按 `order` 顺序把仍在卡组的卡移到末尾。
+    /**
+     * 展示归位（docs/17 §2.1 / Era 2026-10-20）：把展示区里的卡按 `order` 移到牌库末尾。
      *
-     * 不在卡组的 uid（展示期间被抽走 / 被效果移走）静默跳过 —— 展示是「公开后归位」，
-     * 不是「强制回收」，把已离场的卡抓回来会破坏其他效果的结果。
+     * 两个来源，顺序不能反：
+     *  1. **展示区**（`reveal`）—— 正常路径：展示期间卡停在这里；
+     *  2. **卡组**—— 兼容旧回放（旧事件流里展示卡从未离开卡组）。
+     *
+     * 两处都找不到的 uid（展示期间被抽走 / 被效果移走）静默跳过 ——
+     * 展示是「公开后归位」，不是「强制回收」，把已离场的卡抓回来会破坏其他效果的结果。
      */
     case 'deck:put-bottom': {
       const id = s(event, 'playerId');
       const order = list(event, 'order');
       return withPlayer(state, id, (p) => {
-        const byUid = new Map(p.zones.deck.map((c) => [c.uid, c]));
+        const want = new Set(order);
+        const fromReveal = new Set<string>();
+        for (const c of p.zones.reveal) if (want.has(c.uid)) fromReveal.add(c.uid);
+        const fromDeck = new Set<string>();
+        for (const c of p.zones.deck) {
+          if (want.has(c.uid) && !fromReveal.has(c.uid)) fromDeck.add(c.uid);
+        }
+
+        const byUid = new Map<string, CardInstance>();
+        for (const c of p.zones.reveal) if (fromReveal.has(c.uid)) byUid.set(c.uid, c);
+        for (const c of p.zones.deck) if (fromDeck.has(c.uid)) byUid.set(c.uid, c);
+
+        p.zones.reveal = p.zones.reveal.filter((c) => !fromReveal.has(c.uid));
+        const rest = p.zones.deck.filter((c) => !fromDeck.has(c.uid));
         const bottom: CardInstance[] = [];
         for (const uid of order) {
           const c = byUid.get(uid);
-          if (!c) continue;
-          bottom.push(c);
-          byUid.delete(uid);
+          if (c) bottom.push(c);
         }
-        p.zones.deck = [...byUid.values(), ...bottom];
+        p.zones.deck = [...rest, ...bottom];
       });
     }
 
