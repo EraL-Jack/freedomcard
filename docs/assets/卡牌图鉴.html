@@ -321,7 +321,7 @@
     <div class="rules">
       <div><span class="dot" style="background:var(--blade)"></span><b>炎刃</b>：除外计数 → 分档兑现，中速价值。</div>
       <div><span class="dot" style="background:var(--frost)"></span><b>霜律</b>：冻结拖回合 → 节奏差 → 终结者。</div>
-      <div><span class="dot" style="background:var(--gold)"></span><b>霜冻</b>：立即休眠，跳过 1 次重置，不叠加。</div>
+      <div><span class="dot" style="background:var(--gold)"></span><b>冻结</b>：立即休眠，跳过 1 次重置，不叠加。</div>
       <div><span class="dot" style="background:#7ef0b0"></span><b>新增 / 补效果 / 原始 / 白板</b> 四类标签。</div>
     </div>
   </header>
@@ -343,11 +343,11 @@
   <section class="faction" id="sec-blade">
     <div class="faction-head">
       <h2 style="color:var(--blade)">炎刃</h2>
-      <span class="sub">除外 / 墓地 / 分档 · 指挥官曲线 0→1→3→5</span>
+      <span class="sub">除外 / 墓地 / 分档 · 指挥官无力量值</span>
       <span class="count">15 张</span>
     </div>
     <p class="faction-note">
-      指挥官 Ⅱ 每回合把手牌变成除外数，Ⅰ 按 1/3/5/7/9 档兑现。新增的两张牌分别补「稳定除外入口」（焚典）
+      指挥官 Ⅱ 每回合将 1 张手牌除外，为 Ⅰ 累积 1/3/5/7/9 档的除外数。新增的两张牌分别补「稳定除外入口」（焚典）
       与「顶费终结者」（凤凰）；8 张原白板里有 7 张补了与除外/墓地联动的效果，只留新兵当 0 费充能素材。
     </p>
     <div class="grid" id="grid-blade"></div>
@@ -356,89 +356,89 @@
   <section class="faction" id="sec-frost">
     <div class="faction-head">
       <h2 style="color:var(--frost)">霜律</h2>
-      <span class="sub">冻结 / 休眠 / 控制 · 指挥官曲线 0→1→2→4</span>
+      <span class="sub">冻结 / 休眠 / 控制 · 指挥官无力量值</span>
       <span class="count">15 张</span>
     </div>
     <p class="faction-note">
-      指挥官用「2 费 + 1 次冻结」换节奏，Ⅱ 把每一次冻结转成一张牌。整套牌不追求身材，而是先把对手的
+      指挥官用「2 费 + 1 次冻结」换节奏，Ⅱ 把每一次冻结转成 1 张牌。整套牌不追求身材，而是先把对手的
       攻击回合按停，再用长枪兵 / 执法者 / 寒域把这次停顿换成场面，最后由审判、终裁与凛冬之刃收尾。
     </p>
 
     <div class="legend">
-      <div class="box"><b>霜冻是什么</b>被霜冻的单位立即休眠；其控制者的下一个回合重置阶段不重置它，该回合结束解除。净效果 = 少一次攻击。</div>
+      <div class="box"><b>冻结是什么</b>被冻结的单位立即休眠；其控制者的下一个回合重置阶段不重置它，该回合结束解除。净效果 = 少一次攻击。</div>
       <div class="box"><b>不是什么</b>不是「不能成为目标」，不是「锁两个回合」，不叠加。被冻单位仍可被攻击、被效果指定、被充能。</div>
-      <div class="box"><b>怎么兑现</b>寒域让冻结单位 −1 力；长枪兵打冻结目标 +2；执法者每次冻结成长；审判/终裁把冻结变成破坏。</div>
+      <div class="box"><b>怎么兑现</b>寒域让冻结单位力量值 -1；长枪兵打冻结目标 +2；执法者每次冻结成长；审判/终裁把冻结变成破坏。</div>
     </div>
 
     <div class="grid" id="grid-frost"></div>
   </section>
 
   <footer>
-    <b>口径</b>：含指挥官共 15 张；允许白板，但绝大多数卡有完整效果；霜冻 = 跳过 1 次重置。
+    <b>口径</b>：含指挥官共 15 张；允许白板，但绝大多数卡有完整效果；冻结 = 跳过 1 次重置。
     卡面文本为展示用精简版，<b>完整规则、边界裁决、数值预算、两套 30 张示例构筑与落地要点以配套 Markdown 设计稿为准</b>。
-    <br />数据基线：主卡组 30 + 指挥官 1，同名上限 3；力量值比较裁决；伤害值默认 1。
+    <br />数据基线：主卡组 30 + 指挥官 1，同名上限 3；随从按力量值比较裁决；伤害值默认 1。
   </footer>
 </div>
 
 <script>
 const BLADE = [
-  { id:'bladeLord', name:'炎刃军统领', type:'指挥官', cost:'—', power:'0→1→3→5', damage:1, tag:'original', role:'除外引擎 / 分档兑现', curve:'0 → 1 → 3 → 5',
-    text:'<span class="hl">Ⅰ 【2】每回合一次</span>：按除外区「炎刃」卡数量（1/3/5/7/9）执行至多 3 项。<br><span class="hl">Ⅱ 每回合一次</span>：可以将一张手牌除外。' },
-  { id:'bladeVanguard', name:'炎刃军先锋', type:'随从', cost:1, power:2, damage:1, tag:'original', role:'1 费基准线', text:'白板。1 费 2 力，充能素材。' },
-  { id:'bladeScout', name:'炎刃斥候', type:'随从', cost:0, power:1, damage:1, tag:'original', role:'展示时 / 可选除外', text:'从卡组展示时，可以被除外；若因此被除外且本应置入伤害区，将卡组顶一张置入伤害区。' },
-  { id:'bladeTactician', name:'炎刃军师', type:'随从', cost:1, power:1, damage:1, tag:'original', role:'登场增益', text:'每回合一次：本回合每当一个炎刃随从登场，该随从力量 +1；次数 = 除外区炎刃数。' },
-  { id:'bladeOrder', name:'炎刃号令', type:'法术', cost:1, power:null, damage:null, tag:'original', role:'展示 → 召唤', text:'展示卡组顶 7 张，选择一张力量 ≤ 除外区炎刃数的随从召唤。' },
+  { id:'bladeLord', name:'炎刃军统领', type:'指挥官', cost:'—', power:null, damage:null, tag:'original', role:'除外引擎 / 分档兑现',
+    text:'<span class="hl">Ⅰ 每回合一次【2】</span>：按除外区「炎刃」卡数量（1 / 3 / 5 / 7 / 9 档）执行至多 3 项。<br><span class="hl">Ⅱ 每回合一次</span>：将 1 张手牌除外。' },
+  { id:'bladeVanguard', name:'炎刃军先锋', type:'随从', cost:1, power:2, damage:1, tag:'original', role:'1 费基准线', text:'白板。1 费 2 力量值，充能素材。' },
+  { id:'bladeScout', name:'炎刃斥候', type:'随从', cost:0, power:1, damage:1, tag:'original', role:'展示时 / 可选除外', text:'从卡组展示时，可以被除外；若因此被除外且本应置入伤害区，将卡组顶 1 张置入伤害区。' },
+  { id:'bladeTactician', name:'炎刃军师', type:'随从', cost:1, power:1, damage:1, tag:'original', role:'登场增益', text:'每回合一次：本回合每当 1 个「炎刃」随从登场，该随从力量值 +1；次数 = 除外区「炎刃」数。' },
+  { id:'bladeOrder', name:'炎刃号令', type:'法术', cost:1, power:null, damage:null, tag:'original', role:'展示 → 召唤', text:'展示卡组顶 7 张卡，选择其中 1 个力量值不高于除外区「炎刃」数量的随从，召唤。' },
   { id:'bladeRecruit', name:'炎刃新兵', type:'随从', cost:0, power:1, damage:1, tag:'vanilla', role:'0 费充能素材', text:'白板。' },
   { id:'bladeGuard', name:'炎刃卫士', type:'随从', cost:2, power:2, damage:1, tag:'patch', role:'防御 / 填墓', keywords:['嘲讽'],
-    text:'<span class="hl">嘲讽。</span>登场时：将卡组顶一张置入墓地；若为炎刃卡，你可以将其除外。' },
-  { id:'bladeKnight', name:'炎刃骑士', type:'随从', cost:3, power:4, damage:1, tag:'patch', role:'墓地换力量',
-    text:'攻击时：你可以将墓地一张炎刃卡除外；若如此做，本回合此卡力量 +1。' },
+    text:'<span class="hl">嘲讽。</span>登场时：将卡组顶 1 张卡置入墓地；若该卡为「炎刃」卡，你可以将其除外。' },
+  { id:'bladeKnight', name:'炎刃骑士', type:'随从', cost:3, power:4, damage:1, tag:'patch', role:'墓地换力量值',
+    text:'攻击时：你可以将墓地 1 张「炎刃」卡除外；若如此做，本回合此卡力量值 +1。' },
   { id:'bladeCaptain', name:'炎刃队长', type:'随从', cost:4, power:5, damage:1, tag:'patch', role:'铺场增益',
-    text:'每当你有一个其他炎刃随从登场时，该随从本回合力量 +1。' },
+    text:'其他己方「炎刃」随从登场时：该随从本回合力量值 +1。' },
   { id:'bladeVeteran', name:'炎刃老兵', type:'随从', cost:5, power:6, damage:1, tag:'patch', role:'墓地换牌',
-    text:'登场时：你可以将墓地一张炎刃卡除外；若如此做，抽一张牌。' },
+    text:'登场时：你可以将墓地 1 张「炎刃」卡除外；若如此做，抽 1 张。' },
   { id:'bladeChampion', name:'炎刃勇士', type:'随从', cost:6, power:7, damage:1, tag:'patch', role:'除外计数终结者',
-    text:'登场时：除外区每有 3 张炎刃卡，本回合此卡力量 +1（最多 +3）。' },
-  { id:'bladeTactics', name:'炎刃战术', type:'法术', cost:2, power:null, damage:null, tag:'patch', role:'战斗 trick',
-    text:'选择一个己方随从：本回合力量 +2；若除外区有 3 张以上炎刃卡，改为 +3。' },
+    text:'登场时：你的除外区每有 3 张「炎刃」卡，本回合此卡力量值 +1（最多 +3）。' },
+  { id:'bladeTactics', name:'炎刃战术', type:'法术', cost:2, power:null, damage:null, tag:'patch', role:'战斗技巧',
+    text:'选择 1 个己方随从：本回合其力量值 +2；若除外区有 3 张及以上「炎刃」卡，改为 +3。' },
   { id:'bladeBanner', name:'炎刃战旗', type:'持续法术', cost:3, power:null, damage:null, tag:'patch', role:'除外抽牌引擎',
-    text:'每回合一次：当一张炎刃卡被除外时，抽一张牌。' },
+    text:'己方「炎刃」卡被除外时：抽 1 张（每回合最多触发 1 次）。' },
   { id:'bladeCremation', name:'炎刃焚典', type:'法术', cost:2, power:null, damage:null, tag:'new', role:'稳定除外入口',
-    text:'展示卡组顶 4 张；将其中任意数量的炎刃卡除外，其余置入墓地。' },
+    text:'展示卡组顶 4 张卡；将其中任意数量的「炎刃」卡除外，其余置入墓地。' },
   { id:'bladePhoenix', name:'炎刃凤凰', type:'随从', cost:7, power:7, damage:2, tag:'new', role:'顶费终结者',
-    text:'登场时：将墓地所有炎刃卡除外；每除外一张，本回合力量 +1（最多 +5）。' },
+    text:'登场时：将你墓地中所有「炎刃」卡除外；每除外 1 张，本回合此卡力量值 +1（最多 +5）。' },
 ];
 
 const FROST = [
-  { id:'frostAdjudicator', name:'霜律裁决官', type:'指挥官', cost:'—', power:'0→1→2→4', damage:1, tag:'new', role:'冻结引擎 / 补牌', curve:'0 → 1 → 2 → 4',
-    text:'<span class="hl">Ⅰ 【2】每回合一次</span>：霜冻一个敌方随从。<br><span class="hl">Ⅱ 每回合一次</span>：当一个敌方随从被霜冻时，抽一张牌。' },
+  { id:'frostAdjudicator', name:'霜律裁决官', type:'指挥官', cost:'—', power:null, damage:null, tag:'new', role:'冻结引擎 / 补牌',
+    text:'<span class="hl">Ⅰ 每回合一次【2】</span>：按霜痕层数冻结敌方随从。<br>　0–2 层：冻结 1 个<br>　3–5 层：冻结 1 个，抽 1 张<br>　6–8 层：冻结 2 个<br>　9 层及以上：冻结 2 个，抽 1 张<br><span class="hl">Ⅱ 敌方随从被冻结时</span>：抽 1 张（每回合最多 1 次）。<br><span class="hl">Ⅲ 敌方随从被冻结时</span>：获得 1 层霜痕（永久累积，不清零）。' },
   { id:'frostRecruit', name:'霜律新兵', type:'随从', cost:0, power:1, damage:1, tag:'vanilla', role:'0 费充能素材', text:'白板。' },
   { id:'frostApprentice', name:'霜律学徒', type:'随从', cost:1, power:1, damage:1, tag:'new', role:'冻结入口',
-    text:'登场时：霜冻一个敌方随从。' },
+    text:'登场时：冻结 1 个敌方随从。' },
   { id:'frostWarden', name:'霜律戍卫', type:'随从', cost:1, power:1, damage:1, tag:'new', role:'防御 / 减力', keywords:['嘲讽'],
-    text:'<span class="hl">嘲讽。</span>当此卡被攻击时，攻击者本回合力量 -1。' },
+    text:'<span class="hl">嘲讽。</span>被攻击时：攻击者本回合力量值 -1。' },
   { id:'frostBinder', name:'霜律缚锁者', type:'随从', cost:2, power:2, damage:1, tag:'new', role:'冻结 / 补牌',
-    text:'登场时：霜冻一个敌方随从；若其已处于霜冻状态，改为抽一张牌。' },
+    text:'登场时：冻结 1 个敌方随从；若该随从已处于冻结状态，改为抽 1 张。' },
   { id:'frostLancer', name:'霜律长枪兵', type:'随从', cost:2, power:2, damage:1, tag:'new', role:'打冻结目标 +2',
-    text:'此卡攻击处于霜冻状态的随从时，力量 +2。' },
+    text:'攻击时：若目标处于冻结状态，本回合此卡力量值 +2。' },
   { id:'frostEnforcer', name:'霜律执法者', type:'随从', cost:3, power:3, damage:1, tag:'new', role:'冻结成长',
-    text:'每当一个敌方随从被霜冻时，本回合此卡力量 +1，每回合最多 +2。' },
+    text:'敌方随从被冻结时：本回合此卡力量值 +1（每回合最多 +2）。' },
   { id:'frostNightwatch', name:'霜律守夜人', type:'随从', cost:4, power:4, damage:1, tag:'new', role:'双冻结',
-    text:'登场时：霜冻至多两个敌方随从。' },
+    text:'登场时：冻结至多 2 个敌方随从。' },
   { id:'frostJailer', name:'霜律典狱长', type:'随从', cost:5, power:5, damage:1, tag:'new', role:'全体冻结',
-    text:'登场时：霜冻所有敌方随从。' },
+    text:'登场时：冻结所有敌方随从。' },
   { id:'frostWinterblade', name:'霜律凛冬之刃', type:'随从', cost:6, power:6, damage:2, tag:'new', role:'终结者',
-    text:'登场时：霜冻所有敌方随从。伤害 2。' },
+    text:'登场时：冻结所有敌方随从。' },
   { id:'frostEdict', name:'霜律律令', type:'法术', cost:1, power:null, damage:null, tag:'new', role:'冻结 / 条件抽',
-    text:'霜冻一个敌方随从；若其力量 ≥ 4，抽一张牌。' },
+    text:'冻结 1 个敌方随从；若其力量值大于等于 4，抽 1 张。' },
   { id:'frostColdSnap', name:'霜律寒流', type:'法术', cost:2, power:null, damage:null, tag:'new', role:'双冻结',
-    text:'霜冻至多两个敌方随从。' },
+    text:'冻结至多 2 个敌方随从。' },
   { id:'frostJudgment', name:'霜律审判', type:'法术', cost:3, power:null, damage:null, tag:'new', role:'条件破坏',
-    text:'选择一个敌方随从：若它处于霜冻状态，破坏它；否则霜冻它。' },
+    text:'选择 1 个敌方随从：若它处于冻结状态，破坏它；否则冻结它。' },
   { id:'frostFinalJudgment', name:'霜律终裁', type:'法术', cost:5, power:null, damage:null, tag:'new', role:'群体破坏 + 烧脸',
-    text:'破坏所有处于霜冻状态的敌方随从；每破坏一个，对敌方指挥官造成 1 点伤害。' },
-  { id:'frostDomain', name:'霜律寒域', type:'持续法术', cost:3, power:null, damage:null, tag:'new', role:'冻结单位 −1 力',
-    text:'敌方处于霜冻状态的随从力量 -1。' },
+    text:'破坏所有处于冻结状态的敌方随从；每破坏 1 个，对敌方指挥官造成 1 点伤害。' },
+  { id:'frostDomain', name:'霜律寒域', type:'持续法术', cost:3, power:null, damage:null, tag:'new', role:'冻结单位 -1 力量值',
+    text:'持续：敌方处于冻结状态的随从力量值 -1。' },
 ];
 
 const TAG_TEXT = { original:'原始', patch:'补效果', new:'新增', vanilla:'白板' };
@@ -471,7 +471,7 @@ function cardHTML(c, faction) {
   const isCmd = c.type === '指挥官';
   const tagClass = c.tag;
   const stats = isCmd
-    ? `<span class="stat curve">${c.power}</span>${badge(c.damage, 'damage')}`
+    ? '<span class="stat na">—</span>'
     : `${c.power !== null ? badge(c.power, 'power') : ''}${c.damage !== null ? badge(c.damage, 'damage') : ''}`;
   return `
   <article class="card ${faction} ${isCmd ? 'commander' : ''}" data-tag="${c.tag}" data-name="${c.name}">
@@ -483,12 +483,12 @@ function cardHTML(c, faction) {
     </div>
     <div class="art">
       <span class="glyph">${faction === 'blade' ? '刃' : '霜'}</span>
-      ${isCmd ? `<span class="curve">${c.curve}</span>` : ''}
+      
     </div>
     <h3 class="name">${c.name}</h3>
     <p class="cardtext">${c.text}</p>
     ${isCmd ? `<div class="cmd-info">
-      <span>生命 15</span>
+      <span>生命 8</span>
       <span>主卡组 30 + 指挥官 1</span>
       <span>${faction === 'blade' ? '体系：除外计数' : '体系：冻结控制'}</span>
     </div>` : ''}
