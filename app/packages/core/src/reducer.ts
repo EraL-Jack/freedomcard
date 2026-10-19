@@ -8,6 +8,8 @@
 
 import type { CardInstance, GameEvent, GameState, PlayerId, Zone } from '@app/shared';
 
+import { ZONES } from './state.js';
+
 /** 取 payload 里的字符串，缺失返回空串。 */
 function s(e: GameEvent, key: string): string {
   const v = e.payload?.[key];
@@ -82,9 +84,94 @@ export function reduce(state: GameState, event: GameEvent): GameState {
           const { frozen: _frozen, ...rest } = card;
           movedCard = rest;
         }
+        // 星轨「展示时：本回合此卡力量值 +N」落在尚未在场的卡上（docs/17 §6.3 方案 A）：
+        // 登场这一刻才兑现成本回合 `tempPower`，随后清掉暂存位。
+        if (to === 'board' && typeof movedCard.pendingPowerBuff === 'number') {
+          const { pendingPowerBuff, ...rest } = movedCard;
+          movedCard = { ...rest, tempPower: (rest.tempPower ?? 0) + pendingPowerBuff };
+        }
         p.zones[to] = [...dst, movedCard];
       });
     }
+
+    /** 衍生物入场（docs/17 §4：星灵）—— 卡池有定义、但开局没有实例。 */
+    case 'card:created': {
+      const id = s(event, 'playerId');
+      const uid = s(event, 'uid');
+      const defId = s(event, 'defId');
+      const to = (s(event, 'to') || 'board') as Zone;
+      return withPlayer(state, id, (p) => {
+        if (p.zones[to].some((c) => c.uid === uid)) return;
+        p.zones[to] = [...p.zones[to], { uid, defId }];
+        p.tokenSeq += 1;
+      });
+    }
+
+    /** 牌库置底（docs/17 §2.1 展示）：按 `order` 顺序把仍在卡组的卡移到末尾。
+     *
+     * 不在卡组的 uid（展示期间被抽走 / 被效果移走）静默跳过 —— 展示是「公开后归位」，
+     * 不是「强制回收」，把已离场的卡抓回来会破坏其他效果的结果。
+     */
+    case 'deck:put-bottom': {
+      const id = s(event, 'playerId');
+      const order = list(event, 'order');
+      return withPlayer(state, id, (p) => {
+        const byUid = new Map(p.zones.deck.map((c) => [c.uid, c]));
+        const bottom: CardInstance[] = [];
+        for (const uid of order) {
+          const c = byUid.get(uid);
+          if (!c) continue;
+          bottom.push(c);
+          byUid.delete(uid);
+        }
+        p.zones.deck = [...byUid.values(), ...bottom];
+      });
+    }
+
+    /** 展示时给「尚未在场」的自己的临时力量（docs/17 §6.3），登场时由 `card:moved` 消费。 */
+    case 'card:pending-buff': {
+      const id = s(event, 'playerId');
+      const uid = s(event, 'uid');
+      const amount = n(event, 'amount');
+      return withPlayer(state, id, (p) => {
+        for (const zone of ZONES) {
+          const list = p.zones[zone];
+          if (!list.some((c) => c.uid === uid)) continue;
+          p.zones[zone] = list.map((c) =>
+            c.uid === uid ? { ...c, pendingPowerBuff: (c.pendingPowerBuff ?? 0) + amount } : c,
+          );
+        }
+      });
+    }
+
+    /** 霜痕（docs/16 §6.3.2）：永久累积，不清零。 */
+    case 'frost:mark':
+      return withPlayer(state, s(event, 'playerId'), (p) => {
+        p.frostMark += Math.max(0, n(event, 'amount'));
+      });
+
+    /** 星轨（docs/17 §2.2）：永久累积，不清零。 */
+    case 'star:mark':
+      return withPlayer(state, s(event, 'playerId'), (p) => {
+        p.starTrack += Math.max(0, n(event, 'amount'));
+      });
+
+    /** 本回合指挥官攻击伤害加成（星轨侍僧，不可叠加 —— 由发出方负责只发一次）。 */
+    case 'commander:damage-bonus':
+      return withPlayer(state, s(event, 'playerId'), (p) => {
+        p.commanderDamageBonus += n(event, 'amount');
+      });
+
+    /**
+     * 本回合下一张随从的额外减费（星轨传令）。
+     * 带 `value` 是**绝对赋值**（用于打出随从后清零），否则按 `amount` 累加。
+     */
+    case 'cost:discount':
+      return withPlayer(state, s(event, 'playerId'), (p) => {
+        const v = event.payload?.['value'];
+        if (typeof v === 'number') p.nextMinionDiscount = Math.max(0, v);
+        else p.nextMinionDiscount += Math.max(0, n(event, 'amount'));
+      });
 
     case 'commander:revealed': {
       const id = s(event, 'playerId');
@@ -261,6 +348,9 @@ export function reduce(state: GameState, event: GameEvent): GameState {
           effectsUsed: incoming ? [] : p.effectsUsed,
           usedCostThisTurn: incoming ? 0 : p.usedCostThisTurn,
           commanderAttacked: incoming ? false : p.commanderAttacked,
+          // D-230：星轨的「本回合」修正（指挥官伤害 +N / 下一张随从减费）随回合清空。
+          commanderDamageBonus: incoming ? 0 : p.commanderDamageBonus,
+          nextMinionDiscount: incoming ? 0 : p.nextMinionDiscount,
           turnTriggers: [],
           zones: {
             ...p.zones,
@@ -272,6 +362,17 @@ export function reduce(state: GameState, event: GameEvent): GameState {
               const { tempPower: _tp, tempDamage: _td, attackRefresh: _ar, ...rest } = c;
               return rest;
             }),
+            // 展示时挂上的「登场 +N」只在本回合有效（docs/17 §6.3）。
+            ...Object.fromEntries(
+              ZONES.filter((z) => z !== 'board' && z !== 'commander').map((z) => [
+                z,
+                p.zones[z].map((c) => {
+                  if (c.pendingPowerBuff === undefined) return c;
+                  const { pendingPowerBuff: _pb, ...rest } = c;
+                  return rest;
+                }),
+              ]),
+            ),
           },
         };
       }

@@ -20,6 +20,12 @@ export const SOCKET_EVENTS = {
    */
   roomReady: 'room:ready',
   roomState: 'room:state',
+  /**
+   * 开始下一小局 —— BO3 用（docs/16 §1.3 / D-132）。
+   *
+   * 只有房主能发起，且必须处于「上一小局已结束、系列赛未分胜负」的待开局状态。
+   */
+  roomNextGame: 'room:next-game',
   gameIntent: 'game:intent',
   gameEvents: 'game:events',
   gameSnapshot: 'game:snapshot',
@@ -49,6 +55,10 @@ export const ROOM_ERRORS = {
   INVALID_TOKEN: 'INVALID_TOKEN',
   GRACE_EXPIRED: 'GRACE_EXPIRED',
   NOT_IN_ROOM: 'NOT_IN_ROOM',
+  /** 只有房主能开始下一小局（D-132）。 */
+  NOT_HOST: 'NOT_HOST',
+  /** 当前没有「上一小局已结束、等待开局」的状态。 */
+  NO_NEXT_GAME: 'NO_NEXT_GAME',
 } as const;
 
 export type RoomErrorCode = (typeof ROOM_ERRORS)[keyof typeof ROOM_ERRORS];
@@ -94,6 +104,28 @@ export const MINION_COST_DISCOUNT = 1;
 
 /** 指挥官攻击的固定伤害（docs/16 §6.1）：不比较力量、不受加成影响。 */
 export const COMMANDER_ATTACK_DAMAGE = 1;
+
+/**
+ * 指挥官技能费用 —— **固定 2 费**（D-229 撤销 D-228 的「3 − 档位」）。
+ *
+ * docs/12 §2.1 / §4.1 的卡面原文即【2】；D-228 曾改为随力量档位递减，
+ * D-229 明确「撤销通用成长，各指挥官用专属资源」，于是回到固定值。
+ */
+export const COMMANDER_SKILL_COST = 2;
+
+/**
+ * 霜痕档位（docs/16 §6.3.3 / D-229）：霜痕 ≥ 3 → 抽 1；≥ 6 → 冻 2；≥ 9 → 冻 2 + 抽 1。
+ * 写成升序阈值，档位判定只需比较最大满足项。
+ */
+export const FROST_MARK_TIERS = [3, 6, 9] as const;
+
+/**
+ * 星轨档位（docs/17 §2.2 / D-230）：星轨 ≥ 3 → 展示 3 张；≥ 6 → 展示 4 张。
+ * 基础展示 2 张（0–2 层）。
+ */
+export const STAR_TRACK_TIERS = [3, 6] as const;
+/** 星轨 0–2 层时的基础展示张数。 */
+export const STAR_TRACK_BASE_REVEAL = 2;
 
 /**
  * 打脸伤害分档（docs/16 §5.5）：力量 1–3 → 1，4–6 → 2，7+ → 3。

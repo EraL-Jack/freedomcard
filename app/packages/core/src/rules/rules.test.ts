@@ -17,7 +17,6 @@ import {
   type GameState,
   type Intent,
   type Phase,
-  type PlayerId,
   type RuleContext,
   type Zone,
 } from '@app/shared';
@@ -223,6 +222,38 @@ describe('开局 startRule', () => {
       const all = [...s.players[id]!.zones.deck, ...s.players[id]!.zones.hand];
       expect(all.every((card) => CARDS[card.defId]!.type !== 'commander')).toBe(true);
     }
+  });
+
+  it('BO3 第 2 小局：系统 Intent 可指定先手（不掷骰、不消耗随机）', () => {
+    const base = fresh();
+    const forced: Intent = {
+      type: INTENTS.start,
+      actor: 'system',
+      playerId: 'p1',
+      seq: 1,
+      payload: { firstPlayerId: 'p2' },
+    };
+    const r = applyIntent(base, forced, CTX);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const started = r.value.find((e) => e.type === 'game:started');
+    expect(started?.payload?.['seats']).toEqual(['p2', 'p1']);
+    expect(started?.payload?.['forced']).toBe(true);
+    // 未掷骰 → 不产出 rng:advance + game:started.rolls
+    expect(r.value.some((e) => e.type === 'game:started' && e.payload?.['rolls'])).toBe(false);
+  });
+
+  it('玩家 Intent 携带 firstPlayerId 一律忽略（防先后手伪造）', () => {
+    const r = applyIntent(
+      fresh(),
+      intent('p1', INTENTS.start, { firstPlayerId: 'p1' }),
+      CTX,
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const started = r.value.find((e) => e.type === 'game:started');
+    expect(started?.payload?.['forced']).toBeUndefined();
+    expect(started?.payload?.['rolls']).toBeDefined();
   });
 
   it('先后手由 1d6 决定，seats[0] 是点数较大者，且点数不同', () => {
@@ -929,14 +960,7 @@ function advance(state: GameState, times: number, ctx: RuleContext = CTX) {
   return { state: s, events };
 }
 
-/** 直接改写某玩家的指挥官力量档位（构造确定场景用）。 */
-function setIndex(state: GameState, playerId: PlayerId, index: number): GameState {
-  const p = state.players[playerId]!;
-  return { ...state, players: { ...state.players, [playerId]: { ...p, commanderPowerIndex: index } } };
-}
-
-describe('指挥官力量值曲线（X-7 / ADR-0016）', () => {
-  /** 用带曲线的指挥官开一局。 */
+describe('指挥官没有力量值（docs/16 §6.2.1 / D-230）', () => {
   function startWithCurve() {
     const s = createInitialState({
       seed: 7,
@@ -947,89 +971,32 @@ describe('指挥官力量值曲线（X-7 / ADR-0016）', () => {
     return runWith(s, intent('p1', INTENTS.start));
   }
 
-  it('初始档位为 0（力量值为曲线首项）', () => {
-    const s = fresh();
-    expect(s.players['p1']!.commanderPowerIndex).toBe(0);
-    expect(s.players['p2']!.commanderPowerIndex).toBe(0);
-  });
-
-  it('开局同步到第 1 轮：双方力量都是 1（docs/16 §6.3）', () => {
+  it('开局不再产出成长事件，档位停在初始值', () => {
     const { state: after, events } = startWithCurve();
-    const [first, second] = after.seats as [PlayerId, PlayerId];
-    expect(after.players[first]!.commanderPowerIndex).toBe(1);
-    expect(after.players[second]!.commanderPowerIndex).toBe(1);
-    expect(unitPower(after, CARDS, `${first}#commander`)).toBe(1);
-    expect(unitPower(after, CARDS, `${second}#commander`)).toBe(1);
-    const grown = events.filter((e) => e.type === 'commander:grown');
-    expect(grown).toHaveLength(2);
-    expect(grown[0]!.payload).toMatchObject({ index: 1, power: 1 });
+    expect(events.filter((e) => e.type === 'commander:grown')).toHaveLength(0);
+    for (const id of after.seats) {
+      expect(after.players[id]!.commanderPowerIndex).toBe(0);
+    }
   });
 
-  it('第 2 回合仍属第 1 轮 —— 双方都保持 1（不按各自回合数推进）', () => {
-    const { state: s0 } = startWithCurve();
-    const s1 = advance(s0, 4).state;
-    const [first, second] = s1.seats as [PlayerId, PlayerId];
-    expect(s1.turn).toBe(2);
-    expect(unitPower(s1, CARDS, `${first}#commander`)).toBe(1);
-    expect(unitPower(s1, CARDS, `${second}#commander`)).toBe(1);
-  });
-
-  it('逐回合沿曲线推进：第 1 回合 1 → 第 2 回合 3 → 第 3 回合 5', () => {
+  it('力量值恒为 CardDef.power，不随回合/轮次推进（powerCurve 只作历史字段）', () => {
     const { state: s0 } = startWithCurve();
     const uid = `${s0.seats[0]!}#commander`;
-    const powers = [
-      unitPower(s0, CARDS, uid),
-      unitPower(advance(s0, 8).state, CARDS, uid), // 第 3 回合充能（先攻方第二次）
-      unitPower(advance(s0, 16).state, CARDS, uid), // 第 5 回合充能（先攻方第三次）
-    ];
-    expect(powers).toEqual([1, 3, 5]);
+    expect(unitPower(s0, CARDS, uid)).toBe(0);
+    expect(unitPower(advance(s0, 12).state, CARDS, uid)).toBe(0);
+    expect(unitPower(advance(s0, 28).state, CARDS, uid)).toBe(0);
   });
 
-  it('走到末档后封顶：第 4 轮起仍为 5，且不再产出成长事件', () => {
-    const { state: s0 } = startWithCurve();
-    const a = advance(s0, 28); // 7 个完整回合（4 次/回合）→ 第 8 回合 = 第 4 轮
-    expect(a.state.players['p1']!.commanderPowerIndex).toBe(3);
-    expect(unitPower(a.state, CARDS, 'p1#commander')).toBe(5);
-    // 按轮次同步：第 3 回合（第 2 轮）与第 5 回合（第 3 轮）各一次 → 2 条事件
-    const p1Grown = a.events.filter(
-      (e) => e.type === 'commander:grown' && e.payload?.['playerId'] === 'p1',
-    );
-    expect(p1Grown).toHaveLength(2);
-  });
-
-  it('未定义曲线的指挥官不成长，力量恒为 CardDef.power', () => {
-    const s = createInitialState({
-      seed: 7,
-      seats: ['p1', 'p2'],
-      decks: { p1: DECK, p2: DECK },
-      commanders: { p1: 'cmd', p2: 'cmd' },
+  it('打脸不读指挥官任何数值 —— 任意局面都直接扣 1 点（D-227）', () => {
+    const s = craft({
+      phase: 'battle',
+      turn: 4,
+      activeSeat: 1,
+      zones: { commander: [c('p1#commander', 'cmdCurve')] },
+      foeZones: { board: [c('d1', 'm1')] },
     });
-    const after = run(s, intent('p1', INTENTS.start));
-    expect(after.players['p1']!.commanderPowerIndex).toBe(0);
-    expect(unitPower(after, CARDS, 'p1#commander')).toBe(5);
-  });
-
-  it('D-227：打脸不看指挥官档位 —— 任意档位下 2 力随从都造成 1 点', () => {
-    const stateWithIndex = (index: number): GameState => {
-      const base = craft({
-        phase: 'battle',
-        turn: 4,
-        activeSeat: 1,
-        zones: { commander: [c('p1#commander', 'cmdCurve')] },
-        foeZones: { board: [c('d1', 'm1')] },
-      });
-      return setIndex(base, 'p1', index);
-    };
-    const hitCmd = (_s: GameState): Intent =>
-      intent('p2', INTENTS.attack, { attackerUid: 'd1', targetUid: 'p1#commander' });
-
-    // 第 0 档（力 0）与第 3 档（力 5）结果一致：都直接扣 1 点（分档 1–3 → 1）
-    expect(run(stateWithIndex(0), hitCmd(stateWithIndex(0))).players['p1']!.health).toBe(
-      INITIAL_HEALTH - 1,
-    );
-    expect(run(stateWithIndex(3), hitCmd(stateWithIndex(3))).players['p1']!.health).toBe(
-      INITIAL_HEALTH - 1,
-    );
+    const after = run(s, intent('p2', INTENTS.attack, { attackerUid: 'd1', targetUid: 'p1#commander' }));
+    expect(after.players['p1']!.health).toBe(INITIAL_HEALTH - 1);
   });
 });
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import * as core from '@app/core';
-import { SOCKET_EVENTS, type CardInstance, type GameEvent, type GameState, type Intent, type PlayerId } from '@app/shared';
+import { SOCKET_EVENTS, type CardInstance, type Faction, type GameEvent, type GameState, type Intent, type MatchFormat, type PlayerId } from '@app/shared';
 
 import { describeEvent } from './log.js';
 import { PHASE_LABEL } from './labels.js';
@@ -99,8 +99,14 @@ export interface RoomSession {
   /** 展示区内容（D-123）：按玩家记的最近一批「从卡组展示」的卡。 */
   revealed: Record<string, { uid: string; defId: string }[]>;
   notice: string;
-  create(nickname: string, capacity: number): void;
-  join(code: string, nickname: string): void;
+  /**
+   * 建房 —— `format` 是赛制（BO1/BO3，D-132），`faction` 是本方阵营（D-235）。
+   * 两者都由建房方在界面上选择，服务端据此建立房间与卡组。
+   */
+  create(nickname: string, capacity: number, format?: MatchFormat, faction?: Faction): void;
+  join(code: string, nickname: string, faction?: Faction): void;
+  /** 开始下一小局（仅房主可用，BO3）。 */
+  nextGame(): void;
   leave(): void;
   ready(): void;
   /** 推进一个阶段 —— 六阶段不可跳过（A4-2），故没有「跳到战斗」这类操作。 */
@@ -116,7 +122,7 @@ export interface RoomSession {
   draw(): void;
   attack(attackerUid: string, targetUid: string): void;
   /** 指挥官攻击（docs/16 §6.1）：目标恒为敌方指挥官，每战斗阶段一次。 */
-  commanderAttack(): void;
+  commanderAttack(reveal?: boolean): void;
   mulligan(returns: string[]): void;
   /** 发动卡面效果（ADR-0023）—— uid 是效果来源卡，effect 是效果编号。 */
   activateEffect(uid: string, effect: string): void;
@@ -368,6 +374,9 @@ export function useRoom(): RoomSession {
       setFx(null);
       setRevealed({});
       revealTickRef.current = {};
+      // BO3 下一小局：服务端先发「未开局」的快照，再发开局事件 ——
+      // 日志属于单局，跨局必须清空，否则上一局的裁决会留在战报里。
+      if (!snap.state.started) setLog([]);
       stateRef.current = snap.state;
       setState(snap.state);
       setHash(snap.hash);
@@ -446,17 +455,36 @@ export function useRoom(): RoomSession {
     return true;
   };
 
-  const create = useCallback((nickname: string, capacity: number): void => {
+  const create = useCallback(
+    (nickname: string, capacity: number, format: MatchFormat = 'bo1', faction?: Faction): void => {
+      localStorage.setItem(LS.nickname, nickname);
+      socket.emit(
+        SOCKET_EVENTS.roomCreate,
+        { nickname: nickname || '玩家', capacity, format, ...(faction ? { faction } : {}) },
+        (res: Ack) => {
+          if (acceptIdentity(res)) setNotice(`已建房，房间码 ${res.room?.code ?? ''}`);
+        },
+      );
+    },
+    [],
+  );
+
+  const join = useCallback((code: string, nickname: string, faction?: Faction): void => {
     localStorage.setItem(LS.nickname, nickname);
-    socket.emit(SOCKET_EVENTS.roomCreate, { nickname: nickname || '玩家', capacity }, (res: Ack) => {
-      if (acceptIdentity(res)) setNotice(`已建房，房间码 ${res.room?.code ?? ''}`);
-    });
+    socket.emit(
+      SOCKET_EVENTS.roomJoin,
+      { code: code.trim(), nickname: nickname || '玩家', ...(faction ? { faction } : {}) },
+      (res: Ack) => {
+        if (acceptIdentity(res)) setNotice(`已加入房间 ${res.room?.code ?? ''}`);
+      },
+    );
   }, []);
 
-  const join = useCallback((code: string, nickname: string): void => {
-    localStorage.setItem(LS.nickname, nickname);
-    socket.emit(SOCKET_EVENTS.roomJoin, { code: code.trim(), nickname: nickname || '玩家' }, (res: Ack) => {
-      if (acceptIdentity(res)) setNotice(`已加入房间 ${res.room?.code ?? ''}`);
+  /** 开始下一小局（BO3）—— 仅房主可发起，服务端会校验。 */
+  const nextGame = useCallback((): void => {
+    socket.emit(SOCKET_EVENTS.roomNextGame, {}, (res: Ack) => {
+      if (!res.ok) return setNotice(`开始下一局失败：${res.error ?? '未知错误'}`);
+      if (res.room) setRoom(res.room);
     });
   }, []);
 
@@ -526,6 +554,7 @@ export function useRoom(): RoomSession {
     notice,
     create,
     join,
+    nextGame,
     leave,
     ready,
     advance: () => send(core.INTENTS.phaseAdvance),
@@ -534,8 +563,12 @@ export function useRoom(): RoomSession {
     play: (uid) => send(core.INTENTS.play, { uid }),
     draw: () => send(core.INTENTS.draw),
     attack: (attackerUid, targetUid) => send(core.INTENTS.attack, { attackerUid, targetUid }),
-    /** 指挥官攻击（docs/16 §6.1）：目标恒为敌方指挥官，无需参数。 */
-    commanderAttack: () => send(core.INTENTS.commanderAttack),
+    /**
+     * 指挥官攻击（docs/16 §6.1）：目标恒为敌方指挥官，无需目标参数。
+     * `reveal` 走星轨观测者的「攻击时【1】展示」（docs/17 §3）。
+     */
+    commanderAttack: (reveal) =>
+      send(core.INTENTS.commanderAttack, reveal ? { reveal: true } : undefined),
     mulligan: (returns) => send(core.INTENTS.mulligan, { returns }),
     activateEffect: (uid, effect) => send(core.INTENTS.effectActivate, { uid, effect }),
     chooseEffect: (choice) => send(core.INTENTS.effectChoose, { choice }),

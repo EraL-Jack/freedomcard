@@ -46,7 +46,7 @@ export interface CardTileProps {
   text?: string;
   /** 休眠态（A9-2：攻击后休眠，重置阶段清除）—— 横置 90°，卡牌游戏通用语言。 */
   sleeping?: boolean;
-  /** 霜冻态（ADR-0025）：跳过下一次重置 —— 冰蓝描边 + 「霜冻」角标。 */
+  /** 冻结态（ADR-0025）：跳过下一次重置 —— 冰蓝描边 + 「冻结」角标。 */
   frozen?: boolean;
   selected?: boolean;
   disabled?: boolean;
@@ -113,15 +113,19 @@ export default function CardTile(props: CardTileProps): React.JSX.Element {
             {KIND_TAG[props.kind]}
           </span>
         </span>
-        {/* 底部数值胶囊（E2E 锚点：「费 N」「力 N」字样保留） */}
-        <span className="mt-0.5 flex items-center justify-between leading-none">
-          <span className="rounded-full bg-blue-900/80 px-1.5 py-0.5 text-[10px] font-medium text-blue-200">
-            费 {props.cost}
+        {/* 底部数值胶囊（E2E 锚点：「费 N」「力 N」字样保留 —— 手牌/随从才有）。
+            ⚠️ 指挥官没有费用与力量值（docs/16 §6.2.1 / docs/18 §3.1）：不渲染胶囊，
+            否则卡面会出现「费 0 / 力 0」这种与规则矛盾的数值。 */}
+        {props.kind === 'commander' ? null : (
+          <span className="mt-0.5 flex items-center justify-between leading-none">
+            <span className="rounded-full bg-blue-900/80 px-1.5 py-0.5 text-[10px] font-medium text-blue-200">
+              费 {props.cost}
+            </span>
+            <span className="rounded-full bg-red-900/80 px-1.5 py-0.5 text-[10px] font-medium text-red-200">
+              力 {props.power}
+            </span>
           </span>
-          <span className="rounded-full bg-red-900/80 px-1.5 py-0.5 text-[10px] font-medium text-red-200">
-            力 {props.power}
-          </span>
-        </span>
+        )}
         {props.sleeping ? (
           <span className="absolute inset-x-0 top-1/2 -translate-y-1/2 bg-slate-950/70 text-center text-[9px] text-slate-300">
             休眠
@@ -129,7 +133,7 @@ export default function CardTile(props: CardTileProps): React.JSX.Element {
         ) : null}
         {props.frozen ? (
           <span className="absolute left-0.5 top-0.5 rounded bg-sky-800/90 px-1 text-[9px] leading-tight text-sky-100">
-            霜冻
+            冻结
           </span>
         ) : null}
       </button>

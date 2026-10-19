@@ -28,7 +28,6 @@ import {
 import { ev, maxCostChanged, phaseChanged, takeFromDeck, turnChanged } from '../ops.js';
 import { reduce } from '../reducer.js';
 import { activePlayer } from '../state.js';
-import { syncCommanderGrowth } from './commander-growth.js';
 
 /** 阶段顺序 —— A4-1，索引即推进顺序。 */
 export const PHASE_ORDER: readonly Phase[] = ['charge', 'reset', 'draw', 'main', 'battle', 'end'];
@@ -109,8 +108,7 @@ export function advanceOnce(state: GameState, ctx: RuleContext): GameEvent[] {
       );
       events.push(...income.events);
     }
-    // docs/16 §2 充能② / §6.3：指挥官力量按轮次同步（双方同力）。
-    events.push(...syncCommanderGrowth(state, nextTurn, ctx));
+    // 指挥官力量值已取消（docs/16 §6.2.1 / D-230）：这里不再同步任何档位。
   }
   return events;
 }

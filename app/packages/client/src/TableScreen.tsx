@@ -8,6 +8,7 @@ import { MULLIGAN_WINDOW_MS } from '@app/shared/constants';
 
 import CardTile from './CardTile.js';
 import { KEYWORD_NOTE, PHASE_LABEL } from './labels.js';
+import type { RoomView } from './types.js';
 import type { Fx, RoomSession } from './useRoom.js';
 
 /**
@@ -68,10 +69,6 @@ function CardDetail(props: {
   const notes = (def?.keywords ?? [])
     .map((k) => KEYWORD_NOTE[k])
     .filter((x): x is string => typeof x === 'string');
-  // 指挥官成长档位：找到持有这张指挥官卡的玩家（指挥官区持有者是唯一的）
-  const cmdOwner = Object.values(props.state.players).find((p) =>
-    p.zones.commander.some((c) => c.uid === props.card.uid),
-  );
   return (
     <div
       className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4"
@@ -84,8 +81,9 @@ function CardDetail(props: {
       >
         <p className="text-base font-medium text-slate-100">{def?.name ?? props.card.defId}</p>
         <p className="mt-1 text-xs text-slate-400">
-          {def ? KIND_TAG_FOR_DETAIL[def.type] : '未知'} · 费 {def?.cost ?? 0} · 力 {power}
-          {def?.type === 'commander' && cmdOwner ? `（成长档位 ${cmdOwner.commanderPowerIndex}）` : ''}
+          {/* 指挥官没有力量值（docs/16 §6.2.1 / D-230）：一行只写类型，不写数值 */}
+          {def ? KIND_TAG_FOR_DETAIL[def.type] : '未知'}
+          {def?.type === 'commander' ? '' : ` · 费 ${def?.cost ?? 0} · 力 ${power}`}
         </p>
         {notes.length > 0 ? (
           <ul className="mt-2 space-y-1">
@@ -371,23 +369,79 @@ function BoardSlot(props: {
 /**
  * 对局结束面板 —— D-122（Era 2026-10-18：一方离开后另一方卡在空白页）。
  * 正常分出胜负或对手中途离开（系统代认输）都落到这里，给出明确结果与出口。
+ *
+ * D-132：BO3 下这里分两种形态 ——
+ *  - **小局结束、系列赛未分胜负**（`room.awaitingNext`）：显示比分与「开始下一局」；
+ *  - **系列赛结束**：显示系列赛胜者与总比分。
  */
 function GameOverPanel(props: {
   state: GameState;
   me: PlayerId;
+  room: RoomView | null;
   onBack: () => void;
+  onNextGame: () => void;
 }): React.JSX.Element {
   const draw = props.state.draw;
   const won = props.state.winner === props.me;
+  const room = props.room;
+  const awaitingNext = room?.awaitingNext === true;
+  // 系列赛结束时以 seriesWinner 为准（可能因对手离场提前结束，与最后一小局的 winner 一致）。
+  const seriesWon = room?.seriesWinner ? room.seriesWinner === props.me : null;
+  const myWins = room && props.me ? (room.wins[props.me] ?? 0) : 0;
+  const foeWins = room
+    ? Math.max(
+        0,
+        ...Object.entries(room.wins)
+          .filter(([id]) => id !== props.me)
+          .map(([, w]) => w),
+      )
+    : 0;
+  const isHost = room?.hostId === props.me;
+  const nextGameNo = (room?.gameNo ?? 0) + 1;
+
+  const title = awaitingNext
+    ? draw
+      ? '本局平局'
+      : won
+        ? '本局胜利'
+        : '本局败北'
+    : draw
+      ? '平局'
+      : (seriesWon ?? won)
+        ? '胜利'
+        : '败北';
+
   return (
     <div className="flex h-dvh flex-col items-center justify-center gap-4 p-6 text-center">
       <p
-        className={`text-4xl font-bold ${draw ? 'text-slate-200' : won ? 'text-amber-300' : 'text-slate-300'}`}
+        className={`text-4xl font-bold ${draw ? 'text-slate-200' : (seriesWon ?? won) ? 'text-amber-300' : 'text-slate-300'}`}
         data-testid="game-result"
       >
-        {draw ? '平局' : won ? '胜利' : '败北'}
+        {title}
       </p>
-      <p className="text-sm text-slate-400">{draw ? '40 轮未分胜负' : '对局结束'}</p>
+      <p className="text-sm text-slate-400" data-testid="series-score">
+        {room && room.format === 'bo3'
+          ? `BO3 · 第 ${Math.max(1, room.gameNo)} 局结束 · 比分 我 ${myWins} : ${foeWins} 对手`
+          : draw
+            ? '40 轮未分胜负'
+            : '对局结束'}
+      </p>
+      {awaitingNext ? (
+        isHost ? (
+          <button
+            type="button"
+            className="rounded bg-emerald-700 px-6 py-2 text-sm"
+            onClick={props.onNextGame}
+            data-testid="next-game"
+          >
+            开始第 {nextGameNo} 局
+          </button>
+        ) : (
+          <p className="text-xs text-slate-500" data-testid="wait-next">
+            等待房主开始第 {nextGameNo} 局…
+          </p>
+        )
+      ) : null}
       <button
         type="button"
         className="rounded bg-slate-700 px-6 py-2 text-sm"
@@ -429,13 +483,14 @@ function ChoiceOverlay(props: {
     'blade-veteran-exile': '老兵：可除外墓地一张炎刃卡，换抽一张牌',
     'blade-tactics-target': '战术：选择一个己方随从（本回合力量 +2/+3）',
     'blade-cremation': '焚典：选择要除外的炎刃卡（其余进墓地）',
-    'frost-adjudicator-1': '裁决官Ⅰ：霜冻一个敌方随从',
-    'frost-apprentice-freeze': '学徒：霜冻一个敌方随从',
-    'frost-binder-freeze': '缚锁者：霜冻一个敌方随从（已霜冻则改为抽牌）',
-    'frost-nightwatch-freeze': '守夜人：霜冻至多两个敌方随从',
-    'frost-edict-freeze': '律令：霜冻一个敌方随从',
-    'frost-coldsnap-freeze': '寒流：霜冻至多两个敌方随从',
-    'frost-judgment-target': '审判：霜冻目标；若已霜冻则破坏',
+    'frost-adjudicator-1': '裁决官Ⅰ：按霜痕层数冻结敌方随从',
+    'frost-apprentice-freeze': '学徒：冻结一个敌方随从',
+    'frost-binder-freeze': '缚锁者：冻结一个敌方随从（已冻结则改为抽 1 张）',
+    'frost-nightwatch-freeze': '守夜人：冻结至多 2 个敌方随从',
+    'frost-edict-freeze': '律令：冻结一个敌方随从',
+    'frost-coldsnap-freeze': '寒流：冻结至多 2 个敌方随从',
+    'frost-judgment-target': '审判：冻结目标；若已冻结则破坏',
+    'star-gaze-pick': '凝视星空：选择 1 张加入手牌（其余置入牌库底）',
   };
   /** 多选类选择用「完成选择」，其余用「放弃」。 */
   const MULTI_SELECT = new Set(['blade-cremation', 'frost-nightwatch-freeze', 'frost-coldsnap-freeze']);
@@ -678,7 +733,15 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   // 对手离场后 state.players 里仍有其数据，但席位已空，若先判对手缺失会把
   // 结束面板永远挡住（Era 2026-10-18：一方离开后另一方卡在空白页）。
   if (state.winner !== null || state.draw) {
-    return <GameOverPanel state={state} me={me} onBack={session.leave} />;
+    return (
+      <GameOverPanel
+        state={state}
+        me={me}
+        room={room}
+        onBack={session.leave}
+        onNextGame={session.nextGame}
+      />
+    );
   }
 
   const mine: PlayerState | undefined = me ? state.players[me] : undefined;
@@ -702,6 +765,31 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
     !mine.commanderAttacked &&
     !(state.turn === 1 && state.activeSeat === 0) &&
     mine.zones.commander.length > 0;
+  /**
+   * 星轨观测者「攻击时【1】」（docs/17 §3）：付 1 费先展示再结算伤害。
+   * 只有「指挥官是星轨观测者 + 费用区有卡 + 本回合额度够」时才给这个按钮 ——
+   * 不可操作不展示（Era 2026-10-19）。
+   */
+  const canRevealAttack =
+    canCommanderAttack &&
+    mine.zones.commander[0]?.defId === 'starWatcher' &&
+    mine.zones.cost.length >= 1 &&
+    mine.usedCostThisTurn + 1 <= mine.maxCost;
+
+  /**
+   * 本方的成长资源（D-229 / D-230）：炎刃看除外区「炎刃」数、霜律看霜痕、星轨看星轨层数。
+   * 与指挥官技能同一套计数口径，只做展示。
+   */
+  const myCommandDefId = mine.zones.commander[0]?.defId;
+  const bladeExiled = mine.zones.exile.filter((c) => CARD_POOL[c.defId]?.name.includes('炎刃')).length;
+  const myGrowth =
+    myCommandDefId === 'bladeLord'
+      ? `除外区「炎刃」${bladeExiled}`
+      : myCommandDefId === 'frostAdjudicator'
+        ? `霜痕 ${mine.frostMark}`
+        : myCommandDefId === 'starWatcher'
+          ? `星轨 ${mine.starTrack}`
+          : '';
   /** 本回合费用使用情况（docs/16 §3.3）—— 只做展示，权威在服务端。 */
   const costText = `${mine.usedCostThisTurn}/${mine.maxCost}`;
   // ⚠️ 客户端时钟与服务端未必同步，这里的倒计时是**示意**；权威判定在服务端（ADR-0017）。
@@ -886,6 +974,20 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
         <span className={myTurn ? 'text-emerald-400' : 'text-slate-500'}>
           {myTurn ? '你的回合' : '对手回合'}
         </span>
+        {/* 赛制与比分（D-132）—— 只在 BO3 显示，BO1 显示会占位制造噪音。
+            `gameNo` 是**已完成**的小局数，故进行中的是第 `gameNo + 1` 局。 */}
+        {room.format === 'bo3' ? (
+          <span className="text-slate-400" data-testid="series">
+            第 {room.gameNo + 1} 局 · 比分{' '}
+            {room.wins[me] ?? 0} : {Object.entries(room.wins).filter(([id]) => id !== me).reduce((a, [, w]) => Math.max(a, w), 0)}
+          </span>
+        ) : null}
+        {/* 专属成长资源（D-229 / D-230）—— 玩家每轮都能看到自己在变强 */}
+        {myGrowth ? (
+          <span className="text-cyan-300" data-testid="my-growth">
+            {myGrowth}
+          </span>
+        ) : null}
         {/* 指挥官攻击（docs/16 §6.1）—— 可用时才出现 */}
         {canCommanderAttack ? (
           <button
@@ -895,6 +997,17 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
             data-testid="commander-attack"
           >
             指挥官攻击（1 点）
+          </button>
+        ) : null}
+        {/* 星轨观测者：攻击时【1】展示（docs/17 §3）—— 先展示、后结算伤害 */}
+        {canRevealAttack ? (
+          <button
+            type="button"
+            className="rounded bg-indigo-700 px-2 py-1 text-[11px] font-medium text-indigo-50"
+            onClick={() => session.commanderAttack(true)}
+            data-testid="commander-reveal-attack"
+          >
+            攻击并展示（1 费）
           </button>
         ) : null}
       </header>

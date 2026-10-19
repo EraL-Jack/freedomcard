@@ -386,9 +386,9 @@ describe('霜律效果（docs/12 §4）', () => {
   });
 });
 
-/* ------------------------------ 指挥官技能费用（D-228） ------------------------------ */
+/* ------------------------------ 指挥官技能费用（D-229） ------------------------------ */
 
-describe('指挥官技能费用 = 3 − 档位（docs/16 §6.4 / D-228）', () => {
+describe('指挥官技能费用固定 2 费（D-229 撤销 D-228 的「3 − 档位」）', () => {
   const mk = (index: number, costCards: CardInstance[]): GameState => {
     const s = craft({
       commander: 'frostAdjudicator',
@@ -401,20 +401,22 @@ describe('指挥官技能费用 = 3 − 档位（docs/16 §6.4 / D-228）', () =
     };
   };
 
-  it('第 1 轮（档位 1）付 2 张；第 3 轮（档位 3）0 费', () => {
+  it('无论档位（第 1 轮 / 第 3 轮）都付 2 张', () => {
     const two = [c('k1', 'bladeRecruit'), c('k2', 'bladeRecruit')];
     let s = run(mk(1, two), intent('p1', INTENTS.effectActivate, { uid: 'cmd1', effect: '1' }));
     expect(s.players['p1']!.zones.cost.length).toBe(0);
     expect(s.players['p1']!.usedCostThisTurn).toBe(2);
-
-    s = run(mk(3, []), intent('p1', INTENTS.effectActivate, { uid: 'cmd1', effect: '1' }));
-    expect(s.players['p1']!.usedCostThisTurn).toBe(0);
     expect(s.pendingChoice?.kind).toBe('frost-adjudicator-1');
+
+    // D-229：档位不再影响技能费用 —— 第 3 轮同样要 2 张。
+    s = run(mk(3, two), intent('p1', INTENTS.effectActivate, { uid: 'cmd1', effect: '1' }));
+    expect(s.players['p1']!.zones.cost.length).toBe(0);
+    expect(s.players['p1']!.usedCostThisTurn).toBe(2);
   });
 
-  it('档位 1 时费用区只有 1 张 → 拒绝（不足 2）', () => {
+  it('费用区只有 1 张 → 拒绝（不足 2）', () => {
     const r = applyIntent(
-      mk(1, [c('k1', 'bladeRecruit')]),
+      mk(3, [c('k1', 'bladeRecruit')]),
       intent('p1', INTENTS.effectActivate, { uid: 'cmd1', effect: '1' }),
       CTX,
     );

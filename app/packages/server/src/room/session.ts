@@ -1,5 +1,5 @@
 import * as core from '@app/core';
-import type { GameState, PlayerId } from '@app/shared';
+import type { Faction, GameState, PlayerId } from '@app/shared';
 
 import { defaultDeckSetup } from '../deck-pool.js';
 
@@ -39,6 +39,11 @@ export interface SeedOptions {
   seats: readonly PlayerId[];
   /** 随机种子，由服务端下发。 */
   seed: number;
+  /**
+   * 各席位的阵营（D-235）—— 决定该席位装配哪一套 30 张主卡组 + 指挥官。
+   * 缺省时按座位轮换，保证两席尽量不同阵营。
+   */
+  factions?: Readonly<Record<PlayerId, Faction>>;
 }
 
 /**
@@ -51,7 +56,7 @@ export interface SeedOptions {
  * 交给 `submitSystemIntent`，由引擎完成洗牌 / 掷骰 / 发牌。
  */
 export function seedGameState(opts: SeedOptions): GameState {
-  const { decks, commanders } = defaultDeckSetup(opts.seats);
+  const { decks, commanders } = defaultDeckSetup(opts.seats, opts.factions ?? {});
   return core.createInitialState({
     seed: opts.seed,
     seats: [...opts.seats],

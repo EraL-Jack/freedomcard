@@ -11,6 +11,9 @@ import {
   FROST_COMMANDER_ID,
   FROST_MAIN_DECK,
   FROST_MAIN_DECK_RECIPE,
+  STAR_COMMANDER_ID,
+  STAR_MAIN_DECK,
+  STAR_MAIN_DECK_RECIPE,
 } from './deck-pool.js';
 
 /** Era 首批样例提供的 5 张卡 —— 这是「转录」与「占位」的分界线。 */
@@ -30,9 +33,18 @@ describe('卡池样例（ADR-0015）', () => {
     }
   });
 
-  it('双阵营各恰好一张指挥官（ADR-0025）', () => {
+  it('三阵营各恰好一张指挥官（ADR-0025 / D-230）', () => {
     const commanders = Object.values(CARD_POOL).filter((c) => c.type === 'commander');
-    expect(commanders.map((c) => c.name).sort()).toEqual(['炎刃军统领', '霜律裁决官'].sort());
+    expect(commanders.map((c) => c.name).sort()).toEqual(
+      ['炎刃军统领', '霜律裁决官', '星轨观测者'].sort(),
+    );
+  });
+
+  it('指挥官没有力量值（docs/16 §6.2.1 / D-230）', () => {
+    for (const def of Object.values(CARD_POOL)) {
+      if (def.type !== 'commander') continue;
+      expect(def.power, `${def.defId} 不应有力量值`).toBe(0);
+    }
   });
 
   it('卡名类别判定按「卡名包含炎刃 / 霜律」的卡面口径', () => {
@@ -81,6 +93,28 @@ describe('卡池补全（ADR-0018）', () => {
       seats: ['p1', 'p2'],
       decks: { p1: FROST_MAIN_DECK, p2: FROST_MAIN_DECK },
       commanders: { p1: FROST_COMMANDER_ID, p2: FROST_COMMANDER_ID },
+    });
+    for (const id of state.seats) {
+      expect(checkDeck(state.players[id]!, CARD_POOL)).toBeNull();
+    }
+  });
+
+  it('星轨默认卡组 30 张、同名不超限、可过卡组校验（docs/17 §7）', () => {
+    expect(STAR_MAIN_DECK).toHaveLength(MAIN_DECK_SIZE);
+    const counts = new Map<string, number>();
+    for (const id of STAR_MAIN_DECK) counts.set(id, (counts.get(id) ?? 0) + 1);
+    for (const [id, n] of counts) {
+      expect(n, `${id} 超过同名上限`).toBeLessThanOrEqual(MAX_COPIES);
+      expect(CARD_POOL[id], `星轨卡组引用了不存在的卡: ${id}`).toBeDefined();
+    }
+    const fromRecipe = Object.values(STAR_MAIN_DECK_RECIPE).reduce((a, b) => a + b, 0);
+    expect(fromRecipe).toBe(STAR_MAIN_DECK.length);
+
+    const state = createInitialState({
+      seed: 1,
+      seats: ['p1', 'p2'],
+      decks: { p1: STAR_MAIN_DECK, p2: STAR_MAIN_DECK },
+      commanders: { p1: STAR_COMMANDER_ID, p2: STAR_COMMANDER_ID },
     });
     for (const id of state.seats) {
       expect(checkDeck(state.players[id]!, CARD_POOL)).toBeNull();

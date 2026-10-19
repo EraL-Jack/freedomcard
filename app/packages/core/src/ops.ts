@@ -20,7 +20,6 @@ import type {
 import {
   DAMAGE_TIER_MAX_LOW,
   DAMAGE_TIER_MAX_MID,
-  INITIAL_COMMANDER_POWER_INDEX,
   MINION_COST_DISCOUNT,
   RULE_ERRORS,
 } from '@app/shared';
@@ -145,23 +144,21 @@ export function commanderPowerAt(def: CardDef, index: number): number {
 /**
  * 取一个场上单位的**当前**力量值；查不到卡定义返回 `null`（调用方必须据此拒绝）。
  *
- * 指挥官走曲线档位，其余一律取 `CardDef.power` 定值，再叠加：
+ * 基础值一律取 `CardDef.power`，再叠加：
  *  - `tempPower`（本回合临时修正，ADR-0023 §3）；
- *  - **霜律寒域光环**（ADR-0025）：敌方处于霜冻状态的随从 −1 力。
+ *  - **霜律寒域光环**（ADR-0025）：敌方处于冻结状态的随从 −1 力。
  * 力量值下限 0（docs/12 §5.3），不为负。
  *
- * ⚠️ 战斗裁决**必须**走这里而不是直接读 `def.power` —— 否则指挥官会永远按初始档参战，
- * X-7 的曲线就成了死数据（ADR-0016 §8）。
+ * ⚠️ **指挥官没有力量值**（docs/16 §6.2.1 / D-230）：它不参与任何力量比较，
+ * 打脸固定 1 点。`powerCurve` 字段只作历史保留，这里**不再读取** ——
+ * 读它就等于让「已取消的成长」偷偷复活。
  */
 export function unitPower(state: GameState, cards: Record<string, CardDef>, uid: string): number | null {
   const loc = locate(state, uid);
   if (!loc) return null;
   const def = defOf(cards, loc.card.defId);
   if (!def) return null;
-  const base =
-    loc.zone === 'commander'
-      ? commanderPowerAt(def, state.players[loc.playerId]?.commanderPowerIndex ?? INITIAL_COMMANDER_POWER_INDEX)
-      : def.power;
+  const base = def.power;
   // ADR-0023 §3：本回合临时力量修正叠加在基础值上（统领 3 档 / 军师 / 队长 / 勇士 / 凤凰等）。
   let value = base + (loc.card.tempPower ?? 0);
   // ADR-0025：寒域光环 —— 对手场上有「霜律寒域」时，处于霜冻状态的本方随从 −1 力。

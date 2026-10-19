@@ -1,4 +1,4 @@
-import type { GameState, RoomErrorCode } from '@app/shared';
+import type { Faction, GameState, MatchFormat, RoomErrorCode } from '@app/shared';
 
 /**
  * 客户端视图类型 —— 与服务端 `RoomManager.publicView` 的返回结构**逐字段对应**。
@@ -14,6 +14,8 @@ export interface RoomSeatView {
   connected: boolean;
   /** ADR-0019：准备状态（房间层事实，非玩法状态）。 */
   ready: boolean;
+  /** 阵营（D-235）：决定这一席位的卡组与指挥官。 */
+  faction: Faction;
 }
 
 export interface RoomView {
@@ -22,6 +24,16 @@ export interface RoomView {
   phase: string;
   capacity: number;
   hostId: string;
+  /** 赛制（D-132）：BO1 单局 / BO3 三局两胜。 */
+  format: MatchFormat;
+  /** 已完成的小局数。 */
+  gameNo: number;
+  /** 系列赛比分（playerId → 胜场）。 */
+  wins: Record<string, number>;
+  /** 上一小局已结束、等待房主开始下一局。 */
+  awaitingNext: boolean;
+  /** 系列赛胜者。 */
+  seriesWinner: string | null;
   seats: (RoomSeatView | null)[];
 }
 

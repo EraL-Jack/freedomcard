@@ -9,7 +9,12 @@
  *  - 每回合一次（`PlayerState.commanderAttacked`，`turn:changed` 清零）；
  *  - **不能攻击随从**（§6.2）—— 本规则没有目标参数，目标恒为敌方指挥官。
  *
- * 固定伤害**不吃**任何加成（§9 第 9 条）：统领 7 档的 `tempDamage` 只作用于随从打脸。
+ * 固定伤害**不吃**随从类加成（§9 第 9 条）：统领 7 档的 `tempDamage` 只作用于随从打脸。
+ * 唯一例外是**星轨侍僧**：卡面明写「本回合你的指挥官伤害值 +1」（docs/17），
+ * 由 `PlayerState.commanderDamageBonus` 承载。
+ *
+ * `payload.reveal = true` 时先结算指挥官的「攻击时」效果（星轨观测者：付 1 费展示），
+ * **再**结算伤害 —— 顺序保证「展示时：本回合指挥官伤害 +1」能吃到这一次攻击。
  */
 
 import {
@@ -24,7 +29,9 @@ import {
 } from '@app/shared';
 
 import { commanderDamageEvents } from '../combat.js';
-import { baseGuard, ev, firstRejection, phaseGuard, reject } from '../ops.js';
+import { EFFECTS } from '../effects/index.js';
+import { baseGuard, defOf, ev, firstRejection, phaseGuard, reject } from '../ops.js';
+import { reduce } from '../reducer.js';
 import { opponentOf } from '../state.js';
 
 export const commanderAttackRule = (
@@ -47,13 +54,35 @@ export const commanderAttackRule = (
   if (p.commanderAttacked) {
     return reject(RULE_ERRORS.COMMANDER_ATTACK_USED, '指挥官本回合已经攻击过');
   }
-  const cmdUid = p.zones.commander[0]?.uid;
-  if (!cmdUid) return reject(RULE_ERRORS.CARD_NOT_FOUND, '指挥官尚未揭示');
+  const cmd = p.zones.commander[0];
+  if (!cmd) return reject(RULE_ERRORS.CARD_NOT_FOUND, '指挥官尚未揭示');
 
   const at = ctx.now;
   const events: GameEvent[] = [
-    ev(at, 'commander:attacked', { playerId: me, sourceUid: cmdUid, targetPlayer: foe }),
-    ...commanderDamageEvents(at, state, foe, COMMANDER_ATTACK_DAMAGE, cmdUid, me),
+    ev(at, 'commander:attacked', { playerId: me, sourceUid: cmd.uid, targetPlayer: foe }),
   ];
+
+  // 指挥官「攻击时」效果（星轨观测者 Ⅰ）：先展示、后伤害（docs/17 §6.1）。
+  const wantsReveal = intent.payload?.['reveal'] === true;
+  let pre: GameEvent[] = [];
+  if (wantsReveal) {
+    const mod = defOf(ctx.cards, cmd.defId);
+    const hook = mod ? EFFECTS[mod.defId]?.onCommanderAttack : undefined;
+    if (!hook) {
+      return reject(RULE_ERRORS.EFFECT_UNAVAILABLE, '该指挥官没有「攻击时」效果');
+    }
+    const r = hook(state, intent, ctx);
+    if (!r.ok) return r;
+    pre = r.value;
+    events.push(...pre);
+  }
+
+  // 前置效果可能已经打空对手血量（展示触发的直伤）—— 那就到此为止，
+  // 不再补一次「固定 1 点」，避免重复结算终局。
+  const afterPre = pre.reduce(reduce, state);
+  if (afterPre.winner !== null || afterPre.draw) return { ok: true, value: events };
+
+  const damage = COMMANDER_ATTACK_DAMAGE + (afterPre.players[me]?.commanderDamageBonus ?? 0);
+  events.push(...commanderDamageEvents(at, afterPre, foe, damage, cmd.uid, me));
   return { ok: true, value: events };
 };
