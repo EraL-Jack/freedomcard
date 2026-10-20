@@ -226,3 +226,62 @@ test('指挥官：点一下选中，已选中的再点一次打开详情', async
   // ④ 右上角那个按钮确实没了
   await expect(page.getByTestId('deck-commander-detail')).toHaveCount(0);
 });
+
+/**
+ * 待选区的卡名关键字搜索（Era 2026-10-20 / D-186）。
+ *
+ * Era 的原话：「在待选框加个关键字搜索，只要文本更新就自动执行一次卡名关键字搜索。」
+ *
+ * 这条要钉住的是「**文本更新即执行**」—— 没有搜索按钮、不等回车。
+ * 所以第二次 `fill` 之后立刻断言列表变了：如果实现成「回车才筛」，这里会停在旧结果。
+ */
+test('待选搜索：文本一变就过滤，只匹配卡名，清空后恢复', async ({ browser }) => {
+  const page = await newClient(browser, 'DeckSearch');
+  await page.getByTestId('edit-deck').click();
+
+  const rows = page.locator('[data-testid^="deck-row-"]');
+  const total = await rows.count();
+  expect(total).toBeGreaterThan(20);
+  await expect(page.getByTestId('deck-pool-count')).toContainText(`共 ${total} 张`);
+
+  const input = page.getByTestId('deck-search');
+
+  // ① 输入「炎」→ 立刻只剩炎刃系的卡，命中数写在标题上
+  await input.fill('炎');
+  const afterFirst = await rows.count();
+  expect(afterFirst).toBeGreaterThan(0);
+  expect(afterFirst).toBeLessThan(total);
+  await expect(page.getByTestId('deck-pool-count')).toContainText(
+    `命中 ${afterFirst} / ${total}`,
+  );
+  // 命中项的卡名里必须有这个字（证明筛的是卡名，不是随机留下）
+  for (const name of await rows.locator('span:first-child').allTextContents()) {
+    expect(name).toContain('炎');
+  }
+
+  // ② 继续打字（不回车）→ 范围再收窄
+  await input.fill('炎刃军');
+  const afterSecond = await rows.count();
+  expect(afterSecond).toBeGreaterThan(0);
+  expect(afterSecond).toBeLessThan(afterFirst);
+  for (const name of await rows.locator('span:first-child').allTextContents()) {
+    expect(name).toContain('炎刃军');
+  }
+  // 指挥官不参与待选（「炎刃军统领」是 commander），搜它也不可能出现在列表里
+  await expect(page.getByTestId('deck-row-bladeLord')).toHaveCount(0);
+
+  // ③ 搜不到 → 明确说一句，而不是留一块空白
+  await input.fill('根本没有这张卡');
+  await expect(rows).toHaveCount(0);
+  await expect(page.getByTestId('deck-search-empty')).toContainText('根本没有这张卡');
+
+  // ④ 清空 → 立刻回到全部
+  await page.getByTestId('deck-search-clear').click();
+  await expect(input).toHaveValue('');
+  await expect(rows).toHaveCount(total);
+  await expect(page.getByTestId('deck-pool-count')).toContainText(`共 ${total} 张`);
+
+  // ⑤ 全是空格不算搜索，不该把列表清空
+  await input.fill('   ');
+  await expect(rows).toHaveCount(total);
+});
