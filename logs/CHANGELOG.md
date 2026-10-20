@@ -2687,3 +2687,21 @@ Era 2026-10-19 一次性拍板，逐条落地：
 - **新增 E2E**：选星轨 → 设为开局 → 减到 29 张 → 建房 → 准备页同时看到结论与原因。
 - **验证**：E2E **29/29 通过**（2m 2s）、lint 0、typecheck 0。
 - **破坏性**：**否**。
+
+## D-174 回放校验 CLI（补 T-0016 §6 的遗留）
+
+- **背景**：T-0016 当时只证明 `replay.json` 的数据**足够**重建，「真能重放」一直是推测 ——
+  缺的是「读文件 → 重建开局 → 逐帧比对」这一层工具。
+- **新增 `server/src/tools/replay-verify.ts` + `pnpm --filter @app/server run replay:verify`**：
+  1. 用 `setup` 重建开局，`stateHash` 必须等于 `initialHash`；
+  2. 逐条重跑 Intent，第 i 步哈希必须等于 `hashChain[i]`；
+  3. `--events` 时再深比较每步事件序列。
+  退出码 `0` 一致 / `1` 有差异 / `2` 文件不可用。
+- **实测**（`--events`，取 `app/replays/` 里最大的几份）：
+  新格式 5/5 逐帧一致（17~24 步）；旧格式 2/2 被正确拒绝并提示「无 setup 无法重建」。
+- **踩坑**：第一版时间源用「起点 + 步长」，导致开局哈希对、第一步 `game:start` 分叉 ——
+  `startRule` 把 `ctx.now` 写进了 `state.startedAt`，而 `startedAt` 是 Recorder 创建时刻，差 631ms。
+  改为**取记录里该步第一个事件的 `at`** 后完全一致。
+- **文档**：`README-运行说明.md` 新增 §7.2「回放校验」，含时间源那条坑。
+- **验证**：lint 0 error 0 warning、typecheck 0、CLI 对真实文件跑通。
+- **破坏性**：**否**（只新增只读工具与文档）。

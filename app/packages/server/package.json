@@ -7,7 +7,8 @@
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "replay:verify": "tsx src/tools/replay-verify.ts"
   },
   "dependencies": {
     "@app/core": "workspace:*",
