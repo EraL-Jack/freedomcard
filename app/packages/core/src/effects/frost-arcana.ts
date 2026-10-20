@@ -169,7 +169,7 @@ export const frostFinalJudgmentEffect: EffectModule = {
     const targets = enemyBoard(state, me).filter((c) => c.frozen);
     for (const c of targets) {
       e.push(moved(ctx.now, foe, c.uid, 'board', 'graveyard'));
-      e.push(...commanderDamageEvents(ctx.now, e.state, foe, 1, uid, me));
+      e.push(...commanderDamageEvents(ctx.now, e.state, foe, 1, uid, me, ctx));
     }
     return e.events;
   },

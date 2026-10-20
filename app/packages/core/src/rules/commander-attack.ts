@@ -85,6 +85,6 @@ export const commanderAttackRule = (
   if (afterPre.winner !== null || afterPre.draw) return { ok: true, value: events };
 
   const damage = COMMANDER_ATTACK_DAMAGE + (afterPre.players[me]?.commanderDamageBonus ?? 0);
-  events.push(...commanderDamageEvents(at, afterPre, foe, damage, cmd.uid, me));
+  events.push(...commanderDamageEvents(at, afterPre, foe, damage, cmd.uid, me, ctx));
   return { ok: true, value: events };
 };

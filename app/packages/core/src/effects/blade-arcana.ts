@@ -17,7 +17,13 @@ import { isBladeCard } from '@app/shared/cards';
 
 import { ev, moved, reject, strArg } from '../ops.js';
 
-import { bladeExileCount, choiceCleared, choicePending, type EffectModule } from './index.js';
+import {
+  bladeExileCount,
+  choiceCleared,
+  choicePending,
+  revealAction,
+  type EffectModule,
+} from './index.js';
 import { exileCard } from './primitives.js';
 
 /* --------------------------- 炎刃战术 bladeTactics --------------------------- */
@@ -87,13 +93,16 @@ function millRemaining(
 
 export const bladeCremationEffect: EffectModule = {
   onPlay(state, ctx, owner, uid) {
-    const p = state.players[owner];
-    if (!p) return [];
     const at = ctx.now;
-    const top = p.zones.deck.slice(0, CREMATION_REVEAL);
-    const events: GameEvent[] = top.map((c) =>
-      ev(at, 'card:revealed', { playerId: owner, uid: c.uid, from: 'deck', reason: 'blade-cremation' }),
-    );
+    // D-234：走统一的**展示动作**（翻开 → 触发星轨/展示时 → 归位），
+    // 而不是自己发一串 `card:revealed`。「展示」只有一种含义。
+    const r = revealAction(at, state, owner, ctx, {
+      n: CREMATION_REVEAL,
+      reason: 'blade-cremation',
+      settle: 'bottom',
+    });
+    const events: GameEvent[] = [...r.events];
+    const top = r.revealed;
     if (top.length === 0) return events;
 
     const left = top.map((c) => c.uid);

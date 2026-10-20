@@ -264,8 +264,11 @@ describe('星轨（docs/17 / D-230）', () => {
     // ② 三张展示卡全部回到牌库底，且保持翻开顺序
     expect(p1.zones.deck.slice(-3).map((x) => x.uid)).toEqual(shown);
 
-    // ③ 星轨：基础 3 + 展示 3 张 + 斥候自身 1 = 7（不会因抽牌被重复结算）
-    expect(p1.starTrack).toBe(7);
+    // ③ 星轨：基础 3 + 展示 3 张 + 斥候自身 1 = 7，
+    //    再加 1 层来自**连锁**（D-234）：弓手打脸 → p2 受伤展示翻到 p2 牌库的弓手 →
+    //    p2 的弓手反击 p1 → p1 受伤展示 → 「展示」计 1 层。
+    //    「受伤展示也算展示」正是这条链成立的原因，故这里把它钉成基线。
+    expect(p1.starTrack).toBe(8);
 
     // ④ 展示时效果各触发一次：弓手 1 点 + 指挥官攻击本身 1 点 = 8 − 2
     expect(after.players['p2']!.health).toBe(6);
@@ -297,14 +300,15 @@ describe('星轨（docs/17 / D-230）', () => {
     let mid = s;
     let revealed = 0;
     let lastRevealAt = -1;
+    /** 本批次内的星轨结算位置 —— 只看归位之前的 mark（之后的 mark 可能来自连锁，D-234）。 */
     let markAt = -1;
     let putBottomAt = -1;
     for (const [i, e] of events.entries()) {
       mid = reduce(mid, e);
 
       if (e.type === 'card:revealed') {
-        // 只检查星轨的「展示」批次 —— 指挥官造成伤害时的「受伤展示」是另一条路径
-        // （展示后直接进费用区，卡片本来就离场，不经过展示区）。
+        // 只检查星轨的「展示」批次 —— 受伤展示（reason = commander-damage）是同一个
+        // 展示动作的另一种来源，但它自带归位（→ 费用区），会打乱这里的批次边界断言。
         if (String(e.payload?.['reason'] ?? '') !== 'star-reveal') continue;
         revealed += 1;
         lastRevealAt = i;
@@ -314,7 +318,7 @@ describe('星轨（docs/17 / D-230）', () => {
         expect(mid.players['p1']!.zones.deck.some((x) => x.uid === uid)).toBe(false);
       }
 
-      if (e.type === 'star:mark') markAt = i;
+      if (e.type === 'star:mark' && putBottomAt === -1) markAt = i;
 
       if (e.type === 'deck:put-bottom') {
         putBottomAt = i;
@@ -336,8 +340,34 @@ describe('星轨（docs/17 / D-230）', () => {
     expect(mid.players['p1']!.zones.deck.slice(-3).map((x) => x.uid)).toEqual(shown);
   });
 
-  it('展示批次可回放：同一 Intent 序列两次重跑哈希链一致，展示区收尾为空（D-149）', () => {
+  /**
+   * D-234（Era 2026-10-21）：**受伤展示也是一次「展示」**。
+   *
+   * 此前受伤展示只发 `card:revealed` 再进费用区，既不触发「展示时」效果、也不加星轨 ——
+   * 同一个词在技能展示与受伤展示上是两种含义。现在两者共用 `revealAction`。
+   */
+  it('受伤展示同样加星轨并进费用区（D-234）', () => {
     const s = craft({
+      phase: 'battle',
+      commander: 'bladeLord',
+      zones: { commander: [c('cmd1', 'bladeLord')] },
+      foeZones: { commander: [c('cmd2', 'starWatcher')] },
+      deck: Array.from({ length: 30 }, () => 'frostRecruit'),
+    });
+    const after = run(s, intent('p1', INTENTS.commanderAttack));
+    const p2 = after.players['p2']!;
+
+    // 受伤 1 点 → 展示 1 张 → 星轨 +1（观测者 Ⅱ：每展示 1 张 +1 层）
+    expect(p2.starTrack).toBe(1);
+    // 展示完进费用区，展示区清空（瞬时区域）
+    expect(p2.zones.cost.length).toBe(1);
+    expect(p2.zones.reveal).toEqual([]);
+    // 血量与资源同步
+    expect(p2.health).toBe(7);
+    expect(p2.zones.deck.length).toBe(29);
+  });
+
+  it('展示批次可回放：同一 Intent 序列两次重跑哈希链一致，展示区收尾为空（D-149）', () => {    const s = craft({
       phase: 'battle',
       commander: 'starWatcher',
       zones: { commander: [c('cmd1', 'starWatcher')], cost: [c('k1', 'frostRecruit')] },

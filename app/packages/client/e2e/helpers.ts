@@ -230,9 +230,14 @@ export async function costBudget(page: Page): Promise<{ used: number; max: numbe
   return m ? { used: Number(m[1]), max: Number(m[2]) } : { used: 0, max: 1 };
 }
 
-/** 一张手牌的实际支付张数（docs/16 §4：随从 −1，最低 0；法术按卡面）。 */
+/**
+ * 一张手牌的实际支付张数。
+ *
+ * D-232（Era 2026-10-21）：局内卡面**已经显示实际值**（`costToPay`，随从 −1），
+ * 所以这里不能再减 1 —— 否则会二次打折。
+ */
 export function payOf(card: HandCard): number {
-  return card.kind === '随从' ? Math.max(0, card.cost - 1) : card.cost;
+  return card.cost;
 }
 
 /** 当前回合剩余可支付的张数。 */

@@ -112,9 +112,56 @@ test('起手换牌：第一回合充能阶段可换，换完补满 5 张且只�
   await p.getByTestId('mulligan-confirm').click();
 
   // 返回 2 张 + 抽满：手牌仍是 5 张（A10-1）；换牌完成横幅经播放队列到达
+  //
+  // ⚠️ 必须先等「完成换牌」进日志，再数手牌 —— 否则断言会在服务端还没回事件时
+  // 就被「换牌前的 5 张」满足，变成一句永远为真的废话（D-231 复盘时踩到）。
+  await expect(p.getByTestId('log')).toContainText('完成换牌', { timeout: 15_000 });
   await expect(p.getByTestId('hand').locator('[data-testid="card"]')).toHaveCount(5, {
     timeout: 15_000,
   });
   // 每人一次（mulliganDone）—— 按钮直接不再展示（Era 2026-10-19，废止置灰）
   await expect(p.getByTestId('mulligan')).toHaveCount(0, { timeout: 10_000 });
+});
+
+/**
+ * 后攻方换牌（D-231）：起手 6 张，换完**仍是 6 张**。
+ *
+ * 这里把 6 写成字面量、而不是引用 shared 的 `SECOND_PLAYER_HAND` —— 若哪天引擎又把补牌
+ * 张数退回 5，本用例必须变红；跟着常量走就只会一起变绿，等于没测。
+ *
+ * 时序：后攻方的换牌窗口在**自己的第一个充能阶段**（第 2 回合，X-17），
+ * 所以先让先攻方结束回合把行动权交过去。
+ */
+test('后攻方换牌：起手 6 张，换 2 张后仍补到 6 张（D-231）', async ({ browser }) => {
+  const { host, guest } = await startGame(browser);
+  const pages = [host, guest];
+  const first = await activePage(pages);
+  const second = pages.find((x) => x !== first)!;
+
+  // ① 后攻方开局 6 张（先手 5 / 后手 6，docs/16 §1）
+  await expect(second.getByTestId('hand').locator('[data-testid="card"]')).toHaveCount(6, {
+    timeout: 15_000,
+  });
+
+  // ② 交出行动权 → 第 2 回合，后攻方进入自己的首个充能阶段
+  await first.getByTestId('end-turn').click();
+  await expect.poll(() => turnNo(second), { timeout: 15_000 }).toBe(2);
+
+  await expect(second.getByTestId('mulligan')).toBeVisible({ timeout: 10_000 });
+  await second.getByTestId('mulligan').click();
+  const cards = second.getByTestId('hand').locator('[data-testid="card"]');
+  await cards.nth(0).click();
+  await cards.nth(1).click();
+  await expect(second.getByTestId('mulligan-confirm')).toContainText('2');
+  await second.getByTestId('mulligan-confirm').click();
+
+  // ③ 换牌不改手牌数：仍是 6 张（D-231 的不变量 —— 修之前这里会掉到 5）
+  //
+  // ⚠️ 顺序很重要：先等「完成换牌」进日志（证明服务端真收了这次换牌并回了事件），
+  // 再数手牌。否则断言会在事件到达之前就被「换牌前的 6 张」满足 —— 拿坏代码跑也绿。
+  await expect(second.getByTestId('log')).toContainText('完成换牌', { timeout: 15_000 });
+  await expect(second.getByTestId('hand').locator('[data-testid="card"]')).toHaveCount(6, {
+    timeout: 15_000,
+  });
+  await expect(second.getByTestId('mulligan')).toHaveCount(0, { timeout: 10_000 });
 });

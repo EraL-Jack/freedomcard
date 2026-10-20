@@ -177,6 +177,10 @@ export function unitPower(state: GameState, cards: Record<string, CardDef>, uid:
 /**
  * 一张卡**实际要支付的费用**（docs/16 §4 / §4.1）：
  * 随从减 1（最低 0），法术与设置法术按卡面值。
+ *
+ * ⚠️ 本回合的一次性减费（星轨传令 `nextMinionDiscount`）**不在**这里 ——
+ * 那是「下一张随从」的临时优惠，若算进来，手牌里每张随从都会显示成折后价。
+ * 它在出牌时由 `play.ts` 叠加；界面同理只显示这张卡的常规实付（D-232）。
  */
 export function costToPay(def: CardDef): number {
   if (def.type !== 'minion') return Math.max(0, def.cost);
