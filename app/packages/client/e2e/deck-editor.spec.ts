@@ -101,3 +101,21 @@ test('分类张数统计随加减变化', async ({ browser }) => {
   await page.getByTestId('deck-remove-bladeScout').click();
   await expect(page.getByTestId('deck-counts')).toHaveText('随从 1 · 法术 0 · 设置 0');
 });
+
+test('不进入编辑页，主界面下拉里已经有三套基础卡组', async ({ page }) => {
+  // 关键：只 goto，不点「编辑卡组」。三套卡组必须由入口初始化写入，
+  // 否则玩家不走编辑页就永远看不到它们 —— 那就等于「默认卡组没准备好」。
+  await page.goto('/');
+
+  const choice = page.getByTestId('deck-choice');
+  await expect(choice).toBeVisible();
+
+  // 1 个「阵营默认卡组」+ 3 套基础卡组
+  await expect(choice.locator('option')).toHaveCount(4);
+  await expect(choice).toContainText('炎刃');
+  await expect(choice).toContainText('霜律');
+  await expect(choice).toContainText('星轨');
+
+  // 三套都是完整的 30 张，没有一项该被禁用
+  await expect(choice.locator('option:disabled')).toHaveCount(0);
+});
