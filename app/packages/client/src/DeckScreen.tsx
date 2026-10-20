@@ -78,6 +78,17 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
   const [detailId, setDetailId] = useState<string | null>(null);
   /** 删除的两段确认（D-172）—— 切换卡组或新建时自动收起，避免「确认删除」跑到别的卡组上。 */
   const [confirmDelete, setConfirmDelete] = useState(false);
+  /**
+   * 待选区关键字（D-186）—— Era：**「只要文本更新就自动执行一次卡名关键字搜索」**。
+   *
+   * 所以这里没有「搜索」按钮、也不等回车：`onChange` 直接落 state，过滤由下面的
+   * `useMemo` 跟着重算。不做防抖 —— 本地 44 条数据、纯字符串包含，重算成本远低于一次渲染，
+   * 加了防抖反而会出现「打字快时列表慢半拍」的观感。
+   *
+   * 切卡组时**不清空**：Era 找「霜律」的卡，换一套卡组接着找同一批卡是常见动作，
+   * 清掉等于让他重打一遍。
+   */
+  const [query, setQuery] = useState('');
 
   const deck = decks.find((d) => d.id === active) ?? null;
   const total = deck ? deckTotal(deck) : 0;
@@ -107,6 +118,21 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
       })
       .sort((a, b) => a.def.cost - b.def.cost || a.def.name.localeCompare(b.def.name, 'zh'));
   }, [deck]);
+
+  /**
+   * 待选过滤结果（D-186）—— 只按**卡名**匹配，不搜效果文本。
+   *
+   * 为什么只搜卡名：Era 的原话是「卡名关键字搜索」。搜效果文本会带来一批
+   * 「名字里没有这个词、但翻出来」的结果，命中数还会随文案微调而变 —— 那是另一件事，
+   * 真要做应该单独加一个开关，而不是把两种语义混进同一个框。
+   */
+  const filteredPool = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return SORTED_POOL;
+    return SORTED_POOL.filter((def) => def.name.toLowerCase().includes(q));
+  }, [query]);
+  /** 有没有在搜（`trim()` 之后为空不算，全空格不该把列表清空）。 */
+  const searching = query.trim().length > 0;
 
   const commit = (next: SavedDeck[]): void => {
     setDecks(next);
@@ -419,11 +445,45 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
           {/* 下：待选（完整卡池，点条目看详情浮层） */}
           <section className="flex min-h-0 flex-1 flex-col rounded border border-slate-800">
             <h2 className="flex items-center justify-between border-b border-slate-800 px-3 py-1.5 text-xs text-slate-300">
-              <span>待选 · 共 {SORTED_POOL.length} 张</span>
+              <span data-testid="deck-pool-count">
+                {searching
+                  ? `待选 · 命中 ${filteredPool.length} / ${SORTED_POOL.length}`
+                  : `待选 · 共 ${SORTED_POOL.length} 张`}
+              </span>
               <span className="text-slate-500">点卡名看详情</span>
             </h2>
+            {/* 搜索框（D-186）—— 固定在列表上方，不随滚动跑掉；输一个字就过滤一次。 */}
+            <div className="shrink-0 border-b border-slate-800 px-2 py-1.5">
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-sm placeholder:text-slate-500"
+                  placeholder="搜卡名（输入即筛）"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  aria-label="按卡名搜索待选卡"
+                  data-testid="deck-search"
+                />
+                {searching ? (
+                  <button
+                    type="button"
+                    className="shrink-0 rounded border border-slate-700 px-2 py-1 text-[11px] text-slate-300"
+                    onClick={() => setQuery('')}
+                    data-testid="deck-search-clear"
+                  >
+                    清空
+                  </button>
+                ) : null}
+              </div>
+            </div>
             <div className="min-h-0 flex-1 overflow-y-auto" data-testid="deck-pool">
-              {SORTED_POOL.map((def) => {
+              {/* 搜不到时给一句话，别留一块空白 —— 空白会被当成「卡池加载失败」。 */}
+              {filteredPool.length === 0 ? (
+                <p className="px-3 py-4 text-xs text-slate-400" data-testid="deck-search-empty">
+                  没有卡名含「{query.trim()}」的卡
+                </p>
+              ) : null}
+              {filteredPool.map((def) => {
                 const n = deck.cards[def.defId] ?? 0;
                 return (
                   <div
