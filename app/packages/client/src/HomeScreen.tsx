@@ -130,6 +130,16 @@ export default function HomeScreen(props: {
               还没有自建卡组，点下方「编辑卡组」可以新建。
             </p>
           ) : null}
+          {/*
+            选了一套但不完整 —— 现在会静默回落到阵营默认。
+            `chosenDeck` 只在「找得到且正好 30 张」时非空，所以这里就是回落点；
+            不提示等于骗玩家「我用的就是这套」。
+          */}
+          {deckId && !chosenDeck ? (
+            <p className="mt-1 text-[11px] text-amber-300" data-testid="deck-incomplete-hint">
+              所选卡组不足 {MAIN_DECK_SIZE} 张，开局将使用阵营默认卡组
+            </p>
+          ) : null}
         </label>
 
         <label className="block">
