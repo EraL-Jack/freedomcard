@@ -132,6 +132,9 @@ serve-public.cmd
 
 每局结束会在 `app/replays/` 写一份 `<roomId>-<时间戳>.json`。校验一份记录能否**逐帧重放**：
 
+> **观看入口当前置灰**（D-183）：游戏里看不了回放，接口也没开 —— 公网隧道每月流量有限。
+> 记录本身一直正常写盘，下面这条 CLI 校验的就是同一批文件。原因与开放方式见 §10 第 11 条。
+
 ```bash
 cd app
 pnpm --filter @app/server run replay:verify replays/<file>.json            # 只比哈希链
@@ -234,7 +237,11 @@ app/
 9. Tailwind 断点在 `client/src/style.css` 的 `@theme` 中定义，**没有** `tailwind.config.js`（v4 已移除）。
 10. **限流阈值是经验值**（D-182）：建房 10 次/分、Intent 20 次/秒等，按「真人碰不到、脚本立刻撞墙」估算，
     尚未在真实多人负载下校准。要调就改环境变量（§7.3），不必动代码。
-10. 工程内禁止使用 `xl:` / `2xl:` 变体 —— 五档断点已全部覆盖默认值。
+11. **回放观看入口置灰**（D-183）：结算面板的「查看回放（暂未开放）」可见但不可点 ——
+    公网走隧道、每月流量有限，开放观看等于每次复盘都从服务器拉一份 `replay.json`。
+    **记录不受影响**：服务端照常写 `app/replays/`（`replay:verify` 可校验，见 §7.2）。
+    要开放就把 `client/src/features.ts` 的 `REPLAY_VIEW_ENABLED` 改成 `true` 并重新 build。
+12. 工程内禁止使用 `xl:` / `2xl:` 变体 —— 五档断点已全部覆盖默认值。
 
 ## 11. 本轮验收清单（D-137 ~ D-149）
 

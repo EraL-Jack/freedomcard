@@ -15,6 +15,7 @@ import {
   loadDecks,
   saveActiveDeckId,
 } from './decks.js';
+import { REPLAY_VIEW_ENABLED } from './features.js';
 import { KEYWORD_NOTE, PHASE_LABEL } from './labels.js';
 import type { RoomView } from './types.js';
 import type { Fx, RoomSession } from './useRoom.js';
@@ -457,6 +458,26 @@ function GameOverPanel(props: {
         data-testid="back-home"
       >
         返回主界面
+      </button>
+      {/*
+        回放入口（D-183）—— Era 2026-10-20：**先置灰，但正常记录**。
+        公网走隧道、每月流量有限，开放观看等于每次复盘都从服务器拉一份 `replay.json`。
+        服务端记录链路不受影响（`app/replays/` 照常落盘），要开放只改
+        `features.ts` 的 `REPLAY_VIEW_ENABLED`。
+        按钮位置定在结算面板：看回放的人一定是刚打完的人，且不需要额外的列表页。
+      */}
+      <button
+        type="button"
+        disabled={!REPLAY_VIEW_ENABLED}
+        title={
+          REPLAY_VIEW_ENABLED
+            ? '查看本局回放'
+            : '回放观看暂未开放（节省公网流量）；对局记录已在服务端保存'
+        }
+        className="rounded border border-slate-600 bg-slate-800 px-6 py-2 text-sm text-slate-300 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-800/40 disabled:text-slate-500"
+        data-testid="replay-view"
+      >
+        查看回放{REPLAY_VIEW_ENABLED ? '' : '（暂未开放）'}
       </button>
     </div>
   );
