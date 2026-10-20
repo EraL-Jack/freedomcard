@@ -378,7 +378,12 @@ function sweepRuntimes(): void {
     runtimes.delete(roomId);
     // 不 clear 的话，定时器句柄会把已销毁房间的运行时吊住不释放。
     rt.timer.clear();
-    void flushReplay(roomId, rt.replay.finish());
+    // ⚠️ 必须 catch（D-176）：`void` 一个会 reject 的 Promise，在 Node 22 上等于
+    // unhandled rejection → 默认**终止进程**。磁盘满、目录只读都会走到这条路径，
+    // 而那时正是最不能挂的时候。回放丢了可以重打，服务挂了整间房都没了。
+    void flushReplay(roomId, rt.replay.finish()).catch((err: unknown) => {
+      fastify.log.error({ err, roomId }, '回放落盘失败（不影响对局，但这份记录已丢失）');
+    });
   }
 }
 
