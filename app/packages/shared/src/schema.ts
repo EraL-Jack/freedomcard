@@ -34,19 +34,21 @@ export const EchoSchema = z.object({
 });
 
 /**
- * 阵营与赛制 —— 建房 / 加入时由玩家选择（D-132 / D-235）。
+ * 赛制 —— 建房时由玩家选择（D-132）。
  *
- * 值是**协议的一部分**：客户端与服务端都按这三个字符串通信，改动等于改协议。
+ * 值是**协议的一部分**：客户端与服务端都按这两个字符串通信，改动等于改协议。
  */
-export const FactionSchema = z.enum(['blade', 'frost', 'star']);
 export const MatchFormatSchema = z.enum(['bo1', 'bo3']);
 
 /**
  * 房间入站 payload。
  * `capacity` 由客户端传入 —— 项目**不预设人数**（A 组未定），因此这里没有默认值兜底。
  *
- * `format` / `faction` 缺省时由服务端取默认值（BO1 / 按座位轮换阵营）：
+ * `format` / `commander` 缺省时由服务端取默认值（BO1 / 基础卡组自带的指挥官）：
  * 老客户端不带这两个字段也要能建房，故用 `optional()` 而不是必填。
+ *
+ * ⚠️ **D-184 / ADR-0042**：`faction` 已删除 —— Era 定的规则里没有阵营，卡池可以混选。
+ * 老客户端仍可能带 `faction`，`z.object()` 会 strip 掉，不会 400（协议向后兼容）。
  */
 /**
  * 自建主卡组 —— 30 个 `defId`（D-141）。
@@ -59,24 +61,41 @@ export const MatchFormatSchema = z.enum(['bo1', 'bo3']);
  */
 const DeckSchema = z.array(z.string().min(1)).max(30);
 
+/**
+ * 指挥官 `defId`（D-184）—— 与主卡组**成对**提交。
+ *
+ * 只校验「非空短字符串」；是否真的存在、是不是指挥官类型，由服务端
+ * `validateCommander` 给出人话原因（和卡组校验同一层，便于统一报错）。
+ */
+const CommanderSchema = z.string().min(1).max(64);
+
 export const RoomCreateSchema = z.object({
   nickname: z.string().min(1).max(24),
   capacity: z.number().int().min(1).max(8),
   format: MatchFormatSchema.optional(),
-  faction: FactionSchema.optional(),
+  /** 本局的 30 张主卡组 —— 空/缺省 = 用服务端默认卡组。 */
   deck: DeckSchema.optional(),
+  /** 本局的指挥官 —— 缺省 = 由所选卡组决定（基础卡组自带一位）。 */
+  commander: CommanderSchema.optional(),
 });
 
 export const RoomJoinSchema = z.object({
   code: z.string().min(1),
   nickname: z.string().min(1).max(24),
-  faction: FactionSchema.optional(),
   deck: DeckSchema.optional(),
+  commander: CommanderSchema.optional(),
 });
 
-/** 换卡组（准备页）—— 空数组表示回到阵营默认卡组。 */
+/**
+ * 换卡组（准备页）—— 卡组与指挥官一起换，空数组表示回到服务端默认卡组。
+ *
+ * ⚠️ `commander` 必须在这里**显式声明**（D-184）。漏了就是那个老坑：
+ * 客户端改了指挥官、服务端 strip 掉、继续用旧的，界面显示 A 卡组 A 指挥官、
+ * 实际开局是 B —— 没有任何报错，只有打到一半发现技能不对。
+ */
 export const RoomDeckSchema = z.object({
   deck: DeckSchema,
+  commander: CommanderSchema.optional(),
 });
 
 export const RoomReconnectSchema = z.object({

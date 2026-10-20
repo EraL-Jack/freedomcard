@@ -2,9 +2,15 @@ import { describe, expect, it } from 'vitest';
 
 import { CARD_POOL } from '@app/shared/cards';
 import { MAIN_DECK_SIZE, MAX_COPIES } from '@app/shared/constants';
-import { BASIC_DECKS, FACTION_DECKS, deckRecipeProblems } from '@app/shared/default-decks';
+import {
+  BASIC_DECKS,
+  COMMANDER_IDS,
+  basicDeckBySlug,
+  basicDeckOfCommander,
+  deckRecipeProblems,
+} from '@app/shared/default-decks';
 
-import { defaultDeckSetup } from './deck-pool.js';
+import { defaultDeckSetup, validateCommander } from './deck-pool.js';
 
 /**
  * 三套基础卡组（D-169）—— 客户端预置 / 服务端回退共用这一份数据。
@@ -12,12 +18,19 @@ import { defaultDeckSetup } from './deck-pool.js';
  * 钉住的是「这三套开箱即用」这件事本身：张数对、同名不超、不含指挥官、
  * `defId` 全都存在。任何一条不满足，客户端预置出来的就是一套**不能开局**的卡组，
  * 而玩家看到的是「凑满 30 张才能用」——症状和「默认卡组没做」一模一样，很难查。
+ *
+ * ## D-184 / ADR-0042 之后
+ *
+ * 「阵营」没有了：`slug` 只是标识，不限制卡组里能放哪些卡。
+ * 新的不变量是**每套基础卡组都绑一位合法指挥官**——它是「开局使用的那一套」的一部分。
  */
 
 describe('三套基础卡组', () => {
-  it('阵营齐全：炎刃 / 霜律 / 星轨各一套', () => {
-    expect(BASIC_DECKS.map((d) => d.faction)).toEqual(['blade', 'frost', 'star']);
-    expect(Object.keys(FACTION_DECKS).sort()).toEqual(['blade', 'frost', 'star']);
+  it('三套齐全：blade / frost / star（短名仅作标识，不是阵营）', () => {
+    expect(BASIC_DECKS.map((d) => d.slug)).toEqual(['blade', 'frost', 'star']);
+    for (const deck of BASIC_DECKS) {
+      expect(basicDeckBySlug(deck.slug), `basicDeckBySlug(${deck.slug})`).toBe(deck);
+    }
   });
 
   it('每套正好 30 张', () => {
@@ -57,27 +70,49 @@ describe('三套基础卡组', () => {
     expect(new Set(keys).size).toBe(3);
   });
 
-  it('指挥官与阵营一一对应', () => {
-    expect(FACTION_DECKS.blade.commander).toBe('bladeLord');
-    expect(FACTION_DECKS.frost.commander).toBe('frostAdjudicator');
-    expect(FACTION_DECKS.star.commander).toBe('starWatcher');
+  it('每套的指挥官都是合法指挥官，且能反查回同一套', () => {
+    for (const deck of BASIC_DECKS) {
+      expect(validateCommander(deck.commander), `${deck.name} 的指挥官`).toBeNull();
+      expect(basicDeckOfCommander(deck.commander), `${deck.commander} 反查`).toBe(deck);
+    }
   });
 });
 
-describe('defaultDeckSetup 的阵营回退', () => {
-  it('未选阵营时按座位轮换：0 炎刃、1 霜律、2 星轨', () => {
-    const { decks, commanders } = defaultDeckSetup(['p0', 'p1', 'p2']);
-    expect(decks.p0).toEqual(FACTION_DECKS.blade.deck);
-    expect(decks.p1).toEqual(FACTION_DECKS.frost.deck);
-    expect(decks.p2).toEqual(FACTION_DECKS.star.deck);
-    expect(commanders.p0).toBe('bladeLord');
-    expect(commanders.p1).toBe('frostAdjudicator');
-    expect(commanders.p2).toBe('starWatcher');
+describe('指挥官候选表', () => {
+  it('COMMANDER_IDS 与卡池里的指挥官一一对应', () => {
+    const inPool = Object.values(CARD_POOL)
+      .filter((c) => c.type === 'commander')
+      .map((c) => c.defId)
+      .sort();
+    expect([...COMMANDER_IDS].sort()).toEqual(inPool);
   });
 
-  it('显式选了阵营就按选择给', () => {
-    const { commanders } = defaultDeckSetup(['p0', 'p1'], { p1: 'star' });
+  it('validateCommander：非指挥官 / 不存在的卡都给人话原因', () => {
+    expect(validateCommander('bladeScout')).toContain('不是指挥官');
+    expect(validateCommander('nope')).toContain('未知的指挥官');
+  });
+});
+
+describe('defaultDeckSetup 的缺省回退（ADR-0042）', () => {
+  it('什么都没给：所有席位都落到第一套基础卡组，不再按座位轮换', () => {
+    const { decks, commanders } = defaultDeckSetup(['p0', 'p1', 'p2']);
+    for (const id of ['p0', 'p1', 'p2']) {
+      expect(decks[id]).toEqual(BASIC_DECKS[0]!.deck);
+      expect(commanders[id]).toBe(BASIC_DECKS[0]!.commander);
+    }
+  });
+
+  it('只给指挥官：配它自己那套 30 张', () => {
+    const { decks, commanders } = defaultDeckSetup(['p0', 'p1'], { p1: 'starWatcher' });
     expect(commanders.p0).toBe('bladeLord');
+    expect(decks.p0).toEqual(BASIC_DECKS[0]!.deck);
     expect(commanders.p1).toBe('starWatcher');
+    expect(decks.p1).toEqual(basicDeckOfCommander('starWatcher')!.deck);
+  });
+
+  it('给了不认识的指挥官：保留该 id（由 validateCommander 在入站拦下），卡组回落第一套', () => {
+    const { decks, commanders } = defaultDeckSetup(['p0'], { p0: 'madeUp' });
+    expect(commanders.p0).toBe('madeUp');
+    expect(decks.p0).toEqual(BASIC_DECKS[0]!.deck);
   });
 });

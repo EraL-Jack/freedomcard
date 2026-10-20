@@ -27,14 +27,14 @@ describe('回放装配参数（D-159）', () => {
     expect(Object.keys(setup.commanders).sort()).toEqual(['p1', 'p2']);
   });
 
-  it('自建卡组会覆盖 setup.decks（只换主卡组，指挥官仍由阵营决定）', () => {
+  it('自建卡组会覆盖 setup.decks，指挥官单独记录（D-184）', () => {
     const custom = Array.from({ length: 30 }, () => 'frostRecruit');
     const base = seedSetup({ seats, seed: 7 });
     const setup = seedSetup({ seats, seed: 7, decks: { p1: custom } });
 
     expect(setup.decks['p1']).toEqual(custom);
     expect(setup.decks['p2']).toEqual(base.decks['p2']);
-    // 指挥官不受自建卡组影响：仍是该阵营那一张（开局才入区，此刻只存在 setup 里）
+    // 指挥官由 commanders 独立决定，卡组不参与（开局才入区，此刻只存在 setup 里）
     expect(setup.commanders).toEqual(base.commanders);
     for (const id of seats) expect(setup.commanders[id]).toBeTruthy();
   });

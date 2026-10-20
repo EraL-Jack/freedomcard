@@ -31,7 +31,7 @@ describe('开局桥 seedGameState（ADR-0019）', () => {
     }
   });
 
-  it('每位玩家都有合法指挥官（按座位交替分配炎刃 / 霜律，ADR-0025）', () => {
+  it('每位玩家都有合法指挥官；没指定时都落到默认那位（ADR-0042 不再按座位轮换）', () => {
     const s = seedGameState({ seats, seed: 1 });
     const used: string[] = [];
     for (const id of seats) {
@@ -40,8 +40,21 @@ describe('开局桥 seedGameState（ADR-0019）', () => {
       expect(CARD_POOL[cmd]!.type).toBe('commander');
       used.push(cmd);
     }
-    // 一局里两套体系都能被看到：第一位炎刃、第二位霜律
-    expect(used).toEqual([DEFAULT_COMMANDER_ID, 'frostAdjudicator']);
+    expect(used).toEqual([DEFAULT_COMMANDER_ID, DEFAULT_COMMANDER_ID]);
+  });
+
+  it('各席位按自己的指挥官装配（D-184）：一人炎刃、一人霜律', () => {
+    const s = seedGameState({
+      seats,
+      seed: 1,
+      commanders: { p1: DEFAULT_COMMANDER_ID, p2: 'frostAdjudicator' },
+    });
+    expect(s.players['p1']!.commanderDefId).toBe(DEFAULT_COMMANDER_ID);
+    expect(s.players['p2']!.commanderDefId).toBe('frostAdjudicator');
+    // 霜律指挥官的默认主卡组就是霜律那 30 张
+    expect(s.players['p2']!.zones.deck.map((c) => c.defId).sort()).toEqual(
+      [...FROST_MAIN_DECK].sort(),
+    );
   });
 
   it('同一 seed 两次建立的状态完全一致（可复现）', () => {
@@ -51,14 +64,14 @@ describe('开局桥 seedGameState（ADR-0019）', () => {
     expect(a.rngCursor).toBe(b.rngCursor);
   });
 
-  it('自建卡组只覆盖主卡组，指挥官仍由阵营决定（D-141）', () => {
+  it('卡组与指挥官独立提交：炎刃指挥官 + 混搭主卡组也合法（D-141 / ADR-0042）', () => {
     const s = seedGameState({
       seats,
       seed: 1,
-      factions: { p1: 'blade' },
+      commanders: { p1: DEFAULT_COMMANDER_ID },
       decks: { p1: FROST_MAIN_DECK },
     });
-    // 阵营 = 炎刃 → 指挥官是炎刃军统领，但主卡组换成了霜律那 30 张
+    // 指挥官是炎刃军统领，但主卡组是霜律那 30 张 —— 没有阵营限制，这就是合法的一套
     expect(s.players['p1']!.commanderDefId).toBe(DEFAULT_COMMANDER_ID);
     expect(s.players['p1']!.zones.deck.map((c) => c.defId).sort()).toEqual(
       [...FROST_MAIN_DECK].sort(),

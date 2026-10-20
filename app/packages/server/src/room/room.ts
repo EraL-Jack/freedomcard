@@ -1,12 +1,17 @@
-import type { Faction, MatchFormat, PlayerId } from '@app/shared';
+import type { MatchFormat, PlayerId } from '@app/shared';
 import { RECONNECT_GRACE_MS, ROOM_ERRORS } from '@app/shared/constants';
 
-import { validateDeckList } from '../deck-pool.js';
+import { validateCommander, validateDeckList } from '../deck-pool.js';
 
 import type { Clock, IdGen, Outcome, Room, Seat } from './types.js';
 
-/** 座位轮换的默认阵营 —— 未显式选择时，让相邻两席尽量不同（star 留给第三席）。 */
-const DEFAULT_FACTIONS: readonly Faction[] = ['blade', 'frost', 'star'];
+/**
+ * 未指定指挥官时的落点（D-184 / ADR-0042）—— 与第一套基础卡组一致。
+ *
+ * 写成常量而不是「取 BASIC_DECKS[0]」：`room.ts` 只该知道「房间层事实」，
+ * 不希望它因为基础卡组调整而被牵连；值相等由单测钉住。
+ */
+const DEFAULT_COMMANDER = 'bladeLord';
 
 /** BO3 拿满几胜算赢下系列赛。 */
 const WINS_TO_TAKE_SERIES = 2;
@@ -51,7 +56,7 @@ export class RoomManager {
   /**
    * 归一自建卡组（D-141）。
    *
-   * - 未传 / 空数组 → `{ ok: true }`（无 `deck`，用阵营默认）
+   * - 未传 / 空数组 → `{ ok: true }`（无 `deck`，用服务端默认卡组）
    * - 非法 → `{ ok: false, message }`（人话原因）
    *
    * 入站 schema 只保证「是字符串数组且 ≤30 张」，张数与同名上限在这里查。
@@ -65,12 +70,31 @@ export class RoomManager {
     return { ok: true, deck: [...deck] };
   }
 
+  /**
+   * 归一指挥官（D-184）。
+   *
+   * - 未传 → `{ ok: true, commander: DEFAULT_COMMANDER }`
+   * - 不认识 / 不是指挥官类型 → `{ ok: false, message }`（人话原因）
+   *
+   * ⚠️ 不做「按卡组猜指挥官」：卡组里根本不含指挥官卡，猜不出来。
+   * 客户端负责把「卡组 + 指挥官」成对提交；这里只兜底与校验。
+   */
+  private checkCommander(
+    defId?: string,
+  ): { ok: true; commander: string } | { ok: false; message: string } {
+    if (!defId) return { ok: true, commander: DEFAULT_COMMANDER };
+    const reason = validateCommander(defId);
+    if (reason) return { ok: false, message: reason };
+    return { ok: true, commander: defId };
+  }
+
   create(input: {
     nickname: string;
     capacity: number;
     format?: MatchFormat;
-    faction?: Faction;
-    /** 自建主卡组（D-141）；缺省或空数组 = 用阵营默认。 */
+    /** 本局指挥官（D-184）；缺省 = 第一套基础卡组的指挥官。 */
+    commander?: string;
+    /** 自建主卡组（D-141）；缺省或空数组 = 用默认卡组。 */
     deck?: readonly string[];
   }): Outcome<JoinInfo> {
     if (input.capacity < 1) {
@@ -79,6 +103,10 @@ export class RoomManager {
     const deckCheck = this.checkDeck(input.deck);
     if (!deckCheck.ok) {
       return { ok: false, error: ROOM_ERRORS.INVALID_DECK, message: deckCheck.message };
+    }
+    const commanderCheck = this.checkCommander(input.commander);
+    if (!commanderCheck.ok) {
+      return { ok: false, error: ROOM_ERRORS.INVALID_DECK, message: commanderCheck.message };
     }
     const playerId = this.ids.id();
     const token = this.ids.token();
@@ -94,7 +122,7 @@ export class RoomManager {
       lastSeq: 0,
       disconnectedAt: null,
       ready: false,
-      faction: input.faction ?? DEFAULT_FACTIONS[0]!,
+      commander: commanderCheck.commander,
       ...(deckCheck.deck ? { deck: deckCheck.deck } : {}),
     };
     const room: Room = {
@@ -123,8 +151,9 @@ export class RoomManager {
   join(input: {
     code: string;
     nickname: string;
-    faction?: Faction;
-    /** 自建主卡组（D-141）；缺省或空数组 = 用阵营默认。 */
+    /** 本局指挥官（D-184）；缺省 = 第一套基础卡组的指挥官。 */
+    commander?: string;
+    /** 自建主卡组（D-141）；缺省或空数组 = 用默认卡组。 */
     deck?: readonly string[];
   }): Outcome<JoinInfo> {
     const roomId = this.byCode.get(input.code);
@@ -146,6 +175,10 @@ export class RoomManager {
     if (!deckCheck.ok) {
       return { ok: false, error: ROOM_ERRORS.INVALID_DECK, message: deckCheck.message };
     }
+    const commanderCheck = this.checkCommander(input.commander);
+    if (!commanderCheck.ok) {
+      return { ok: false, error: ROOM_ERRORS.INVALID_DECK, message: commanderCheck.message };
+    }
     const playerId = this.ids.id();
     const token = this.ids.token();
     const seat: Seat = {
@@ -157,7 +190,7 @@ export class RoomManager {
       lastSeq: 0,
       disconnectedAt: null,
       ready: false,
-      faction: input.faction ?? DEFAULT_FACTIONS[free % DEFAULT_FACTIONS.length]!,
+      commander: commanderCheck.commander,
       ...(deckCheck.deck ? { deck: deckCheck.deck } : {}),
     };
     room.seats[free] = seat;
@@ -170,19 +203,26 @@ export class RoomManager {
    * 换卡组（D-141）—— 准备页用。
    *
    * 只在**未开局**（`phase === 'lobby'`）时允许；开局后锁定（`DECK_LOCKED`）。
-   * 空数组 = 回到阵营默认卡组。指挥官不随之改变（仍由阵营决定）。
+   * 空数组 = 回到默认卡组。**指挥官与卡组一起换**（D-184）—— 它们是同一套选择，
+   * 允许只换其中一个就会出现「霜律指挥官 + 炎刃 30 张」这种界面说不清的组合。
    */
   /**
    * 换卡组（D-141）—— 准备页用。
    *
    * 只在**未开局**（`phase === 'lobby'`）时允许；开局后锁定（`DECK_LOCKED`）。
-   * 空数组 = 回到阵营默认卡组。指挥官不随之改变（仍由阵营决定）。
+   * 空数组 = 回到默认卡组。**指挥官与卡组一起换**（D-184）—— 它们是同一套选择，
+   * 允许只换其中一个就会出现「霜律指挥官 + 炎刃 30 张」这种界面说不清的组合。
    *
    * **BO3 局间也不能换**（H37 / Era 2026-10-20：「不允许更换卡组」）。
    * 这一条单独判 `awaitingNext`，不只依赖 `phase` —— 局间房间仍是 `playing`，
    * 但若将来为了让玩家点「准备」而把 `phase` 改回 `lobby`，只判 `phase` 就会**静默放开**局间换卡组。
    */
-  setDeck(roomId: string, playerId: PlayerId, deck: readonly string[]): Outcome<Room> {
+  setDeck(
+    roomId: string,
+    playerId: PlayerId,
+    deck: readonly string[],
+    commander?: string,
+  ): Outcome<Room> {
     const room = this.rooms.get(roomId);
     if (!room) {
       return { ok: false, error: ROOM_ERRORS.ROOM_NOT_FOUND, message: '房间不存在' };
@@ -205,8 +245,13 @@ export class RoomManager {
     if (!deckCheck.ok) {
       return { ok: false, error: ROOM_ERRORS.INVALID_DECK, message: deckCheck.message };
     }
+    const commanderCheck = this.checkCommander(commander);
+    if (!commanderCheck.ok) {
+      return { ok: false, error: ROOM_ERRORS.INVALID_DECK, message: commanderCheck.message };
+    }
     if (deckCheck.deck) seat.deck = deckCheck.deck;
     else delete seat.deck;
+    seat.commander = commanderCheck.commander;
     return { ok: true, value: room };
   }
 
@@ -433,7 +478,7 @@ export class RoomManager {
               connected: s.connected,
               // ADR-0019：准备状态属于房间层事实，不含任何玩法信息。
               ready: s.ready,
-              faction: s.faction,
+              commander: s.commander,
               // D-141：只下发「是否用了自建卡组」，30 个 defId 留在服务端。
               deckSize: s.deck?.length ?? null,
             }

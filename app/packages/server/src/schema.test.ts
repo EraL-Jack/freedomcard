@@ -60,7 +60,7 @@ describe('IntentSchema 传输层校验', () => {
  * 房间入站 schema · 自建卡组（D-141）。
  *
  * 与 `payload` 同理：`z.object()` 默认 strip，漏声明 `deck` 会让客户端提交的 30 张
- * 在入站被静默丢弃，服务端只会看到「没带卡组」并回退阵营默认 —— 没有任何报错。
+ * 在入站被静默丢弃，服务端只会看到「没带卡组」并回退默认 —— 没有任何报错。
  * 这类问题只能在传输层钉住。
  */
 describe('房间入站 schema · 自建卡组（D-141）', () => {
@@ -77,13 +77,57 @@ describe('房间入站 schema · 自建卡组（D-141）', () => {
     expect(parsed.deck).toHaveLength(30);
   });
 
-  it('RoomDeckSchema：空数组合法（回到阵营默认），超过 30 张被拒', () => {
+  it('RoomDeckSchema：空数组合法（回到默认卡组），超过 30 张被拒', () => {
     expect(RoomDeckSchema.safeParse({ deck: [] }).success).toBe(true);
     expect(RoomDeckSchema.safeParse({ deck }).success).toBe(true);
     expect(
       RoomDeckSchema.safeParse({ deck: Array.from({ length: 31 }, () => 'bladeScout') }).success,
     ).toBe(false);
     expect(RoomDeckSchema.safeParse({}).success).toBe(false);
+  });
+});
+
+/**
+ * 房间入站 schema · 指挥官（D-184 / ADR-0042）。
+ *
+ * 「阵营」已删除，改成「卡组 + 指挥官」成对提交。这里钉两件事：
+ * 1. `commander` **不被 strip** —— 同一个老坑（`payload`、`deck` 各踩过一次）；
+ * 2. 老客户端仍带着 `faction` 时**不报错**，字段被静默丢掉即可（向后兼容）。
+ */
+describe('房间入站 schema · 指挥官（D-184）', () => {
+  const deck = Array.from({ length: 30 }, () => 'bladeScout');
+
+  it('三个入口都保留 commander', () => {
+    expect(
+      RoomCreateSchema.parse({ nickname: 'Era', capacity: 2, deck, commander: 'frostAdjudicator' })
+        .commander,
+    ).toBe('frostAdjudicator');
+    expect(
+      RoomJoinSchema.parse({ code: 'ABC123', nickname: 'Era', commander: 'starWatcher' }).commander,
+    ).toBe('starWatcher');
+    expect(RoomDeckSchema.parse({ deck, commander: 'bladeLord' }).commander).toBe('bladeLord');
+  });
+
+  it('不带 commander 仍合法（缺省由服务端补）', () => {
+    expect(RoomCreateSchema.parse({ nickname: 'Era', capacity: 2 }).commander).toBeUndefined();
+    expect(RoomDeckSchema.parse({ deck }).commander).toBeUndefined();
+  });
+
+  it('空字符串被拒 —— 空值不能当成「有指挥官」', () => {
+    expect(RoomCreateSchema.safeParse({ nickname: 'Era', capacity: 2, commander: '' }).success).toBe(
+      false,
+    );
+  });
+
+  it('老客户端的 faction 字段被丢掉但不报错（删除阵营不破坏兼容）', () => {
+    const parsed = RoomCreateSchema.parse({
+      nickname: 'Era',
+      capacity: 2,
+      faction: 'frost',
+      commander: 'bladeLord',
+    });
+    expect(parsed).not.toHaveProperty('faction');
+    expect(parsed.commander).toBe('bladeLord');
   });
 });
 

@@ -27,20 +27,26 @@ export async function newClient(browser: Browser, nickname: string): Promise<Pag
   return page;
 }
 
-/** 建房 + 加入 + 双方准备，返回两个已开局的页面。 */
+/**
+ * 建房 + 加入 + 双方准备，返回两个已开局的页面。
+ *
+ * `hostDeck` / `guestDeck` 是**卡组选择值**（D-184）：`basic-blade|basic-frost|basic-star`
+ * 或 localStorage 里的自建卡组 id。建房与加入共用同一个下拉 `deck-choice`，
+ * 阵营那套选择已经没有了（ADR-0042）。
+ */
 export async function startGame(
   browser: Browser,
-  opts: { format?: 'bo1' | 'bo3'; hostFaction?: string; guestFaction?: string } = {},
+  opts: { format?: 'bo1' | 'bo3'; hostDeck?: string; guestDeck?: string } = {},
 ): Promise<{ host: Page; guest: Page; code: string }> {
   const host = await newClient(browser, 'Host');
-  // D-132：赛制在**建房**时选（BO1 默认），D-235：阵营也在这里选。
+  // D-132：赛制在**建房**时选（BO1 默认）。
   if (opts.format) await host.getByTestId('format').selectOption(opts.format);
-  if (opts.hostFaction) await host.getByTestId('faction').selectOption(opts.hostFaction);
+  if (opts.hostDeck) await host.getByTestId('deck-choice').selectOption(opts.hostDeck);
   await host.getByTestId('create').click();
   const code = ((await host.getByTestId('room-code').textContent()) ?? '').trim();
 
   const guest = await newClient(browser, 'Guest');
-  if (opts.guestFaction) await guest.getByTestId('join-faction').selectOption(opts.guestFaction);
+  if (opts.guestDeck) await guest.getByTestId('deck-choice').selectOption(opts.guestDeck);
   await guest.getByTestId('code').fill(code);
   await guest.getByTestId('join').click();
   await expect(guest.getByTestId('ready')).toBeVisible({ timeout: WAIT });

@@ -1,5 +1,5 @@
 import * as core from '@app/core';
-import type { Faction, GameState, PlayerId } from '@app/shared';
+import type { GameState, PlayerId } from '@app/shared';
 
 import { defaultDeckSetup } from '../deck-pool.js';
 
@@ -40,13 +40,13 @@ export interface SeedOptions {
   /** 随机种子，由服务端下发。 */
   seed: number;
   /**
-   * 各席位的阵营（D-235）—— 决定该席位装配哪一套 30 张主卡组 + 指挥官。
-   * 缺省时按座位轮换，保证两席尽量不同阵营。
+   * 各席位的**指挥官**（D-184）—— 与 `decks` 成对，一起决定这个席位怎么打。
+   * 缺省时落到第一套基础卡组的指挥官（见 `defaultDeckSetup`）。
    */
-  factions?: Readonly<Record<PlayerId, Faction>>;
+  commanders?: Readonly<Record<PlayerId, string>>;
   /**
-   * 各席位的**自建主卡组**（D-141）—— 只覆盖主卡组那 30 张，指挥官仍由阵营决定。
-   * 缺省或空数组的席位用阵营默认卡组。
+   * 各席位的**自建主卡组**（D-141）—— 30 个 `defId`。
+   * 缺省或空数组的席位用该指挥官的默认卡组。
    */
   decks?: Readonly<Record<PlayerId, readonly string[]>>;
 }
@@ -75,8 +75,8 @@ export interface SeedSetup {
  * 交给 `submitSystemIntent`，由引擎完成洗牌 / 掷骰 / 发牌。
  */
 export function seedSetup(opts: SeedOptions): SeedSetup {
-  const { decks, commanders } = defaultDeckSetup(opts.seats, opts.factions ?? {});
-  // D-141：自建卡组只替换主卡组；指挥官仍取阵营那一张。
+  const { decks, commanders } = defaultDeckSetup(opts.seats, opts.commanders ?? {});
+  // D-141 / D-184：玩家的自建卡组替换主卡组，指挥官已在上面按选择解析。
   const finalDecks: Record<PlayerId, readonly string[]> = { ...decks };
   for (const id of opts.seats) {
     const custom = opts.decks?.[id];

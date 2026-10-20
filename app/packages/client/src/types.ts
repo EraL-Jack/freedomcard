@@ -1,4 +1,4 @@
-import type { Faction, GameState, MatchFormat, RoomErrorCode } from '@app/shared';
+import type { GameState, MatchFormat, RoomErrorCode } from '@app/shared';
 
 /**
  * 客户端视图类型 —— 与服务端 `RoomManager.publicView` 的返回结构**逐字段对应**。
@@ -14,8 +14,8 @@ export interface RoomSeatView {
   connected: boolean;
   /** ADR-0019：准备状态（房间层事实，非玩法状态）。 */
   ready: boolean;
-  /** 阵营（D-235）：决定这一席位的卡组与指挥官。 */
-  faction: Faction;
+  /** 本局指挥官 `defId`（D-184）—— 与卡组成对，公开信息（开局即揭示）。 */
+  commander: string;
 }
 
 export interface RoomView {

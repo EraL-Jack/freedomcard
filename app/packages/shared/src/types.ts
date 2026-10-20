@@ -22,13 +22,6 @@ export type IntentActor = 'player' | 'system';
 export type CardType = 'commander' | 'minion' | 'spell' | 'continuous';
 
 /**
- * 阵营 —— 三套卡组各自的体系（`docs/12` 炎刃 / 霜律，`docs/17` 星轨）。
- *
- * 建房与加入时由玩家选择（D-235）；服务端据此装配 30 张主卡组 + 指挥官。
- */
-export type Faction = 'blade' | 'frost' | 'star';
-
-/**
  * 赛制 —— BO1 单局 / BO3 三局两胜（`docs/16` §1.3：座位偏差由赛制消化）。
  *
  * BO3 双方各先手一次；1:1 时第三局由前一局败者先攻（H33 / D-145）。

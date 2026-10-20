@@ -5,7 +5,6 @@ import {
   ROOM_ERROR_TEXT,
   SOCKET_EVENTS,
   type CardInstance,
-  type Faction,
   type GameEvent,
   type GameState,
   type Intent,
@@ -121,21 +120,21 @@ export interface RoomSession {
   revealed: Record<string, { uid: string; defId: string }[]>;
   notice: string;
   /**
-   * 建房 —— `format` 是赛制（BO1/BO3，D-132），`faction` 是本方阵营（D-235）。
-   * 两者都由建房方在界面上选择，服务端据此建立房间与卡组。
+   * 建房 —— `format` 是赛制（BO1/BO3，D-132）。
    *
-   * `deck` 是自建主卡组（D-141）：30 个 `defId`；不传 = 用阵营默认卡组。
+   * `deck` + `commander` 是**一整套**（D-141 / D-184）：30 个 `defId` 与 1 位指挥官。
+   * 没有阵营这一层（ADR-0042），客户端总是发确定的一套，服务端只在缺省时兜底。
    */
   create(
     nickname: string,
     capacity: number,
     format?: MatchFormat,
-    faction?: Faction,
     deck?: string[],
+    commander?: string,
   ): void;
-  join(code: string, nickname: string, faction?: Faction, deck?: string[]): void;
-  /** 准备页换卡组（D-141）—— 未开局时可用；空数组 = 回到阵营默认。 */
-  setDeck(deck: string[]): void;
+  join(code: string, nickname: string, deck?: string[], commander?: string): void;
+  /** 准备页换卡组（D-184）—— 未开局时可用；卡组与指挥官一起换。 */
+  setDeck(deck: string[], commander?: string): void;
   /** 开始下一小局（仅房主可用，BO3）。 */
   nextGame(): void;
   leave(): void;
@@ -514,8 +513,8 @@ export function useRoom(): RoomSession {
       nickname: string,
       capacity: number,
       format: MatchFormat = 'bo1',
-      faction?: Faction,
       deck?: string[],
+      commander?: string,
     ): void => {
       localStorage.setItem(LS.nickname, nickname);
       socket.emit(
@@ -524,9 +523,9 @@ export function useRoom(): RoomSession {
           nickname: nickname || '玩家',
           capacity,
           format,
-          ...(faction ? { faction } : {}),
-          // D-141：只有正好 30 张才会传；否则交给阵营默认。
+          // D-141 / D-184：只有正好 30 张才会传；指挥官与它成对。
           ...(deck && deck.length > 0 ? { deck } : {}),
+          ...(commander ? { commander } : {}),
         },
         (res: Ack) => {
           if (acceptIdentity(res)) setNotice(`已建房，房间码 ${res.room?.code ?? ''}`);
@@ -537,15 +536,15 @@ export function useRoom(): RoomSession {
   );
 
   const join = useCallback(
-    (code: string, nickname: string, faction?: Faction, deck?: string[]): void => {
+    (code: string, nickname: string, deck?: string[], commander?: string): void => {
       localStorage.setItem(LS.nickname, nickname);
       socket.emit(
         SOCKET_EVENTS.roomJoin,
         {
           code: code.trim(),
           nickname: nickname || '玩家',
-          ...(faction ? { faction } : {}),
           ...(deck && deck.length > 0 ? { deck } : {}),
+          ...(commander ? { commander } : {}),
         },
         (res: Ack) => {
           if (acceptIdentity(res)) setNotice(`已加入房间 ${res.room?.code ?? ''}`);
@@ -555,9 +554,9 @@ export function useRoom(): RoomSession {
     [],
   );
 
-  /** 准备页换卡组（D-141）—— 服务端只在未开局时接受。 */
-  const setDeck = useCallback((deck: string[]): void => {
-    socket.emit(SOCKET_EVENTS.roomDeck, { deck }, (res: Ack) => {
+  /** 准备页换卡组（D-184）—— 服务端只在未开局时接受；卡组与指挥官一起换。 */
+  const setDeck = useCallback((deck: string[], commander?: string): void => {
+    socket.emit(SOCKET_EVENTS.roomDeck, { deck, ...(commander ? { commander } : {}) }, (res: Ack) => {
       if (!res.ok) return setNotice(failText(res));
       if (res.room) setRoom(res.room);
       // 下拉变化本身太轻，给一句确认，避免「点了没反应」的错觉。
