@@ -1,5 +1,6 @@
 import type { MatchFormat, PlayerId } from '@app/shared';
-import { RECONNECT_GRACE_MS, ROOM_ERRORS } from '@app/shared/constants';
+import { AI_NICKNAME, AI_PLAYER_ID, RECONNECT_GRACE_MS, ROOM_ERRORS } from '@app/shared/constants';
+import { BASIC_DECKS } from '@app/shared/default-decks';
 
 import { validateCommander, validateDeckList } from '../deck-pool.js';
 
@@ -15,6 +16,20 @@ const DEFAULT_COMMANDER = 'bladeLord';
 
 /** BO3 拿满几胜算赢下系列赛。 */
 const WINS_TO_TAKE_SERIES = 2;
+
+/**
+ * 人机对战时 AI 用哪套基础卡组（D-242）。
+ *
+ * 按**房间码**做确定性散列：同一间房永远是同一套（便于复现与排查），
+ * 不同房之间又能自然换着来 —— 玩家不会每次人机都撞同一套。
+ * 不用随机数的理由：房间层没有种子 RNG，而 `Math.random()` 会让
+ * 「同一房码重开一次」拿到不同对手，日志对不上。
+ */
+function aiBasicDeck(code: string): (typeof BASIC_DECKS)[number] {
+  let h = 0;
+  for (const ch of code) h = (h + ch.charCodeAt(0)) % BASIC_DECKS.length;
+  return BASIC_DECKS[h] ?? BASIC_DECKS[0]!;
+}
 
 export interface JoinInfo {
   room: Room;
@@ -92,6 +107,8 @@ export class RoomManager {
     nickname: string;
     capacity: number;
     format?: MatchFormat;
+    /** 人机房（D-242）—— 自动占一个 AI 席位，容量强制为 2。 */
+    solo?: boolean;
     /** 本局指挥官（D-184）；缺省 = 第一套基础卡组的指挥官。 */
     commander?: string;
     /** 自建主卡组（D-141）；缺省或空数组 = 用默认卡组。 */
@@ -129,9 +146,11 @@ export class RoomManager {
       id: this.ids.id(),
       code,
       phase: 'lobby',
-      capacity: input.capacity,
+      // 人机房强制 2 席（我 + 电脑）：规则只验证过 2 人，
+      // 让人机房开放 3~8 席等于造一个跑不通的房间。
+      capacity: input.solo ? 2 : input.capacity,
       hostId: playerId,
-      seats: Array.from({ length: input.capacity }, (_, i) => (i === 0 ? seat : null)),
+      seats: Array.from({ length: input.solo ? 2 : input.capacity }, (_, i) => (i === 0 ? seat : null)),
       createdAt: this.clock.now(),
       // D-132：赛制由建房方选择，缺省 BO1（老客户端不带该字段）。
       format: input.format ?? 'bo1',
@@ -142,6 +161,30 @@ export class RoomManager {
       firstPlayers: [],
       lastLoser: null,
     };
+    /*
+     * 人机房：建房即坐入 AI（D-242）。
+     *
+     * ⚠️ **不登记 `byPlayer`** —— AI 没有 socket、不会重连，登记只会让
+     * `locate('ai')` 这类调用误以为它是一个可操作席位。
+     * 它的 `connected` 恒为 `true`，因此 `prune()` 不会回收它。
+     */
+    if (input.solo) {
+      const basic = aiBasicDeck(code);
+      room.seats[1] = {
+        seat: 1,
+        playerId: AI_PLAYER_ID,
+        nickname: AI_NICKNAME,
+        token: 'ai',
+        connected: true,
+        lastSeq: 0,
+        disconnectedAt: null,
+        // AI 永远就绪 —— 玩家点「准备」即可开局，不必等一个不会点按钮的对手。
+        ready: true,
+        commander: basic.commander,
+        deck: basic.deck,
+      };
+      room.wins[AI_PLAYER_ID] = 0;
+    }
     this.rooms.set(room.id, room);
     this.byCode.set(code, room.id);
     this.byPlayer.set(playerId, { roomId: room.id, token });
@@ -400,7 +443,14 @@ export class RoomManager {
       const next = room.seats.find((s) => s !== null);
       if (next) room.hostId = next.playerId;
     }
-    if (room.seats.every((s) => s === null)) {
+    /*
+     * 人机房（D-242）：真人走了，AI 席位没有存在意义 —— 一并视为空房销毁。
+     *
+     * 只判 `every(s => s === null)` 是不够的：AI 的 `connected` 恒为 true、
+     * 也没有 `byPlayer` 绑定，`prune` 永远不会回收它，于是这间房会一直挂在内存里，
+     * 每次有人进一次人机房就泄漏一间。这正是 D-181「旧席位永不回收」的同一类问题。
+     */
+    if (room.seats.every((s) => s === null || s.playerId === AI_PLAYER_ID)) {
       this.rooms.delete(room.id);
       this.byCode.delete(room.code);
       return { ok: true, value: { room: null } };
@@ -426,7 +476,8 @@ export class RoomManager {
         this.byPlayer.delete(seat.playerId);
         freed.push({ playerId: seat.playerId, roomId: room.id });
       }
-      if (room.seats.every((s) => s === null)) {
+      // 同 `leave`：人机房里真人席位被回收后，AI 席位不该把房间撑在内存里（D-242）。
+      if (room.seats.every((s) => s === null || s.playerId === AI_PLAYER_ID)) {
         this.rooms.delete(room.id);
         this.byCode.delete(room.code);
       }

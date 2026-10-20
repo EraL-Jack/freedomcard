@@ -73,6 +73,15 @@ export const RoomCreateSchema = z.object({
   nickname: z.string().min(1).max(24),
   capacity: z.number().int().min(1).max(8),
   format: MatchFormatSchema.optional(),
+  /**
+   * **人机房**（D-242，Era 2026-10-21）—— 建房后由服务端自动占一个 AI 席位，
+   * 房间立刻变成「我 + 电脑」，不需要第二个窗口。
+   *
+   * 缺省 `false`：老客户端不带该字段，行为不变（纯双人房）。
+   * 为 `true` 时 `capacity` 被服务端强制为 2 —— 规则只验证过 2 人，
+   * 让人机房开放 3~8 席等于造一个跑不通的房间。
+   */
+  solo: z.boolean().optional(),
   /** 本局的 30 张主卡组 —— 空/缺省 = 用服务端默认卡组。 */
   deck: DeckSchema.optional(),
   /** 本局的指挥官 —— 缺省 = 由所选卡组决定（基础卡组自带一位）。 */

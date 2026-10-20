@@ -192,6 +192,25 @@ export default function HomeScreen(props: {
         >
           创建房间
         </button>
+
+        {/*
+          人机对战（D-242，Era 2026-10-21）—— 开房即坐入一个 AI 席位，
+          不用再开两个窗口自己跟自己打。用的仍是上面选的**卡组 / 赛制**，
+          所以人机房也能拿来试新卡组。
+        */}
+        <button
+          type="button"
+          className="w-full rounded border border-emerald-700 bg-emerald-900/40 px-4 py-3 text-emerald-100"
+          onClick={() =>
+            createOrJoin((name) => {
+              const play = selectionForPlay();
+              session.create(name, 2, format, play.deck, play.commander, true);
+            })
+          }
+          data-testid="create-solo"
+        >
+          人机对战（对手：电脑）
+        </button>
       </section>
 
       <section className="space-y-3 rounded-lg border border-slate-800 bg-slate-900 p-4">

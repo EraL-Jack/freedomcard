@@ -48,6 +48,29 @@ export const RECONNECT_GRACE_MS = 60_000;
 export const TURN_TIMEOUT_MS = 30_000;
 
 /**
+ * 人机对战的 AI 席位（D-242，Era 2026-10-21）。
+ *
+ * `playerId` **固定**而不是随机 UUID，理由有三：
+ * 1. 一间房只有一个 AI，不需要唯一性；随机 id 反而让「哪张牌是电脑打的」难以肉眼排查。
+ * 2. 真人的 `playerId` 是 randomUUID（36 字符），不会撞上 `'ai'`。
+ * 3. 回放 / 日志里 `actor` 一眼可读。
+ *
+ * ⚠️ AI **不登记** `byPlayer`（它没有 socket、不会重连），也不参与 `prune` 的席位回收
+ * —— 它的席位 `connected` 恒为 `true`。
+ */
+export const AI_PLAYER_ID = 'ai';
+export const AI_NICKNAME = '电脑';
+
+/**
+ * AI 每步之间的间隔（毫秒）。
+ *
+ * 为什么不是 0：一步接一步地瞬间打完，玩家看到的是「事件齐刷刷蹦出来」，
+ * 既看不懂发生了什么，也失去了「对面在思考」的反馈。
+ * 600ms 是实测手感 —— 足够看清一次移动，又不至于等得不耐烦。
+ */
+export const AI_STEP_DELAY_MS = 600;
+
+/**
  * 开局换牌时间窗 —— Era 2026-10-19：「开局换牌需要加一个时间窗，时间窗过了隐藏换牌按钮」。
  *
  * 基准 = **各自首次进入己方充能阶段**（`PlayerState.firstChargeAt`），不是开局时刻 ——
