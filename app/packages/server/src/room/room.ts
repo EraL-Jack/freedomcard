@@ -404,6 +404,11 @@ export class RoomManager {
     return roomId ? this.rooms.get(roomId) : undefined;
   }
 
+  /** 当前房间总数 —— 全局限流用（ADR-0039）。 */
+  count(): number {
+    return this.rooms.size;
+  }
+
   /** 客户端可见的房间视图 —— 不泄漏 token。 */
   publicView(room: Room) {
     return {

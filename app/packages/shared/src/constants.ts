@@ -73,6 +73,8 @@ export const ROOM_ERRORS = {
   INVALID_DECK: 'INVALID_DECK',
   /** 只有未开局时才允许换卡组。 */
   DECK_LOCKED: 'DECK_LOCKED',
+  /** 触发按连接 / 全局限流（ADR-0039）。 */
+  RATE_LIMITED: 'RATE_LIMITED',
 } as const;
 
 export type RoomErrorCode = (typeof ROOM_ERRORS)[keyof typeof ROOM_ERRORS];
@@ -95,6 +97,7 @@ export const ROOM_ERROR_TEXT: Readonly<Record<RoomErrorCode, string>> = {
   NO_NEXT_GAME: '当前没有等待开局的下一局',
   INVALID_DECK: '卡组不合法（需 30 张、同名 ≤3、不含指挥官）',
   DECK_LOCKED: '对局已开始，不能再换卡组',
+  RATE_LIMITED: '操作太频繁，请稍等几秒再试',
 };
 
 /* ------------------------------------------------------------------ *

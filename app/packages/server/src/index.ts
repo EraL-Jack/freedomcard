@@ -36,6 +36,8 @@ import {
 } from './room/index.js';
 import type { Room } from './room/types.js';
 import { makeRoomCode } from './room/code.js';
+import { WindowRateLimit } from './room/rate-limit.js';
+import { sweepReplayDir } from './room/replay-maintenance.js';
 import { TurnTimer, hostScheduler } from './room/turn-timer.js';
 import { nextSeed, seedGameState, seedSetup } from './room/session.js';
 
@@ -43,6 +45,29 @@ import { nextSeed, seedGameState, seedSetup } from './room/session.js';
 const VERSION = '0.1.0';
 const PORT = Number(process.env.PORT ?? 3000);
 const HOST = process.env.HOST ?? '0.0.0.0';
+
+/**
+ * 限流阈值（ADR-0039）。取「真人永远碰不到、脚本立刻撞墙」：
+ * 真人建房一次几十秒，脚本是每秒数千次；真人点击上限约 5 次/秒。
+ *
+ * 全部可经环境变量覆盖，便于测试与临时放宽。
+ */
+const RL_CREATE_PER_MIN = Number(process.env.RL_CREATE_PER_MIN ?? 10);
+const RL_JOIN_PER_MIN = Number(process.env.RL_JOIN_PER_MIN ?? 20);
+const RL_INTENT_PER_SEC = Number(process.env.RL_INTENT_PER_SEC ?? 20);
+const RL_MAX_ROOMS = Number(process.env.RL_MAX_ROOMS ?? 2000);
+const RL_MAX_CONNECTIONS = Number(process.env.RL_MAX_CONNECTIONS ?? 5000);
+
+/**
+ * 回放保留策略（X-20 / ADR-0040）。
+ *
+ * 默认 7 天 + 500 MB：7 天足够复盘一周内的问题；500 MB 在 40 GB 小盘上无感，
+ * 但能挡住「某天被刷出十万间房」的尖峰。
+ */
+const REPLAY_KEEP_DAYS = Number(process.env.REPLAY_KEEP_DAYS ?? 7);
+const REPLAY_MAX_MB = Number(process.env.REPLAY_MAX_MB ?? 500);
+/** 只算不删 —— 首次上线/调整阈值时先用它看报告。 */
+const REPLAY_SWEEP_DRY_RUN = process.env.REPLAY_SWEEP_DRY_RUN === '1';
 
 /**
  * 生产形态下由服务端托管客户端构建产物（`SERVE_STATIC=1`）。
@@ -397,6 +422,58 @@ async function flushReplay(roomId: string, record: ReplayRecord): Promise<void> 
   fastify.log.info({ file }, '回放已落盘');
 }
 
+/**
+ * 按连接限流（ADR-0039）。
+ *
+ * **不按 IP**：走 frpc TCP 隧道时所有公网客户端在服务端眼里都是 `127.0.0.1`，
+ * 按 IP 罚会连坐所有朋友（`docs/20` §8.2 有完整推演）。
+ * key 用 `socket.id`；断开时必须 `forget`，否则限流表自己就成了内存泄漏。
+ */
+const rlCreate = new WindowRateLimit({ limit: RL_CREATE_PER_MIN, windowMs: 60_000, now: () => Date.now() });
+const rlJoin = new WindowRateLimit({ limit: RL_JOIN_PER_MIN, windowMs: 60_000, now: () => Date.now() });
+const rlIntent = new WindowRateLimit({ limit: RL_INTENT_PER_SEC, windowMs: 1_000, now: () => Date.now() });
+
+/** 限流被拒时的统一回包 —— 必须是人话，并给出还要等多久。 */
+function rateLimited(retryAfterMs: number, ack?: (res: unknown) => void): void {
+  const seconds = Math.max(1, Math.ceil(retryAfterMs / 1000));
+  ack?.({
+    ok: false,
+    error: ROOM_ERRORS.RATE_LIMITED,
+    message: `操作太频繁，请等 ${seconds} 秒再试`,
+  });
+}
+
+/**
+ * 回放目录清理（X-20 / ADR-0040）。
+ *
+ * 失败只记日志 —— 清理是后台维护，不能因为它挂掉服务（与 D-176 同一个取舍）。
+ */
+async function sweepReplays(label: 'startup' | 'daily'): Promise<void> {
+  try {
+    const plan = await sweepReplayDir({
+      dir: REPLAY_DIR,
+      keepDays: REPLAY_KEEP_DAYS,
+      maxBytes: REPLAY_MAX_MB * 1024 * 1024,
+      dryRun: REPLAY_SWEEP_DRY_RUN,
+    });
+    fastify.log.info(
+      {
+        label,
+        scanned: plan.scanned,
+        removed: plan.remove.length,
+        removedMb: Number((plan.removeBytes / 1024 / 1024).toFixed(2)),
+        kept: plan.kept,
+        keptMb: Number((plan.keptBytes / 1024 / 1024).toFixed(2)),
+        failed: plan.failed,
+        dryRun: REPLAY_SWEEP_DRY_RUN,
+      },
+      REPLAY_SWEEP_DRY_RUN ? '回放清理（dry-run：只算不删）' : '回放清理完成',
+    );
+  } catch (err) {
+    fastify.log.error({ err, label }, '回放清理失败（不影响对局）');
+  }
+}
+
 /** 房间已销毁的运行时：落盘回放后回收（同时清掉去重表与回合计时器）。 */
 function sweepRuntimes(): void {
   for (const [roomId, rt] of runtimes) {
@@ -425,15 +502,37 @@ const pruneTimer = setInterval(() => {
   sweepRuntimes();
 }, RECONNECT_GRACE_MS / 2);
 
+/**
+ * 回放清理定时器（X-20 / ADR-0040）：启动扫一次，之后每 24 小时一次。
+ *
+ * `unref()` 让这个定时器**不阻止进程退出** —— 否则优雅退出会被它吊住，
+ * 与 `pruneTimer` 不同（那个在退出时显式 clear）。
+ */
+const REPLAY_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const replaySweepTimer = setInterval(() => void sweepReplays('daily'), REPLAY_SWEEP_INTERVAL_MS);
+replaySweepTimer.unref();
+void sweepReplays('startup');
+
 /** 优雅退出：停掉巡检定时器再关服务，避免进程被定时器吊住。 */
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     clearInterval(pruneTimer);
+    clearInterval(replaySweepTimer);
     void fastify.close().then(() => process.exit(0));
   });
 }
 
 io.on('connection', (socket) => {
+  // 全局连接上限（ADR-0039）：挡「开几万条连接、每条各占一间房」这种最粗糙的刷法。
+  // 放在最前面 —— 连坐下文任何逻辑都不该为超限连接执行。
+  if (io.engine.clientsCount > RL_MAX_CONNECTIONS) {
+    fastify.log.warn(
+      { socketId: socket.id, count: io.engine.clientsCount, limit: RL_MAX_CONNECTIONS },
+      '连接数超过上限，拒绝新连接',
+    );
+    socket.disconnect(true);
+    return;
+  }
   fastify.log.info({ socketId: socket.id }, 'client connected');
 
   /** 建房：返回 playerId 与 token（客户端须自行保存，用于重连）。 */
@@ -448,6 +547,18 @@ io.on('connection', (socket) => {
         error: 'INVALID_PAYLOAD',
         message: '参数不合法：昵称需 1–24 个字，人数需 1–8 的整数',
       });
+    // 限流（ADR-0039）：按连接计数，穿透部署下按 IP 会连坐所有玩家。
+    const gate = rlCreate.take(socket.id);
+    if (!gate.ok) return rateLimited(gate.retryAfterMs, ack);
+    // 全局房间上限：防止被刷到内存耗尽。
+    if (roomManager.count() >= RL_MAX_ROOMS) {
+      fastify.log.warn({ rooms: roomManager.count(), limit: RL_MAX_ROOMS }, '房间数达到上限，拒绝建房');
+      return ack?.({
+        ok: false,
+        error: ROOM_ERRORS.RATE_LIMITED,
+        message: '服务器房间数已达上限，请稍后再试',
+      });
+    }
     const r = roomManager.create(parsed.data);
     if (!r.ok) return ack?.({ ok: false, error: r.error, message: r.message });
     // 先放掉旧席位再挂新的（D-181）：否则旧房间永不释放。
@@ -473,6 +584,9 @@ io.on('connection', (socket) => {
         error: 'INVALID_PAYLOAD',
         message: '参数不合法：房间码不能为空，昵称需 1–24 个字',
       });
+    // 阈值比建房宽松：输错房码重试是正常行为（ADR-0039）。
+    const gate = rlJoin.take(socket.id);
+    if (!gate.ok) return rateLimited(gate.retryAfterMs, ack);
     const r = roomManager.join(parsed.data);
     if (!r.ok) return ack?.({ ok: false, error: r.error, message: r.message });
     // 先加入成功再放旧席位（D-181）：反过来一旦加入失败，玩家会连原来那间也没了。
@@ -647,6 +761,30 @@ io.on('connection', (socket) => {
     if (!located) return ack?.({ ok: false, error: 'NOT_IN_ROOM' });
 
     const rt = runtimeOf(located.room.id);
+
+    /*
+     * Intent 限流（ADR-0039）。
+     *
+     * ⚠️ 客户端的 `socket.emit(gameIntent, intent)` **没有带 ack 回调**（useRoom.ts:492），
+     * 所以只回 ack 玩家看不到任何提示。必须走 `game:events` 的 rejected 分支 ——
+     * 那是客户端唯一会渲染「操作被拒绝」原因的通道。
+     *
+     * 不写进回放：被限流的请求没有产生任何状态变化，记进回放会让记录与实际不符。
+     */
+    const gate = rlIntent.take(socket.id);
+    if (!gate.ok) {
+      rt.serverSeq += 1;
+      const message = '操作太频繁，请稍等一下';
+      socket.emit(SOCKET_EVENTS.gameEvents, {
+        kind: 'rejected',
+        playerId: intent.playerId,
+        seq: intent.seq,
+        error: { code: ROOM_ERRORS.RATE_LIMITED, message },
+        serverSeq: rt.serverSeq,
+      });
+      return ack?.({ ok: false, error: ROOM_ERRORS.RATE_LIMITED, message });
+    }
+
     const result = submitIntent(rt.state, intent, {
       engine,
       guard: rt.guard,
@@ -685,6 +823,10 @@ io.on('connection', (socket) => {
   socket.on('disconnect', (reason) => {
     const playerId = socket.data.playerId as string | undefined;
     fastify.log.info({ socketId: socket.id, playerId, reason }, 'client disconnected');
+    // 限流表按 socket.id 记，必须跟着连接一起清 —— 否则「限流」本身会变成内存泄漏。
+    rlCreate.forget(socket.id);
+    rlJoin.forget(socket.id);
+    rlIntent.forget(socket.id);
     if (!playerId) return;
     // 断线保留席位（不立即释放）；到点由 prune 回收。
     roomManager.markDisconnected(playerId);
