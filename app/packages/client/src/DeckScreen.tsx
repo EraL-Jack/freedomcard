@@ -27,6 +27,12 @@ import {
  *    （`@app/shared/default-decks`），不用再从 45 张里手动凑。
  * 2. 分**上下两块**：上面是已选（带数量、可加减），下面是待选（简化条目 + 右侧加减，
  *    点条目看详情，详情里同样能加减）。
+ *
+ * ## 布局（Era 2026-10-20 要求，原 h-dvh 固定视口方案已废）
+ *
+ * 页面**不锁视口高度**（`min-h-dvh`），整体随内容变长、页面级滚动；
+ * 已选 / 待选两个框各固定 **5.5 行**高（按各自条目的实际行高换算），
+ * 框内各自滚动 —— 已选卡多时不再被压成一两行。
  * 3. 统计并校验：总数 X/30 + 三类张数（随从 / 法术 / 设置），不合法时给人话提示。
  *
  * ## 详情为什么是浮层而不是行内展开
@@ -218,8 +224,9 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
   const detailDef = detailId ? CARD_POOL[detailId] : undefined;
   const detailN = detailDef && deck ? (deck.cards[detailDef.defId] ?? 0) : 0;
 
+  // 不锁 h-dvh：内容超出视口时页面整体下拉，两个卡框各自滚（见文件头「布局」）。
   return (
-    <main className="mx-auto flex h-dvh max-w-3xl flex-col gap-2 p-3">
+    <main className="mx-auto flex min-h-dvh max-w-3xl flex-col gap-2 p-3">
       <header className="flex items-center justify-between">
         <h1 className="text-lg font-semibold">编辑卡组</h1>
         <button type="button" className="rounded border border-slate-700 px-3 py-2" onClick={onBack}>
@@ -383,8 +390,8 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
             </p>
           </section>
 
-          {/* 上：已选 */}
-          <section className="flex max-h-[32vh] min-h-0 flex-col rounded border border-cyan-900/70">
+          {/* 上：已选 —— 固定 5.5 行（条目 28px + 间距 4px ≈ 176px），框内滚动 */}
+          <section className="rounded border border-cyan-900/70">
             <h2 className="flex items-center justify-between border-b border-cyan-900/70 px-3 py-1.5 text-xs text-cyan-200">
               <span>
                 已选 {selected.length} 种 · {total} 张
@@ -393,7 +400,7 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
                 <span className="text-slate-400">已满，减少才能换</span>
               ) : null}
             </h2>
-            <div className="min-h-0 flex-1 overflow-y-auto p-1.5" data-testid="deck-selected">
+            <div className="h-44 overflow-y-auto p-1.5" data-testid="deck-selected">
               {selected.length === 0 ? (
                 <p className="px-2 py-6 text-center text-xs text-slate-500">
                   还没选卡 —— 从下面「待选」里点 ＋ 添加
@@ -442,8 +449,8 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
             </div>
           </section>
 
-          {/* 下：待选（完整卡池，点条目看详情浮层） */}
-          <section className="flex min-h-0 flex-1 flex-col rounded border border-slate-800">
+          {/* 下：待选 —— 固定 5.5 行（条目 32px + 边线 1px ≈ 182px），框内滚动 */}
+          <section className="rounded border border-slate-800">
             <h2 className="flex items-center justify-between border-b border-slate-800 px-3 py-1.5 text-xs text-slate-300">
               <span data-testid="deck-pool-count">
                 {searching
@@ -476,7 +483,7 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
                 ) : null}
               </div>
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto" data-testid="deck-pool">
+            <div className="h-[11.4rem] overflow-y-auto" data-testid="deck-pool">
               {/* 搜不到时给一句话，别留一块空白 —— 空白会被当成「卡池加载失败」。 */}
               {filteredPool.length === 0 ? (
                 <p className="px-3 py-4 text-xs text-slate-400" data-testid="deck-search-empty">
