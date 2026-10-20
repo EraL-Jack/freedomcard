@@ -21,6 +21,8 @@ replays/
 
 # 日志与临时文件
 *.log
+# 本地临时目录（含穿透客户端二进制等下载物，不入库）
+**/.tmp/
 .DS_Store
 Thumbs.db
 

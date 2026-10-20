@@ -8,12 +8,21 @@ import { expect, type Browser, type Page } from '@playwright/test';
  * 界面演进时改漏一处。
  */
 
+/**
+ * 等界面就绪的上限。
+ *
+ * 本地回环一步不到 1s，10~15s 很宽松；但走公网隧道时单步要 3~10s（实测日本节点 4 条用例共 32.6s），
+ * 原来的 10s 会卡在边界 —— 2026-10-20 公网全量就出现过「19 通过、1 条偶发超时」。
+ * 公网验证时用 `E2E_WAIT_MS=30000` 覆盖，本地保持默认。
+ */
+const WAIT = Number(process.env.E2E_WAIT_MS ?? 15_000);
+
 /** 开一个已连上服务端的客户端页面。 */
 export async function newClient(browser: Browser, nickname: string): Promise<Page> {
   const context = await browser.newContext();
   const page = await context.newPage();
   await page.goto('/');
-  await expect(page.getByText('服务端已连接')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText('服务端已连接')).toBeVisible({ timeout: WAIT });
   await page.getByTestId('nickname').fill(nickname);
   return page;
 }
@@ -34,14 +43,14 @@ export async function startGame(
   if (opts.guestFaction) await guest.getByTestId('join-faction').selectOption(opts.guestFaction);
   await guest.getByTestId('code').fill(code);
   await guest.getByTestId('join').click();
-  await expect(guest.getByTestId('ready')).toBeVisible({ timeout: 10_000 });
+  await expect(guest.getByTestId('ready')).toBeVisible({ timeout: WAIT });
 
   // 双方准备 → 服务端建立对局（ADR-0019）
   await host.getByTestId('ready').click();
   await guest.getByTestId('ready').click();
 
-  await expect(host.getByTestId('turn')).toBeVisible({ timeout: 15_000 });
-  await expect(guest.getByTestId('turn')).toBeVisible({ timeout: 15_000 });
+  await expect(host.getByTestId('turn')).toBeVisible({ timeout: WAIT });
+  await expect(guest.getByTestId('turn')).toBeVisible({ timeout: WAIT });
   return { host, guest, code };
 }
 

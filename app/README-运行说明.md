@@ -101,6 +101,33 @@ docker compose up -d --build
 
 公网部署需自行提供 Nginx 配置：反代 `/socket.io` 时必须透传 `Upgrade` 与 `Connection` 头，否则 WebSocket 会退化成轮询。
 
+### 7.1 本机常驻 + 穿透发布（Windows）
+
+双击 `scripts\serve-public.cmd`（默认 3100，可传参 `serve-public.cmd 3200`）。
+它做两件事：先 `pnpm --filter @app/client run build`，再以 `SERVE_STATIC=1` 起服务，
+**同一个端口**同时提供页面与 `/socket.io` —— 所以一条隧道就够，不必开两个口。
+
+```cmd
+cd app\scripts
+serve-public.cmd
+```
+
+穿透侧的硬性要求（踩过两次，务必照做）：
+
+| 项 | 必须这样填 | 为什么 |
+| --- | --- | --- |
+| 本地地址 | **`127.0.0.1`** | Windows 把 `localhost` 优先解析到 IPv6 `::1`，而服务只绑 `0.0.0.0`，表现是隧道「已连接」但外网 502 |
+| 本地端口 | `3100` | 与脚本默认值一致 |
+| SakuraFrp 隧道类型 | **`TCP`** | `HTTP(S)` 隧道强制要求绑定自有域名，内地节点还要求已备案 |
+| SakuraFrp 节点 | **非内地**（香港/日本/新加坡等） | 官方文档：TCP 隧道穿透 HTTP 应用时必须用非内地节点 |
+
+隧道启动后控制台会输出 `节点域名:远程端口`，那就是访问入口。
+自检两条命令：`curl http://127.0.0.1:3100/health` 应回 `{"ok":true,...}`；
+再用手机 4G 打开隧道地址，能进主界面且出牌无延迟，才算真的通了。
+
+> 进程与房间状态都在内存里：脚本窗口关掉、电脑重启、隧道断开，都会导致房间消失。
+> 回放文件写在 `app/replays/`，但进程重启不会补写。
+
 ## 8. 目录结构
 
 ```
@@ -110,6 +137,8 @@ app/
 │   ├── core/     # 纯函数规则引擎（无 IO / 无时钟 / 无随机源）
 │   ├── server/   # Fastify + Socket.IO，权威服务端
 │   └── client/   # React + Vite + Tailwind v4
+├── scripts/
+│   └── serve-public.cmd   # 本机常驻启动：build 客户端 + 单端口起服务（供穿透使用）
 ├── Dockerfile
 └── docker-compose.yml
 ```
