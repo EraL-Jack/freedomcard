@@ -11,6 +11,7 @@ import {
   type CardDef,
   type PlayerState,
 } from '@app/shared';
+import { TOKEN_CARD_IDS } from '@app/shared/cards';
 
 /** 返回 null 表示合法；否则返回人话原因（直接给玩家看的提示文案）。 */
 export function checkDeck(p: PlayerState, cards: Record<string, CardDef>): string | null {
@@ -29,6 +30,9 @@ export function checkDeck(p: PlayerState, cards: Record<string, CardDef>): strin
     const def = cards[c.defId];
     if (!def) return `卡定义缺失: ${c.defId}`;
     if (def.type === 'commander') return `主卡组内不得含指挥官卡: ${c.defId}`;
+    // T-01：衍生物不进卡组 —— 与 `server/deck-pool.validateDeckList` 同口径。
+    // 服务端入站已拦，这里是**状态层**的兜底（手改 localStorage 后直连引擎也能被挡住）。
+    if (TOKEN_CARD_IDS.includes(c.defId)) return `衍生物不能放进卡组: ${c.defId}`;
     copies.set(c.defId, (copies.get(c.defId) ?? 0) + 1);
   }
   for (const [defId, n] of copies) {

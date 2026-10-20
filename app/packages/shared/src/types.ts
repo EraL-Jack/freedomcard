@@ -73,6 +73,10 @@ export interface CardDef {
   /**
    * 伤害值（卡面初始值）。当前口径：默认 1，打脸伤害按力量分档 1/2/3（ADR-0024）；
    * 将领 / 加成只改**当回合修正**，不回写本字段（ADR-0028）。
+   *
+   * 取值范围（P-07 / D-240，Era 2026-10-21）：**非负整数，允许 0**。
+   * 0 表示「这张卡打脸不掉血」（纯效果卡）；负数与小数一律非法，
+   * 由 `validateCardPool()` 在启动期与测试里拦住。
    */
   damage?: number;
   /** 关键词 —— 目前仅 `'taunt'`（嘲讽），其余关键词语义待 Era 补充（A7）。 */
@@ -267,8 +271,28 @@ export interface GameState {
   startedAt: number | null;
   /** 胜负：血空（A3-1）或认输（A3-4）后写入；平局时保持 null 且 `draw === true`。 */
   winner: PlayerId | null;
-  /** 平局（docs/16 §7：40 轮未分胜负判和）。 */
+  /**
+   * 平局（历史口径：40 轮未分胜负判和）。
+   *
+   * ⚠️ Era 2026-10-21 起 **40 轮不再判和**（D-237）：改为比指挥官血量，
+   * 同血量进入即死模式。本字段只留给旧回放重放，新对局恒为 `false`。
+   */
   draw: boolean;
+  /**
+   * 终局成因（D-237）—— 供结算面板说明「为什么输」，与 `winner` / `draw` 同时写入。
+   *
+   * 取值：`'health'`（指挥官生命归零）/ `'concede'`（认输）/
+   * `'turn-limit'`（40 轮血量裁定）/ `'sudden-death'`（即死模式掉血）。
+   * 未尽的对局为 `null`。
+   */
+  endReason: string | null;
+  /**
+   * 即死模式（D-237，Era 2026-10-21）——
+   * 40 轮结束时双方指挥官血量相同则置 `true`，此后**任何一方掉血即立刻判负**。
+   *
+   * 必须入状态：它改变后续每一次伤害结算的口径，且要进 `stateHash`。
+   */
+  suddenDeath: boolean;
   /** 待定选择（ADR-0023）—— 非空时阻塞除回答/认输外的所有玩家 Intent。 */
   pendingChoice: PendingChoice | null;
   /**

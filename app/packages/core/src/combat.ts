@@ -47,10 +47,20 @@ export function commanderDamageEvents(
     cur = r.state;
   }
 
-  const next = Math.max(0, p.health - amount); // H15：血量不为负
+  // H15：血量不为负。
+  //
+  // D-237（Era 2026-10-21）：即死模式下**掉血即判负** —— 不论伤害几点，血量直接归零。
+  // 判负仍走「血量归零」这条既有链路（`health:changed` + `game:ended`），
+  // 只是 reason 换成 `'sudden-death'`，让结算面板能说清「是在即死模式里被打死的」。
+  const next = state.suddenDeath ? 0 : Math.max(0, p.health - amount);
   events.push(ev(at, 'health:changed', { playerId: targetId, value: next, delta: -amount }));
   if (next <= 0) {
-    events.push(ev(at, 'game:ended', { winner: winnerIfLethal, reason: 'health' }));
+    events.push(
+      ev(at, 'game:ended', {
+        winner: winnerIfLethal,
+        reason: state.suddenDeath ? 'sudden-death' : 'health',
+      }),
+    );
   }
   return events;
 }

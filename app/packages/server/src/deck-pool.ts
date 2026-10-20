@@ -10,7 +10,7 @@
  */
 
 import type { PlayerId } from '@app/shared';
-import { CARD_POOL } from '@app/shared/cards';
+import { CARD_POOL, TOKEN_CARD_IDS } from '@app/shared/cards';
 import { MAIN_DECK_SIZE, MAX_COPIES } from '@app/shared/constants';
 
 import { BASIC_DECKS, basicDeckOfCommander } from '@app/shared/default-decks';
@@ -37,6 +37,10 @@ export function validateDeckList(defIds: readonly string[]): string | null {
     const def = CARD_POOL[id];
     if (!def) return `卡组里有未知卡牌：${id}`;
     if (def.type === 'commander') return `主卡组不能包含指挥官：${def.name}`;
+    // T-01：衍生物**不进卡组**（docs/17 §4）。它们由效果召唤，0 费 1 力，
+    // 若允许塞进卡组就是「30 张里放 3 张白嫖随从」。
+    // `TOKEN_CARD_IDS` 此前定义了但零消费，等于没有约束。
+    if (TOKEN_CARD_IDS.includes(id)) return `衍生物不能放进卡组：${def.name}`;
     copies.set(id, (copies.get(id) ?? 0) + 1);
   }
   for (const [id, n] of copies) {

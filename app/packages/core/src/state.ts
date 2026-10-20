@@ -106,6 +106,8 @@ export function createInitialState(opts: InitialStateOptions): GameState {
     startedAt: null,
     winner: null,
     draw: false,
+    endReason: null,
+    suddenDeath: false,
     pendingChoice: null,
     pendingChoiceQueue: [],
   };

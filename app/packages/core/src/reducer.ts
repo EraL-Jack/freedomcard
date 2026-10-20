@@ -440,9 +440,23 @@ export function reduce(state: GameState, event: GameEvent): GameState {
 
     case 'game:ended': {
       const winner = s(event, 'winner');
-      // docs/16 §7：40 轮判和 —— winner 为空 + reason='draw'。
-      return { ...state, winner: winner || null, draw: winner === '' && s(event, 'reason') === 'draw' };
+      // docs/16 §7：老口径 40 轮判和是 winner 为空 + reason='draw'。
+      // D-237 起 40 轮改为血量裁定 / 即死模式，'draw' 只可能出现在旧回放里，
+      // 故这里保留判定以兼容重放，新对局不会再产生该组合。
+      const reason = s(event, 'reason');
+      return {
+        ...state,
+        winner: winner || null,
+        draw: winner === '' && reason === 'draw',
+        endReason: reason || null,
+      };
     }
+
+    // D-237：40 轮同血量 → 进入即死模式（此后任何一方掉血立刻判负）。
+    // 单独成事件而不是塞进 `game:ended`：对局**没有结束**，只是伤害口径变了。
+    case 'sudden:death':
+      return { ...state, suddenDeath: true };
+
 
     default:
       // 未知事件不改变状态 —— 但也不静默吞掉：交由上层核对事件白名单

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 
 import type { CardType } from '@app/shared';
 import { MAIN_DECK_SIZE, MAX_COPIES } from '@app/shared/constants';
-import { CARD_POOL } from '@app/shared/cards';
+import { CARD_POOL, TOKEN_CARD_IDS } from '@app/shared/cards';
 import { COMMANDER_IDS, DEFAULT_COMMANDER_ID, deckRecipeProblems } from '@app/shared/default-decks';
 
 import CardTile from './CardTile.js';
@@ -48,7 +48,9 @@ import {
  * 若共用 testId，`getByTestId` 会命中两个元素并触发 strict mode 失败。
  */
 
-const POOL = Object.values(CARD_POOL).filter((c) => c.type !== 'commander');
+const POOL = Object.values(CARD_POOL).filter(
+  (c) => c.type !== 'commander' && !TOKEN_CARD_IDS.includes(c.defId),
+);
 
 /**
  * 指挥官候选（D-184）—— 顺序与 `COMMANDER_IDS` 一致。

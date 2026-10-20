@@ -3217,3 +3217,126 @@ Era：**「都列出来」**（承接上一轮四视角审视的 12 条待决项
 - 纯文档新增，无代码改动；单测 288 / E2E 36 未重跑（上一轮提交 `7afba7f` 刚全绿）。
 
 - **破坏性**：**否**（仅文档）。
+
+## D-237 · 40 轮不再判和：血量高者胜，同血量进入即死模式（2026-10-21）
+
+Era：**「p01到40轮时指挥官血量高的胜，同血量则进入即死模式，掉血立刻输掉」**
+
+### 改动
+
+- `core/src/rules/phase.ts`：第 40 轮结束（全局回合 80）时不再发 `game:ended reason:'draw'`，
+  改为比指挥官血量 —— 不同则血量高者胜（`reason: 'turn-limit'`）；
+  相同则发新事件 `sudden:death`，对局**继续**。已进入即死模式后不再重复裁定。
+- `core/src/combat.ts`：即死模式下 `next = 0` —— **掉 1 点也直接归零判负**，
+  `reason: 'sudden-death'`。判负仍走原有的「血量归零」链路，只是成因换了。
+- `GameState` 新增两个字段（都入 `stateHash`）：`suddenDeath: boolean`、`endReason: string | null`。
+  `reducer` 新增 `sudden:death` 分支；`game:ended` 顺便把 `reason` 落到 `endReason`。
+- 顺带解决了一个**收不了尾**的问题：判和「不计分但消耗一局」，而 BO3 系列赛只认「2 胜」，
+  三局打成 1:1 时 leader 永远不存在，房间会停在 `awaitingNext`。现在每局必有胜者。
+- 文档：`docs/16 §7` 新增 7.3（含残余风险 H50）、`docs/09` 新增 H48。
+
+### 验证
+
+- core 单测 **180 通过**（新增 5 条 40 轮用例；`TURN_LIMIT` 此前在测试里**零引用**，
+  判和写成什么样都没人发现）。
+- **红绿验证**：把 `combat.ts` 的即死判定去掉、`phase.ts` 的血量比较短路成 `false` 后 ——
+  3 条用例变红，报 `expected 5 to be +0`（正是「没进即死模式，只是扣到 5」）。恢复后全绿。
+- typecheck 0；lint 0。
+
+- **破坏性**：**否（协议）** —— `GameEvent` 类型没变（`sudden:death` 是新增事件名，
+  老客户端 reduce 时走 default 分支忽略）。新增两个状态字段，老客户端忽略即可。
+  但**回放 hash 会变**：同一批 Intent 用新代码重放得到的 `stateHash` 与旧录制不同
+  （多了 `suddenDeath` / `endReason`）。本项目回放只做当次校验、不做跨版本回放，既有文件不受影响。
+
+## D-238 · 终局成因落进状态，`concede` 区分「主动认输 / 对手离开」（2026-10-21）
+
+Era：**「P02按推荐来」**（推荐 = 结算面板加一句成因）
+
+### 改动
+
+- `GameState.endReason` 与 `winner` / `draw` 同时写入，取值 `health` / `concede` /
+  `opponent-left` / `turn-limit` / `sudden-death`。此前 `reason` 只存在事件里，
+  **客户端一次都没读过**（`grep` 零命中），所以结算面板分不清四种「败北」。
+- `core/src/rules/concede.ts`：`reason` 由写死 `'concede'` 改为读 `intent.reason`——
+  服务端 `abandonSeat` 构造的系统 Intent 带 `'opponent-left'`，现在会如实传到结算。
+  其余情况仍记 `'concede'`。
+- 面板渲染属批次 B（P-02 的 UI 部分），本次只做状态与事件侧，避免一次提交跨两层。
+
+### 验证
+
+- core 180 / server 128 全过；typecheck 0；lint 0。D-237 的 5 条用例同时覆盖了
+  `endReason` 的三个取值（`turn-limit` / `sudden-death` / 未结束为 null）。
+
+- **破坏性**：**否**（新增状态字段，无协议字段改动）。
+
+## D-239 · 修安全洞：客户端不能自称系统 Intent（2026-10-21）
+
+（四视角审视的收尾过程中发现的缺陷，不在 Era 的清单里）
+
+### 问题
+
+`IntentSchema` 允许任意 `actor`，服务端把 `parsed.data` 原样送进引擎。而：
+
+- `baseGuard` 的回合检查是 `if (intent.actor === 'player' && ...)` —— 填 `system` 整条跳过；
+- `applyIntent` 的 `pendingChoice` 全局守卫同样以 `actor === 'player'` 为前提。
+
+= 任何玩家改一下前端就能**在对手回合出牌 / 在待定选择挂起时推进阶段**。
+
+### 改动
+
+- 新增 `server/src/room/inbound.ts` 的 `normalizePlayerIntent()`：入站一律覆盖
+  `actor: 'player'`、清空 `reason`。`index.ts` 的 `gameIntent` 处理器改为调用它。
+- 系统 Intent（超时、掉线判负）走 `submitSystemIntent` 内部链路，**不经过 socket**，不受影响。
+- 新增 `inbound.test.ts` 4 条：伪造 system → 改回 player；伪造 reason → 清空；
+  业务字段保留；不修改入参。
+
+### 验证
+
+- server 单测 **128 通过**（+4）；typecheck 0；lint 0。
+
+- **破坏性**：**否** —— 正常客户端的 Intent 本来就是 `actor: 'player'`。
+
+## D-240 · `damage` 允许 0；卡池数值在启动期自检（2026-10-21）
+
+Era：**「P07允许0，以后可能有降攻击的效果」**
+
+### 改动
+
+- `CardDef.damage` 取值范围定死为**非负整数、允许 0**，注释写明 0 = 打脸不掉血。
+- 新增 `shared/src/cards.ts` 的 `validateCardPool()`：校验 `cost` / `power` / `damage`
+  （非负整数，`damage` 允许 0），返回第一条问题的人话描述。
+- `server/src/index.ts` 启动时调用，非法则 `log.error` + `throw`（数据错了就不该接客）。
+  负数伤害不会在结算报错，只会静默变成「打脸加血」。
+- 新增 `core/src/cardpool.test.ts`：真实卡池合法 / 0 合法 / 负数非法 / 小数非法 / cost-power 非法。
+
+### 验证
+
+- core 180（+6）、server 128（+4）全过；typecheck 0；lint 0。
+
+- **破坏性**：**否**（现行卡池全部合法，校验只是把纪律钉死）。
+
+## D-241 · 衍生物（星灵）不得进入卡组 —— `TOKEN_CARD_IDS` 此前零消费（2026-10-21）
+
+（T-01，清单里标为「缺陷优先修」）
+
+### 问题
+
+编辑页卡池是 `CARD_POOL.filter(type !== 'commander')`，包含 `starSpirit1/3`（**0 费 1 力**）；
+服务端 `validateDeckList` 只查「不含指挥官 / 同名 ≤3 / 张数」，`TOKEN_CARD_IDS` 定义了但**没有任何地方用**。
+= 玩家可以往 30 张里塞 3 张白嫖随从。
+
+### 改动
+
+三处一起收口（缺一处都能绕过）：
+
+1. `server/src/deck-pool.ts` 的 `validateDeckList` —— 入站拦（主路径）。
+2. `core/src/deck.ts` 的 `checkDeck` —— 状态层兜底（手改 localStorage 直连引擎也能挡）。
+3. `client/src/DeckScreen.tsx` 的 `POOL` —— 界面上根本不显示（玩家不会先加上再被拒）。
+
+### 验证
+
+- `cardpool.test.ts` 三条：构筑卡池里没有衍生物、衍生物确实是 0 费（说明为什么要排除）、
+  卡组混入衍生物时 `checkDeck` 报错。
+- core 180 / server 128 全过；typecheck 0；lint 0。
+
+- **破坏性**：**否**（此前合法卡组不受影响；只堵住一条非法路径）。
