@@ -21,7 +21,7 @@ import {
   type Intent,
 } from '@app/shared';
 
-import { CARD_POOL } from './cards.js';
+import { CARD_POOL, validateCardPool } from './cards.js';
 import {
   ReplayRecorder,
   RoomManager,
@@ -35,6 +35,7 @@ import {
 } from './room/index.js';
 import type { Room } from './room/types.js';
 import { makeRoomCode } from './room/code.js';
+import { normalizePlayerIntent } from './room/inbound.js';
 import { WindowRateLimit } from './room/rate-limit.js';
 import { sweepReplayDir } from './room/replay-maintenance.js';
 import { TurnTimer, hostScheduler } from './room/turn-timer.js';
@@ -96,6 +97,17 @@ if (SERVE_STATIC) {
 }
 
 await fastify.listen({ port: PORT, host: HOST });
+
+// 卡池数值自检（P-07 / D-240）—— 放在 listen 之后是为了让它进日志：
+// 负数 / 小数的伤害不会在结算时报错，只会静默算出「打脸加血」这类怪结果，
+// 所以宁可在启动时就把进程打死，也不要带着脏数据接客。
+{
+  const poolIssue = validateCardPool();
+  if (poolIssue) {
+    fastify.log.error({ poolIssue }, '卡池数据非法，拒绝继续');
+    throw new Error(`卡池数据非法：${poolIssue}`);
+  }
+}
 
 const io = new IOServer(fastify.server, {
   cors: { origin: true },
@@ -778,7 +790,13 @@ io.on('connection', (socket) => {
     const parsed = IntentSchema.safeParse(raw);
     if (!parsed.success)
       return ack?.({ ok: false, error: 'INVALID_PAYLOAD', message: '操作参数不合法，请重试' });
-    const intent = parsed.data as Intent;
+
+    /*
+     * 入站 Intent 一律按**玩家**发起处理（D-239 / T-09，安全边界）。
+     * 见 `room/inbound.ts` 的说明：`actor` 决定 baseGuard 的回合检查与
+     * pendingChoice 全局守卫是否生效，客户端无权自称 `system`。
+     */
+    const intent: Intent = normalizePlayerIntent(parsed.data as Intent);
 
     const located = roomManager.locate(intent.playerId);
     if (!located) return ack?.({ ok: false, error: 'NOT_IN_ROOM' });

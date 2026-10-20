@@ -15,6 +15,7 @@ import {
   MAX_COST_CURVE,
   RULE_ERRORS,
   TURN_LIMIT,
+  TURN_LIMIT_ROUNDS,
   type GameEvent,
   type GameState,
   type Intent,
@@ -83,10 +84,20 @@ export function advanceOnce(state: GameState, ctx: RuleContext): GameEvent[] {
   const nextTurn = state.turn + 1;
   const nextPlayer: PlayerId | undefined = state.seats[nextSeat];
 
-  // docs/16 §7：40 轮仍未分胜负 → 判和（全局回合 = 轮次 × 2）。
-  if (nextTurn > TURN_LIMIT) {
-    events.push(ev(at, 'game:ended', { winner: '', reason: 'draw' }));
-    return events;
+  // docs/16 §7（D-237 修订，Era 2026-10-21）：40 轮**不再判和**。
+  // 改为：比指挥官血量 → 高者胜；血量相同 → 进入**即死模式**，此后任何一方掉血即判负。
+  // 全局回合 = 轮次 × 2，`nextTurn > TURN_LIMIT` 即「第 41 轮的第一手」。
+  // 已进入即死模式后不再重复裁定（否则每次换手都会再判一次）。
+  if (nextTurn > TURN_LIMIT && !state.suddenDeath) {
+    const [a, b] = state.seats;
+    const ha = a ? (state.players[a]?.health ?? 0) : 0;
+    const hb = b ? (state.players[b]?.health ?? 0) : 0;
+    if (a && b && ha !== hb) {
+      events.push(ev(at, 'game:ended', { winner: ha > hb ? a : b, reason: 'turn-limit' }));
+      return events;
+    }
+    // 同血量（或座位异常到无法比较）→ 即死模式，对局继续。
+    events.push(ev(at, 'sudden:death', { round: TURN_LIMIT_ROUNDS }));
   }
 
   events.push(phaseChanged(at, state.phase, 'charge'));

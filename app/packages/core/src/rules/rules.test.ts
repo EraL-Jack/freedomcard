@@ -22,6 +22,7 @@ import {
 } from '@app/shared';
 
 import { applyIntent, createInitialState, reduce, stateHash, INTENTS } from '../index.js';
+import { commanderDamageEvents } from '../combat.js';
 
 import { unitPower } from '../ops.js';
 import { resolveCombat } from './attack.js';
@@ -1091,5 +1092,120 @@ describe('确定性', () => {
       return s;
     };
     expect(stateHash(seq(fresh()))).toBe(stateHash(seq(fresh())));
+  });
+});
+
+/* ------------------------------ 40 轮决胜（P-01 / D-237） ------------------------------ */
+
+/**
+ * Era 2026-10-21 改口径：**40 轮不再判和**。
+ * 比指挥官血量 → 高者胜；血量相同 → 进入**即死模式**（此后任何一方掉血立刻判负）。
+ *
+ * 这一组此前完全没测过（`TURN_LIMIT` 在测试里零引用），
+ * 所以「判和」写成什么样都没人发现 —— 包括它在 BO3 里会导致系列赛收不了尾。
+ */
+describe('40 轮决胜：血量裁定 / 同血量即死模式', () => {
+  /** 构造「第 40 轮结束、即将进入第 41 轮」的状态（`TURN_LIMIT` = 40 轮 = 全局 80 回合）。 */
+  function atTurnLimit(health: { p1: number; p2: number }): GameState {
+    const s = craft({ phase: 'end', turn: 2 * 40, activeSeat: 0 });
+    return {
+      ...s,
+      players: {
+        ...s.players,
+        p1: { ...s.players['p1']!, health: health.p1 },
+        p2: { ...s.players['p2']!, health: health.p2 },
+      },
+    };
+  }
+
+  it('血量不同 → 血量高者获胜，reason = turn-limit（不再判和）', () => {
+    const { events, state } = runWith(atTurnLimit({ p1: 8, p2: 5 }), intent('p1', INTENTS.turnEnd));
+    expect(events.some((e) => e.type === 'game:ended')).toBe(true);
+    expect(state.winner).toBe('p1');
+    expect(state.draw).toBe(false);
+    expect(state.endReason).toBe('turn-limit');
+  });
+
+  it('后手血量更高时由后手获胜（不按座位写死）', () => {
+    const { state } = runWith(atTurnLimit({ p1: 4, p2: 7 }), intent('p1', INTENTS.turnEnd));
+    expect(state.winner).toBe('p2');
+    expect(state.endReason).toBe('turn-limit');
+  });
+
+  it('血量相同 → 对局不结束，进入即死模式', () => {
+    const { events, state } = runWith(atTurnLimit({ p1: 6, p2: 6 }), intent('p1', INTENTS.turnEnd));
+    expect(events.some((e) => e.type === 'game:ended')).toBe(false);
+    expect(events.some((e) => e.type === 'sudden:death')).toBe(true);
+    expect(state.winner).toBeNull();
+    expect(state.draw).toBe(false);
+    expect(state.suddenDeath).toBe(true);
+    // 对局继续，进入第 41 轮第一手
+    expect(state.turn).toBe(81);
+  });
+
+  it('即死模式下受 1 点伤害立刻判负（不是掉到 0 才输）', () => {
+    const entered = runWith(atTurnLimit({ p1: 6, p2: 6 }), intent('p1', INTENTS.turnEnd)).state;
+    expect(entered.players['p2']!.health).toBe(6);
+
+    const events = commanderDamageEvents(2000, entered, 'p2', 1, 'p1#u1', 'p1', CTX);
+    let after = entered;
+    for (const e of events) after = reduce(after, e);
+
+    expect(after.players['p2']!.health).toBe(0);
+    expect(after.winner).toBe('p1');
+    expect(after.endReason).toBe('sudden-death');
+  });
+
+  it('即死模式后每次换手不再重复发 sudden:death（否则每次都判一遍）', () => {
+    // 直接构造已进入即死模式的状态
+    const s: GameState = { ...atTurnLimit({ p1: 6, p2: 6 }), suddenDeath: true };
+    const { events } = runWith(s, intent('p1', INTENTS.turnEnd));
+    expect(events.some((e) => e.type === 'sudden:death')).toBe(false);
+    expect(events.some((e) => e.type === 'game:ended')).toBe(false);
+  });
+});
+
+/* ------------------------------ 响应：对手回合回答待定选择（P-04） ------------------------------ */
+
+/**
+ * Era 2026-10-21：「P04 要能响应，因为掉血会展示卡牌有效果触发」。
+ *
+ * 场景：对手的回合里我受伤 → 受伤展示翻出带「展示时」效果的卡 → 该效果要我选目标。
+ * 此时**行动方是对手、选择归属是我**，我必须能回答 —— 否则对局会卡死在一个
+ * 永远不会被清空的 `pendingChoice` 上（除了认输没有别的出口）。
+ *
+ * 这条链路本来就没问题（`effectChooseRule` 不查回合），但**从来没有测试固定过**，
+ * 属于随时可能被「顺手加一条 baseGuard」改坏的地基。这里钉住它。
+ */
+describe('响应：待定选择不属于行动方时，只有归属方能回答', () => {
+  /** 行动方 p2，但待定选择挂在 p1 身上（= 对手回合我受伤触发的展示效果）。 */
+  function pendingOnDefender(): GameState {
+    const s = craft({ phase: 'battle', activeSeat: 1 });
+    return {
+      ...s,
+      pendingChoice: {
+        playerId: 'p1',
+        kind: 'blade-cremation',
+        sourceUid: 'p1#cmd',
+        options: [],
+        meta: { left: [] },
+      },
+    };
+  }
+
+  it('归属方在对手回合回答 → 被接受（不被 NOT_YOUR_TURN 拦住）', () => {
+    const r = applyIntent(pendingOnDefender(), intent('p1', INTENTS.effectChoose, { choice: 'pass' }), CTX);
+    expect(r.ok).toBe(true);
+  });
+
+  it('行动方不能替对方回答 → NOT_YOUR_TURN', () => {
+    const r = applyIntent(pendingOnDefender(), intent('p2', INTENTS.effectChoose, { choice: 'pass' }), CTX);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.NOT_YOUR_TURN);
+  });
+
+  it('归属方回答后待定选择被清空（对局可以继续推进）', () => {
+    const after = run(pendingOnDefender(), intent('p1', INTENTS.effectChoose, { choice: 'pass' }));
+    expect(after.pendingChoice).toBeNull();
   });
 });

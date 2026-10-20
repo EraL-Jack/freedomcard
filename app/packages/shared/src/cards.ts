@@ -545,6 +545,38 @@ export const CARD_POOL: Record<string, CardDef> = {
 export const TOKEN_CARD_IDS: readonly string[] = ['starSpirit1', 'starSpirit3'];
 
 /**
+ * 卡池数值自检（P-07 / D-240）。
+ *
+ * Era 2026-10-21 定的口径：`damage` **允许 0**（以后会有「降攻击」类效果，
+ * 0 伤害是合法取值），但**不允许负数，也不允许小数** —— 负数会让「打脸」变成加血，
+ * 小数会让血量出现 0.5 这种既无法显示也无法比较的状态，两者都不会在结算时报错，
+ * 只会静默算出怪结果。
+ *
+ * 返回 `null` = 全部合法；否则返回第一条问题的人话描述。
+ * 调用点有两处：`server/src/index.ts` 启动时（数据错误就该起不来）、
+ * 以及 `core/src/cardpool.test.ts`（防止改卡表改出问题）。
+ *
+ * 为什么用「返回第一条」而不是「返回数组」：启动期只需要知道「哪里错了、起不起来」，
+ * 一次报一条足够；测试里也只需要断言 `null`。
+ */
+export function validateCardPool(pool: Readonly<Record<string, CardDef>> = CARD_POOL): string | null {
+  for (const def of Object.values(pool)) {
+    const label = `${def.name}（${def.defId}）`;
+    if (!Number.isInteger(def.cost) || def.cost < 0) {
+      return `${label} 的费用必须是非负整数，当前 ${def.cost}`;
+    }
+    if (!Number.isInteger(def.power) || def.power < 0) {
+      return `${label} 的力量值必须是非负整数，当前 ${def.power}`;
+    }
+    if (def.damage !== undefined && (!Number.isInteger(def.damage) || def.damage < 0)) {
+      return `${label} 的伤害值必须是非负整数（允许 0），当前 ${def.damage}`;
+    }
+  }
+  return null;
+}
+
+
+/**
  * **占位卡清单** —— 已清空（ADR-0025）。
  *
  * 原 8 张占位卡在 `docs/12` 采纳后转为正式卡（数值不变、补上效果文本）。
