@@ -156,3 +156,20 @@ test('删除卡组要二次确认，取消不删', async ({ browser }) => {
   await expect(page.getByTestId('deck-tab-basic-frost')).toBeVisible();
   await expect(page.getByTestId('deck-tab-basic-star')).toBeVisible();
 });
+
+test('准备页也说明为什么回落到阵营默认', async ({ browser }) => {
+  const host = await newClient(browser, 'WaitHint');
+
+  // 选星轨 → 设为开局 → 减一张（29 张，不再合法）
+  await host.getByTestId('edit-deck').click();
+  await host.getByTestId('deck-tab-basic-star').click();
+  await host.getByTestId('use-deck').click();
+  await host.getByTestId('deck-sel-remove-starScout').click();
+  await expect(host.getByTestId('deck-total')).toHaveText('29');
+  await host.getByRole('button', { name: '返回' }).click();
+
+  // 建房即进准备页：结论（阵营默认）与原因（所选卡组不足）都要在
+  await host.getByTestId('create').click();
+  await expect(host.getByTestId('waiting-deck-current')).toContainText('阵营默认卡组');
+  await expect(host.getByTestId('waiting-deck-incomplete')).toBeVisible();
+});

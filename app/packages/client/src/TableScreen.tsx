@@ -680,6 +680,13 @@ function WaitingRoom({ session }: { session: RoomSession }): React.JSX.Element {
           <p className="mt-1 text-[11px] text-slate-500" data-testid="waiting-deck-current">
             本局使用：{chosen ? chosen.name : '阵营默认卡组'}
           </p>
+          {/* 选了但不足 30 张 → 上面那句已经说了「阵营默认」，这里补一句**为什么**，
+              否则下拉里还显示那套被选中，玩家会以为是它（D-173）。 */}
+          {deckId && !chosen ? (
+            <p className="mt-1 text-[11px] text-amber-300" data-testid="waiting-deck-incomplete">
+              所选卡组不足 {MAIN_DECK_SIZE} 张，本局使用阵营默认卡组
+            </p>
+          ) : null}
         </label>
       ) : null}
       {/* 已准备后按钮不展示（Era 2026-10-19），状态用纯文本呈现 */}
