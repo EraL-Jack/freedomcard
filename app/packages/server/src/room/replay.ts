@@ -110,6 +110,16 @@ export class ReplayRecorder {
     return this.record;
   }
 
+  /**
+   * 这一局有没有**值得保存**的内容（D-177）。
+   *
+   * 建房后没开局就散了的房间，`markStart` 从未调用、也没有任何 Intent —— 落盘只会得到
+   * 一个一百多字节的空壳。实测 `app/replays/` 里无 `setup` 的 727 份记录中，约 206 份是这种空壳。
+   */
+  hasContent(): boolean {
+    return this.record.setup !== null || this.record.intents.length > 0;
+  }
+
   /** 结束并产出快照（浅拷贝，防止后续写入污染已落盘数据）。 */
   finish(result: unknown = null, endedAt: number = Date.now()): ReplayRecord {
     this.record.endedAt = endedAt;

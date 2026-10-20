@@ -122,3 +122,26 @@ describe('BO3 多局归档（D-175）', () => {
     expect(out.setup?.seed).toBe(1);
   });
 });
+
+/** 空房间不落盘（D-177）—— 没开过局的房间不该产生回放文件。 */
+describe('hasContent（D-177）', () => {
+  it('从未开局、也没有任何 Intent → false', () => {
+    const rec = new ReplayRecorder(0);
+    expect(rec.hasContent()).toBe(false);
+  });
+
+  it('调用过 markStart → true（哪怕还没有任何 Intent）', () => {
+    const rec = new ReplayRecorder(0);
+    rec.markStart(
+      { seed: 1, seats: ['a', 'b'], decks: { a: [], b: [] }, commanders: { a: 'x', b: 'y' } },
+      'h',
+    );
+    expect(rec.hasContent()).toBe(true);
+  });
+
+  it('有 Intent 也算内容（setup 缺失时也要保住记录）', () => {
+    const rec = new ReplayRecorder(0);
+    rec.recordStep({ type: 'game:start', actor: 'system', playerId: 'a', seq: 1 }, [], 'h');
+    expect(rec.hasContent()).toBe(true);
+  });
+});
