@@ -67,6 +67,8 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
   const [inUseId, setInUseId] = useState(loadActiveDeckId);
   /** 详情浮层正在看的卡；`null` = 关闭。 */
   const [detailId, setDetailId] = useState<string | null>(null);
+  /** 删除的两段确认（D-172）—— 切换卡组或新建时自动收起，避免「确认删除」跑到别的卡组上。 */
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const deck = decks.find((d) => d.id === active) ?? null;
   const total = deck ? deckTotal(deck) : 0;
@@ -107,6 +109,7 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
     commit([...decks, d]);
     setActive(d.id);
     setDetailId(null);
+    setConfirmDelete(false);
   };
 
   const remove = (id: string): void => {
@@ -163,6 +166,7 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
             onClick={() => {
               setActive(d.id);
               setDetailId(null);
+              setConfirmDelete(false);
             }}
             data-testid={`deck-tab-${d.id}`}
             title={d.name}
@@ -178,15 +182,41 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
         >
           新建卡组
         </button>
+        {/* 删除做两段确认（D-172）—— 误点一次不可恢复：三套基础卡组删掉后不会再生成
+            （判据是 `fc.decks` 键存在，删光也算「已初始化」）。同认输的两段式（D-147）。 */}
         {deck ? (
-          <button
-            type="button"
-            className="rounded bg-rose-900 px-3 py-1.5 text-sm"
-            onClick={() => remove(deck.id)}
-            data-testid="deck-delete"
-          >
-            删除当前
-          </button>
+          confirmDelete ? (
+            <>
+              <button
+                type="button"
+                className="rounded bg-rose-700 px-3 py-1.5 text-sm"
+                onClick={() => {
+                  remove(deck.id);
+                  setConfirmDelete(false);
+                }}
+                data-testid="deck-delete-confirm"
+              >
+                确认删除「{shortName(deck.name)}」
+              </button>
+              <button
+                type="button"
+                className="rounded border border-slate-700 px-3 py-1.5 text-sm"
+                onClick={() => setConfirmDelete(false)}
+                data-testid="deck-delete-cancel"
+              >
+                取消
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="rounded bg-rose-900 px-3 py-1.5 text-sm"
+              onClick={() => setConfirmDelete(true)}
+              data-testid="deck-delete"
+            >
+              删除当前
+            </button>
+          )
         ) : null}
         {/* D-141：这里直接把当前编辑的卡组设为「开局使用」，省得回主界面再选一次 */}
         {deck && canUse ? (

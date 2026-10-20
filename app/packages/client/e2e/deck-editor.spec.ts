@@ -137,3 +137,22 @@ test('已设为开局的卡组被改到不足 30 张：两处都提示会回落'
   await page.getByRole('button', { name: '返回' }).click();
   await expect(page.getByTestId('deck-incomplete-hint')).toBeVisible();
 });
+
+test('删除卡组要二次确认，取消不删', async ({ browser }) => {
+  const page = await newClient(browser, 'DeckDelete');
+  await page.getByTestId('edit-deck').click();
+  await expect(page.getByTestId('deck-total')).toHaveText('30');
+
+  // 第一次点删除只出确认，不动数据
+  await page.getByTestId('deck-delete').click();
+  await page.getByTestId('deck-delete-cancel').click();
+  await expect(page.getByTestId('deck-tab-basic-blade')).toBeVisible();
+  await expect(page.getByTestId('deck-total')).toHaveText('30');
+
+  // 再删并确认 → 真的删掉，剩下两套
+  await page.getByTestId('deck-delete').click();
+  await page.getByTestId('deck-delete-confirm').click();
+  await expect(page.getByTestId('deck-tab-basic-blade')).toHaveCount(0);
+  await expect(page.getByTestId('deck-tab-basic-frost')).toBeVisible();
+  await expect(page.getByTestId('deck-tab-basic-star')).toBeVisible();
+});
