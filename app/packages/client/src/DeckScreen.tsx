@@ -124,6 +124,24 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
     commit(decks.map((d) => (d.id === deck.id ? { ...d, commander: defId } : d)));
   };
 
+  /**
+   * 指挥官按钮的点击（Era 2026-10-20）。
+   *
+   * - **没选中** → 选它；
+   * - **已选中** → 打开详情看效果。
+   *
+   * 也就是说同一次点击有两种含义，取决于当前状态。这样右上角那个抢注意力的
+   * 「看效果」按钮就可以去掉，详情入口仍然在（第二次点击）。
+   */
+  const pickCommander = (defId: string): void => {
+    if (!deck) return;
+    if (deck.commander === defId) {
+      setDetailId(defId);
+      return;
+    }
+    setCommander(defId);
+  };
+
   /** 不完整时实际会用的那套的名字（回落说明要用它，不能只说「默认」）。 */
   const fallbackName = (): string => fallbackSelection().label;
 
@@ -284,18 +302,15 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
       {deck ? (
         <>
           {/* 指挥官（D-184）—— 一套卡组自带一位，换指挥官就是换这套卡组的打法核心。
-              放在统计上方：它比「总张数」更早决定这套牌怎么赢。 */}
+              放在统计上方：它比「总张数」更早决定这套牌怎么赢。
+
+              交互（Era 2026-10-20）：**点一下选中，选中的再点一次看效果**。
+              原先右上角挂了个「看效果」按钮，视觉上像页面的次级操作、又抢注意力；
+              改成「选中态再点」后只留下一排按钮，详情入口也还在（只是藏在第二次点击里）。 */}
           <section className="rounded border border-indigo-900/70 bg-slate-900/60 px-3 py-2">
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex items-baseline justify-between gap-2">
               <span className="text-xs text-slate-400">指挥官（本套卡组自带）</span>
-              <button
-                type="button"
-                className="shrink-0 text-[11px] text-slate-400 underline"
-                onClick={() => setDetailId(deck.commander)}
-                data-testid="deck-commander-detail"
-              >
-                看效果
-              </button>
+              <span className="text-[11px] text-slate-500">选中的再点一次看效果</span>
             </div>
             <div className="mt-1.5 flex flex-wrap gap-1.5">
               {COMMANDERS.map((c) => {
@@ -309,7 +324,7 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
                         ? 'bg-indigo-700 text-indigo-50'
                         : 'border border-slate-700 bg-slate-800 text-slate-300 hover:border-indigo-500'
                     }`}
-                    onClick={() => setCommander(c.defId)}
+                    onClick={() => pickCommander(c.defId)}
                     data-testid={`deck-commander-${c.defId}`}
                     aria-pressed={on}
                   >
@@ -506,7 +521,7 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
               {detailDef.type === 'commander' ? (
                 // 指挥官不在主卡组里，± 在这里没有意义 —— 给一句「去哪换」而不是留两个死按钮。
                 <p className="mt-2 text-[11px] text-slate-400" data-testid="deck-detail-commander-note">
-                  指挥官不占主卡组 —— 用上方「指挥官」一栏切换。
+                  指挥官不占主卡组 —— 换人请点上方的其他指挥官。
                 </p>
               ) : (
               <div className="mt-2 flex items-center gap-2">

@@ -175,3 +175,120 @@ test('编辑器里换指挥官：霜律主卡组 + 星轨指挥官，开局后�
   expect(hand.length).toBeGreaterThanOrEqual(5);
   for (const c of hand) expect(c.name.startsWith('霜律'), `不该出现的卡：${c.name}`).toBe(true);
 });
+
+/**
+ * 旧版 localStorage 卡组（没有 `commander` 字段）能不能继续用（D-184 迁移）。
+ *
+ * `loadDecks` 里那段「缺 commander 就补默认」的代码，是这次改动里**唯一碰老数据**的地方，
+ * 也是最容易静默坏的地方：补错了不会报错，玩家只会看到「我的卡组没了」或
+ * 「指挥官怎么是炎刃」——两种都得靠人肉才发现。这里直接写一份「D-184 之前」的结构。
+ */
+test('旧卡组没有 commander 字段：补默认指挥官，30 张原样保留、能开局（D-184 迁移）', async ({
+  browser,
+}) => {
+  const recipe = {
+    frostRecruit: 2,
+    frostApprentice: 3,
+    frostWarden: 3,
+    frostEdict: 2,
+    frostBinder: 3,
+    frostLancer: 3,
+    frostColdSnap: 1,
+    frostEnforcer: 2,
+    frostDomain: 2,
+    frostNightwatch: 2,
+    frostJailer: 2,
+    frostJudgment: 2,
+    frostFinalJudgment: 1,
+    frostWinterblade: 2,
+  };
+
+  const host = await newClient(browser, 'LegacyHost');
+  // 故意不带 commander —— 这是 D-184 之前的存储结构
+  await host.evaluate((cards) => {
+    localStorage.setItem(
+      'fc.decks',
+      JSON.stringify([{ id: 'legacy-deck', name: '旧卡组', cards }]),
+    );
+    localStorage.setItem('fc.activeDeckId', 'legacy-deck');
+  }, recipe);
+  await host.reload();
+  await expect(host.getByText('服务端已连接')).toBeVisible({ timeout: 15_000 });
+  await host.getByTestId('nickname').fill('LegacyHost');
+
+  // 卡组还在，且补上了默认指挥官（炎刃军统领）
+  await expect(host.getByTestId('deck-choice')).toHaveValue('legacy-deck');
+  await expect(host.getByTestId('deck-in-use')).toContainText('旧卡组');
+  await expect(host.getByTestId('deck-in-use')).toContainText('炎刃军统领');
+
+  // 编辑页也能打开，30 张一张不少
+  await host.getByTestId('edit-deck').click();
+  await expect(host.getByTestId('deck-total')).toHaveText('30');
+  await expect(host.getByTestId('deck-commander-bladeLord')).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await host.getByRole('button', { name: '返回' }).click();
+
+  await host.getByTestId('create').click();
+  const code = ((await host.getByTestId('room-code').textContent()) ?? '').trim();
+  const guest = await newClient(browser, 'LegacyGuest');
+  await guest.getByTestId('code').fill(code);
+  await guest.getByTestId('join').click();
+  await expect(guest.getByTestId('ready')).toBeVisible({ timeout: 10_000 });
+  await host.getByTestId('ready').click();
+  await guest.getByTestId('ready').click();
+  await expect(host.getByTestId('turn')).toBeVisible({ timeout: 15_000 });
+
+  await expect(host.getByTestId('zone-commander').nth(1)).toContainText('炎刃军统领', {
+    timeout: 15_000,
+  });
+  const hand = await readHand(host);
+  expect(hand.length).toBeGreaterThanOrEqual(5);
+  for (const c of hand) expect(c.name.startsWith('霜律'), `不该出现的卡：${c.name}`).toBe(true);
+});
+
+/**
+ * 把卡组全删光之后还能不能开局（D-184 兜底）。
+ *
+ * 「一套卡组都没有」是玩家真能走到的状态（删除是永久的，D-172）。此时客户端必须
+ * 仍能给出**确定的一套**去开局 —— 否则下拉是空的、建房按钮点下去服务端收到空卡组，
+ * 表现为「点了没反应」。兜底是第一套基础卡组（炎刃）。
+ */
+test('把卡组全删光：下拉给兜底选项，仍能正常开局（D-184 兜底）', async ({ browser }) => {
+  const host = await newClient(browser, 'NoDeckHost');
+  await host.getByTestId('edit-deck').click();
+
+  // 三套预置卡组逐个删掉（两段确认，D-172）
+  for (const slug of ['blade', 'frost', 'star']) {
+    await host.getByTestId(`deck-tab-basic-${slug}`).click();
+    await host.getByTestId('deck-delete').click();
+    await host.getByTestId('deck-delete-confirm').click();
+    await expect(host.getByTestId(`deck-tab-basic-${slug}`)).toHaveCount(0);
+  }
+  await expect(host.getByRole('button', { name: '返回' })).toBeVisible();
+  await host.getByRole('button', { name: '返回' }).click();
+
+  // 下拉里只剩兜底那一项，且不是空值
+  const choice = host.getByTestId('deck-choice');
+  await expect(choice.locator('option')).toHaveCount(1);
+  await expect(choice).not.toHaveValue('');
+  await expect(host.getByTestId('deck-in-use')).toContainText('指挥官');
+
+  await host.getByTestId('create').click();
+  const code = ((await host.getByTestId('room-code').textContent()) ?? '').trim();
+  const guest = await newClient(browser, 'NoDeckGuest');
+  await guest.getByTestId('code').fill(code);
+  await guest.getByTestId('join').click();
+  await expect(guest.getByTestId('ready')).toBeVisible({ timeout: 10_000 });
+  await host.getByTestId('ready').click();
+  await guest.getByTestId('ready').click();
+
+  // 开局成功：有回合号、手牌至少 5 张，指挥官是兜底那套的炎刃军统领
+  await expect(host.getByTestId('turn')).toBeVisible({ timeout: 15_000 });
+  await expect(host.getByTestId('zone-commander').nth(1)).toContainText('炎刃军统领', {
+    timeout: 15_000,
+  });
+  const hand = await readHand(host);
+  expect(hand.length).toBeGreaterThanOrEqual(5);
+});
