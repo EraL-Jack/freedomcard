@@ -366,3 +366,37 @@ describe('RoomManager · 赛制与系列赛（D-132）', () => {
     expect(room.seriesWinner).toBe(s.host);
   });
 });
+
+/**
+ * `prune()` 的回收边界（D-181）。
+ *
+ * 它只回收 `connected: false` 且超过宽限期的席位 —— 这条契约本身是对的
+ * （断线要保留 `RECONNECT_GRACE` 的重连窗口）。
+ *
+ * 反过来说：**标着 `connected: true` 的席位永远不会被回收**。所以「一条连接建多间房」
+ * 必须由连接层主动释放旧席位，否则那些房间连同运行时永久滞留。
+ * 2026-10-20 实测：单连接建 2000 间、断开后只回收最后一间，其余全滞留（约 17 MB）。
+ */
+describe('RoomManager · prune 的回收边界（D-181）', () => {
+  it('仍标记为 connected 的席位不会被 prune 回收', () => {
+    const { manager, advance } = harness();
+    const a = manager.create({ nickname: 'A', capacity: 2 });
+    expect(a.ok).toBe(true);
+    if (!a.ok) return;
+    // 注意：这里**不**调用 markDisconnected —— 模拟「连接层忘了释放」的旧席位
+    advance(10 * 60_000);
+    manager.prune();
+    expect(manager.getRoom(a.value.room.id)).toBeDefined();
+  });
+
+  it('leave() 释放席位后房间立即销毁（连接层据此释放旧席位）', () => {
+    const { manager } = harness();
+    const a = manager.create({ nickname: 'A', capacity: 2 });
+    expect(a.ok).toBe(true);
+    if (!a.ok) return;
+    const r = manager.leave(a.value.seat.playerId);
+    expect(r.ok).toBe(true);
+    // 空房立即销毁，不必等 prune
+    expect(manager.getRoom(a.value.room.id)).toBeUndefined();
+  });
+});
