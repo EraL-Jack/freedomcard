@@ -17,6 +17,10 @@
     "./cards": {
       "types": "./src/cards.ts",
       "default": "./src/cards.ts"
+    },
+    "./default-decks": {
+      "types": "./src/default-decks.ts",
+      "default": "./src/default-decks.ts"
     }
   },
   "scripts": {
