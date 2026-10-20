@@ -177,3 +177,52 @@ test('准备页也说明为什么回落（不再有「阵营默认」）', async
   await expect(host.getByTestId('waiting-deck-current')).toContainText('指挥官');
   await expect(host.getByTestId('waiting-deck-incomplete')).toBeVisible();
 });
+
+/**
+ * 指挥官按钮的「选中 / 再看效果」双态（Era 2026-10-20）。
+ *
+ * Era 嫌右上角那个「看效果」按钮太挫，要求改成：点一下选中，选中的再点一次看效果。
+ * 这条钉住两种点击的**不同后果** —— 只断言「点了会选中」的话，
+ * 第二次点击被误实现成「取消选中」也照样过。
+ */
+test('指挥官：点一下选中，已选中的再点一次打开详情', async ({ browser }) => {
+  const page = await newClient(browser, 'CmdClick');
+  await page.getByTestId('edit-deck').click();
+  await page.getByTestId('deck-tab-basic-frost').click();
+
+  // 默认选中霜律裁决官
+  await expect(page.getByTestId('deck-commander-frostAdjudicator')).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+
+  // ① 点一位没选中的 → 选中，且**不**弹详情
+  await page.getByTestId('deck-commander-starWatcher').click();
+  await expect(page.getByTestId('deck-commander-starWatcher')).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await expect(page.getByTestId('deck-commander-frostAdjudicator')).toHaveAttribute(
+    'aria-pressed',
+    'false',
+  );
+  await expect(page.getByTestId('deck-detail')).toHaveCount(0);
+
+  // ② 再点已选中的 → 打开详情浮层，显示的是这位指挥官
+  await page.getByTestId('deck-commander-starWatcher').click();
+  await expect(page.getByTestId('deck-detail')).toBeVisible();
+  await expect(page.getByTestId('deck-detail')).toContainText('星轨观测者');
+  // 指挥官不占主卡组 → 详情里没有 ±
+  await expect(page.getByTestId('deck-detail-commander-note')).toBeVisible();
+
+  // ③ 关掉后仍是选中态（第二次点击不该把人取消掉）
+  await page.getByTestId('deck-detail-close').click();
+  await expect(page.getByTestId('deck-detail')).toHaveCount(0);
+  await expect(page.getByTestId('deck-commander-starWatcher')).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+
+  // ④ 右上角那个按钮确实没了
+  await expect(page.getByTestId('deck-commander-detail')).toHaveCount(0);
+});
