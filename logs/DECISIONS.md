@@ -950,3 +950,23 @@ E2E 里先后手由掷骰决定、起手牌由洗牌决定，两者都是随机�
 - 影响：`server/src/room/replay-maintenance.ts`（新增）、`index.ts`（启动 + 24h 定时器，`unref()`）、
   `README-运行说明.md` §7.3。
 - 破坏性：**否**。
+
+## ADR-0041 · 回放「观看」入口默认关闭，记录链路不变（D-183）
+
+- 背景：Era 2026-10-20 —— 公网走 SakuraFrp 隧道，**每月流量有限**。
+  回放观看若真做起来，每次复盘都要把一份 `replay.json` 从服务器传到浏览器
+  （BO3 完整局实测几 MB），点几下就能吃掉可观配额。
+- 决策：结算面板的「查看回放」按钮**常显但置灰**（`disabled`），
+  由 `client/src/features.ts` 的 `REPLAY_VIEW_ENABLED = false` 控制；
+  服务端记录链路（`Intent → ReplayRecorder → app/replays/*.json`）**一行未改**。
+- 为什么用「常显的置灰按钮」而不是干脆不画：
+  1. Era 的指令是「置灰」，不是「移除」——入口本身要可见，才知道这个功能存在；
+  2. 将来开放只改一个常量，不用回头补 UI；
+  3. 置灰按钮带 `title` 说明原因，避免用户以为是坏了。
+- 为什么关的是入口而不是记录：记录是**服务端本地磁盘写**，不走隧道、不消耗流量，
+  且是回放校验（M8）与问题复盘的唯一依据；关掉它省不下流量，只丢证据。
+- 顺带确认没有旁路：静态服务根目录是 `client/dist`，`app/replays/` 在其之外；
+  服务端没有任何读回放的 HTTP 路由 —— 公网取不到回放文件，唯一入口是本地 CLI。
+- 影响：`client/src/features.ts`（新增）、`TableScreen.tsx`（GameOverPanel 末尾一个按钮）、
+  `e2e/game.spec.ts`（断言可见 + disabled + 文案）、`README-运行说明.md` §10。
+- 破坏性：**否**（纯 UI 新增；E2E 29/29、单测 278 全过）。

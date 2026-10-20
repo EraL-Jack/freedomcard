@@ -213,6 +213,11 @@ test('认输只判负本局；BO3 第 3 局由上一局败者先攻（D-147 / H3
   await host.getByTestId('concede-confirm').click();
   await expect(host.getByTestId('game-result')).toHaveText('本局败北', { timeout: 20_000 });
   await expect(guest.getByTestId('game-result')).toHaveText('本局胜利', { timeout: 20_000 });
+  // 回放入口置灰（D-183）：入口在结算面板可见，但不可点。
+  // 断言的是「显示 + disabled」两件事 —— 只断言 disabled 的话，按钮被删掉也照样过。
+  await expect(host.getByTestId('replay-view')).toBeVisible();
+  await expect(host.getByTestId('replay-view')).toBeDisabled();
+  await expect(host.getByTestId('replay-view')).toHaveText('查看回放（暂未开放）');
   // 认输 ≠ 离开：房主仍能开下一局（离开会直接把 seriesWinner 写死）
   await expect(host.getByTestId('next-game')).toBeVisible({ timeout: 10_000 });
 
