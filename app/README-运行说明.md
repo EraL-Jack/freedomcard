@@ -128,6 +128,23 @@ serve-public.cmd
 > 进程与房间状态都在内存里：脚本窗口关掉、电脑重启、隧道断开，都会导致房间消失。
 > 回放文件写在 `app/replays/`，但进程重启不会补写。
 
+### 7.2 回放校验（`replay.json`）
+
+每局结束会在 `app/replays/` 写一份 `<roomId>-<时间戳>.json`。校验一份记录能否**逐帧重放**：
+
+```bash
+cd app
+pnpm --filter @app/server run replay:verify replays/<file>.json            # 只比哈希链
+pnpm --filter @app/server run replay:verify replays/<file>.json --events   # 连事件序列一起比
+```
+
+退出码：`0` 完全一致 / `1` 有差异（会指出第几步、哪一步的哪个哈希） / `2` 文件不可用
+（例如 D-159 之前的旧格式没有 `setup`，只能对照哈希、无法重建开局）。
+
+⚠️ **时间源取记录里每步事件的 `at`，不能用「起点 + 步长」推算**。
+`startRule` 会把 `ctx.now` 写进 `state.startedAt`，而原局用的是真实时钟；
+用固定步长重放，第一步哈希就会对不上（实测踩过）。
+
 ## 8. 目录结构
 
 ```
