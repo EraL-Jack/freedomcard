@@ -35,6 +35,7 @@ import {
   type ReplayRecord,
 } from './room/index.js';
 import type { Room } from './room/types.js';
+import { makeRoomCode } from './room/code.js';
 import { TurnTimer, hostScheduler } from './room/turn-timer.js';
 import { nextSeed, seedGameState, seedSetup } from './room/session.js';
 
@@ -82,7 +83,7 @@ const roomManager = new RoomManager({
   ids: {
     id: () => randomUUID(),
     token: () => randomUUID(),
-    code: () => Math.random().toString(36).slice(2, 8).toUpperCase(),
+    code: () => makeRoomCode(),
   },
 });
 
