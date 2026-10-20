@@ -240,7 +240,8 @@ app/
 11. **回放观看入口置灰**（D-183）：结算面板的「查看回放（暂未开放）」可见但不可点 ——
     公网走隧道、每月流量有限，开放观看等于每次复盘都从服务器拉一份 `replay.json`。
     **记录不受影响**：服务端照常写 `app/replays/`（`replay:verify` 可校验，见 §7.2）。
-    要开放就把 `client/src/features.ts` 的 `REPLAY_VIEW_ENABLED` 改成 `true` 并重新 build。
+    要开放就把 `client/src/features.ts` 的 `REPLAY_VIEW_ENABLED` 改成 `true` 并重新 build
+    （客户端改动 `pnpm build` 后**即时生效** —— 静态资源每次请求读盘，不必重启服务）。
 12. 工程内禁止使用 `xl:` / `2xl:` 变体 —— 五档断点已全部覆盖默认值。
 
 ## 11. 本轮验收清单（D-137 ~ D-149）
