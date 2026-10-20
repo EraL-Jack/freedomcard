@@ -33,7 +33,7 @@ describe('卡池样例（ADR-0015）', () => {
     }
   });
 
-  it('三阵营各恰好一张指挥官（ADR-0025 / D-230）', () => {
+  it('三个体系各恰好一张指挥官（ADR-0025 / D-230）', () => {
     const commanders = Object.values(CARD_POOL).filter((c) => c.type === 'commander');
     expect(commanders.map((c) => c.name).sort()).toEqual(
       ['炎刃军统领', '霜律裁决官', '星轨观测者'].sort(),

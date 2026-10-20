@@ -89,24 +89,24 @@ test('统领效果Ⅱ：发动 → 选择手牌 → 除外（ADR-0023 / X-16）'
   await expect(p.getByTestId('zone-exile').nth(1)).toContainText('1', { timeout: 10_000 });
 });
 
-test('赛制与阵营：建房选 BO3 + 星轨，开局显示比分与星轨资源（D-132 / D-235）', async ({ browser }) => {
+test('赛制与卡组：建房选 BO3 + 星轨套，开局显示比分与星轨资源（D-132 / D-184）', async ({ browser }) => {
   const { host, guest } = await startGame(browser, {
     format: 'bo3',
-    hostFaction: 'star',
-    guestFaction: 'frost',
+    hostDeck: 'basic-star',
+    guestDeck: 'basic-frost',
   });
 
   // 赛制标记：BO3 才显示「第 N 局 · 比分 X : Y」
   await expect(host.getByTestId('series')).toContainText('比分', { timeout: 15_000 });
   await expect(host.getByTestId('series')).toContainText('第 1 局');
 
-  // 阵营选的星轨 → 我方指挥官是星轨观测者，成长资源是「星轨 N」
+  // 选的星轨套 → 本方指挥官是星轨观测者，成长资源是「星轨 N」
   await expect(host.getByTestId('zone-commander').nth(1)).toContainText('星轨观测者', {
     timeout: 15_000,
   });
   await expect(host.getByTestId('my-growth')).toContainText('星轨', { timeout: 10_000 });
 
-  // 对手选霜律 → 在 guest 自己的界面里，nth(1) 是「我方指挥官」= 霜律裁决官
+  // 对手选霜律套 → 在 guest 自己的界面里，nth(1) 是「我方指挥官」= 霜律裁决官
   await expect(guest.getByTestId('zone-commander').nth(1)).toContainText('霜律裁决官', {
     timeout: 15_000,
   });
@@ -160,11 +160,16 @@ test('自建卡组：对局前选中，开局后使用该卡组（D-141）', asy
   };
 
   const host = await newClient(browser, 'Host');
-  // 直接写 localStorage（等价于在卡组编辑器里建好并选中）
+  // 直接写 localStorage（等价于在卡组编辑器里建好并选中）。
+  // 写**两套**：准备页那条「换了再换回来」需要一个切换目标（D-184 之后不再有「基础卡组」可选项，
+  // 选项就是我保存的卡组 —— 只写一套的话下拉里没有第二个选项）。
   await host.evaluate((cards) => {
     localStorage.setItem(
       'fc.decks',
-      JSON.stringify([{ id: 'e2e-frost', name: 'E2E 霜律', cards }]),
+      JSON.stringify([
+        { id: 'e2e-frost', name: 'E2E 霜律', commander: 'frostAdjudicator', cards },
+        { id: 'e2e-frost2', name: 'E2E 霜律 2', commander: 'bladeLord', cards },
+      ]),
     );
     localStorage.setItem('fc.activeDeckId', 'e2e-frost');
   }, recipe);
@@ -177,9 +182,11 @@ test('自建卡组：对局前选中，开局后使用该卡组（D-141）', asy
   await host.getByTestId('create').click();
   const code = ((await host.getByTestId('room-code').textContent()) ?? '').trim();
 
-  // 准备页也能换（D-141）：切回阵营默认再切回自建，服务端两次都应接受
-  await host.getByTestId('waiting-deck').selectOption('');
+  // 准备页也能换（D-141 / D-184）：换到另一套再换回来，服务端两次都应接受
+  await host.getByTestId('waiting-deck').selectOption('e2e-frost2');
+  await expect(host.getByTestId('waiting-deck-current')).toContainText('E2E 霜律 2');
   await host.getByTestId('waiting-deck').selectOption('e2e-frost');
+  await expect(host.getByTestId('waiting-deck-current')).toContainText('指挥官 霜律裁决官');
 
   const guest = await newClient(browser, 'Guest');
   await guest.getByTestId('code').fill(code);

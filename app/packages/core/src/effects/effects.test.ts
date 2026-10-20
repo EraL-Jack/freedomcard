@@ -163,7 +163,7 @@ describe('统领 Ⅰ：按除外区炎刃数分档', () => {
         exile: Array.from({ length: 5 }, (_, i) => c(`x${i}`, 'bladeVanguard')), // 5 张炎刃
         board: [c('b1', 'bladeRecruit')],
       },
-      // 对方随从力量 4 ≤ 5，旧口径（不限阵营）下会是候选 —— 钉住它不再出现
+      // 对方随从力量 4 ≤ 5，旧口径（不限体系）下会是候选 —— 钉住它不再出现
       foeZones: { board: [c('fb1', 'bladeKnight')] },
     });
     s = run(s, intent('p1', INTENTS.effectActivate, { uid: 'lord1', effect: '1' }));

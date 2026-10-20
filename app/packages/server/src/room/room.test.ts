@@ -114,7 +114,7 @@ describe('RoomManager · 自建卡组（D-141）', () => {
     expect(joined.value.seat.deck).toHaveLength(30);
   });
 
-  it('准备页换卡组：未开局可改，空数组回到阵营默认', () => {
+  it('准备页换卡组：未开局可改，空数组回到默认卡组', () => {
     const { manager } = harness();
     const created = manager.create({ nickname: 'A', capacity: 2 });
     if (!created.ok) throw new Error('create failed');
@@ -266,12 +266,17 @@ describe('RoomManager · 赛制与系列赛（D-132）', () => {
   /** 建一个 BO3 房并拉满两席。 */
   function bo3() {
     const h = harness();
-    const created = h.manager.create({ nickname: 'A', capacity: 2, format: 'bo3', faction: 'blade' });
+    const created = h.manager.create({
+      nickname: 'A',
+      capacity: 2,
+      format: 'bo3',
+      commander: 'bladeLord',
+    });
     if (!created.ok) throw new Error('create failed');
     const joined = h.manager.join({
       code: created.value.room.code,
       nickname: 'B',
-      faction: 'star',
+      commander: 'starWatcher',
     });
     if (!joined.ok) throw new Error('join failed');
     return {
@@ -282,7 +287,7 @@ describe('RoomManager · 赛制与系列赛（D-132）', () => {
     };
   }
 
-  it('默认 BO1；显式 BO3 会被记录，阵营随席位保存', () => {
+  it('默认 BO1；显式 BO3 会被记录，指挥官随席位保存', () => {
     const { manager } = harness();
     const bo1 = manager.create({ nickname: 'A', capacity: 2 });
     if (!bo1.ok) throw new Error('create failed');
@@ -291,8 +296,8 @@ describe('RoomManager · 赛制与系列赛（D-132）', () => {
     const s = bo3();
     const room = s.manager.getRoom(s.roomId)!;
     expect(room.format).toBe('bo3');
-    expect(room.seats[0]!.faction).toBe('blade');
-    expect(room.seats[1]!.faction).toBe('star');
+    expect(room.seats[0]!.commander).toBe('bladeLord');
+    expect(room.seats[1]!.commander).toBe('starWatcher');
   });
 
   it('BO1：一小局后房间直接结束', () => {

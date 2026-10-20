@@ -3,12 +3,13 @@ import { useMemo, useState } from 'react';
 import type { CardType } from '@app/shared';
 import { MAIN_DECK_SIZE, MAX_COPIES } from '@app/shared/constants';
 import { CARD_POOL } from '@app/shared/cards';
-import { deckRecipeProblems } from '@app/shared/default-decks';
+import { COMMANDER_IDS, DEFAULT_COMMANDER_ID, deckRecipeProblems } from '@app/shared/default-decks';
 
 import CardTile from './CardTile.js';
 import {
   deckTotal,
   ensureDefaultDecks,
+  fallbackSelection,
   isDeckComplete,
   loadActiveDeckId,
   loadDecks,
@@ -42,6 +43,14 @@ import {
  */
 
 const POOL = Object.values(CARD_POOL).filter((c) => c.type !== 'commander');
+
+/**
+ * 指挥官候选（D-184）—— 顺序与 `COMMANDER_IDS` 一致。
+ *
+ * 为什么从 `COMMANDER_IDS` 而不是直接 filter 卡池：卡池顺序是「按卡表转录」的顺序，
+ * 若哪天新增一张指挥官卡放在中间，界面顺序会莫名其妙地跳；候选名单应是**显式**的。
+ */
+const COMMANDERS = COMMANDER_IDS.flatMap((id) => (CARD_POOL[id] ? [CARD_POOL[id]!] : []));
 
 /** 待选列表排序：费用升序 → 卡名 —— 与卡表习惯一致，且同费卡放一起便于比较。 */
 const SORTED_POOL = [...POOL].sort((a, b) => a.cost - b.cost || a.name.localeCompare(b.name, 'zh'));
@@ -104,8 +113,28 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
     saveDecks(next);
   };
 
+  /**
+   * 换当前这套卡组的指挥官（D-184）。
+   *
+   * 只改 `commander` 字段，不动 30 张主卡 —— 卡池不限体系，任何主卡组都能搭任何指挥官
+   * （Era：「不存在阵营之分，卡池可以混选」）。
+   */
+  const setCommander = (defId: string): void => {
+    if (!deck) return;
+    commit(decks.map((d) => (d.id === deck.id ? { ...d, commander: defId } : d)));
+  };
+
+  /** 不完整时实际会用的那套的名字（回落说明要用它，不能只说「默认」）。 */
+  const fallbackName = (): string => fallbackSelection().label;
+
   const create = (): void => {
-    const d: SavedDeck = { id: String(Date.now()), name: `卡组 ${decks.length + 1}`, cards: {} };
+    // 新建卡组也要有指挥官（D-184）—— 留空会被服务端判成非法 / 回落，界面还说不出为什么。
+    const d: SavedDeck = {
+      id: String(Date.now()),
+      name: `卡组 ${decks.length + 1}`,
+      commander: DEFAULT_COMMANDER_ID,
+      cards: {},
+    };
     commit([...decks, d]);
     setActive(d.id);
     setDetailId(null);
@@ -116,7 +145,7 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
     const next = decks.filter((d) => d.id !== id);
     commit(next);
     if (active === id) setActive(next[0]?.id ?? null);
-    // 删掉的正好是「开局使用中」→ 清掉选择，回落到阵营默认卡组
+    // 删掉的正好是「开局使用中」→ 清掉选择，开局会回落第一套基础卡组（不再有「阵营默认」）
     if (inUseId === id) {
       saveActiveDeckId('');
       setInUseId('');
@@ -241,9 +270,9 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
             </button>
           )
         ) : deck && inUseId === deck.id ? (
-          // 已经设为开局，但事后被改到不足 30 张 —— 开局会静默回落到阵营默认，必须说出来。
+          // 已经设为开局，但事后被改到不足 30 张 —— 开局会静默回落到第一套基础卡组，必须说出来。
           <span className="px-1 text-xs text-amber-300" data-testid="deck-fallback-hint">
-            这套已设为开局卡组，但现在只有 {total} 张 —— 开局会回落到阵营默认
+            这套已设为开局卡组，但现在只有 {total} 张 —— 开局会回落「{fallbackName()}」
           </span>
         ) : deck ? (
           <span className="px-1 text-xs text-slate-500">
@@ -254,6 +283,43 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
 
       {deck ? (
         <>
+          {/* 指挥官（D-184）—— 一套卡组自带一位，换指挥官就是换这套卡组的打法核心。
+              放在统计上方：它比「总张数」更早决定这套牌怎么赢。 */}
+          <section className="rounded border border-indigo-900/70 bg-slate-900/60 px-3 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs text-slate-400">指挥官（本套卡组自带）</span>
+              <button
+                type="button"
+                className="shrink-0 text-[11px] text-slate-400 underline"
+                onClick={() => setDetailId(deck.commander)}
+                data-testid="deck-commander-detail"
+              >
+                看效果
+              </button>
+            </div>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {COMMANDERS.map((c) => {
+                const on = deck.commander === c.defId;
+                return (
+                  <button
+                    key={c.defId}
+                    type="button"
+                    className={`rounded px-3 py-1.5 text-sm ${
+                      on
+                        ? 'bg-indigo-700 text-indigo-50'
+                        : 'border border-slate-700 bg-slate-800 text-slate-300 hover:border-indigo-500'
+                    }`}
+                    onClick={() => setCommander(c.defId)}
+                    data-testid={`deck-commander-${c.defId}`}
+                    aria-pressed={on}
+                  >
+                    {c.name}
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
           {/* 统计与校验 */}
           <section className="rounded border border-slate-800 bg-slate-900/60 px-3 py-2">
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
@@ -393,7 +459,8 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
       )}
 
       <p className="text-[11px] text-slate-500">
-        卡组存在本机；满 {MAIN_DECK_SIZE} 张可在开局选用（指挥官由阵营决定）。
+        卡组存在本机；满 {MAIN_DECK_SIZE} 张可在开局选用。一套卡组 = 30 张主卡 + 1 位指挥官，
+        卡池不限体系，随便混着搭。
       </p>
 
       {/* 卡牌详情浮层 —— 手机贴底、桌面居中 */}
@@ -436,6 +503,12 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
               <p className="mt-1.5 flex-1 text-xs leading-relaxed text-slate-300">
                 {detailDef.text ?? '（无效果文本）'}
               </p>
+              {detailDef.type === 'commander' ? (
+                // 指挥官不在主卡组里，± 在这里没有意义 —— 给一句「去哪换」而不是留两个死按钮。
+                <p className="mt-2 text-[11px] text-slate-400" data-testid="deck-detail-commander-note">
+                  指挥官不占主卡组 —— 用上方「指挥官」一栏切换。
+                </p>
+              ) : (
               <div className="mt-2 flex items-center gap-2">
                 <button
                   type="button"
@@ -459,6 +532,7 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
                   ＋
                 </button>
               </div>
+              )}
             </div>
           </div>
         </div>

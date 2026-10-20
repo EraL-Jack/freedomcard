@@ -8,7 +8,6 @@ export type {
   Result,
   RuleContext,
   CardType,
-  Faction,
   MatchFormat,
   Zone,
   Phase,

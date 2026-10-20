@@ -8,12 +8,10 @@ import { MULLIGAN_WINDOW_MS } from '@app/shared/constants';
 
 import CardTile from './CardTile.js';
 import {
-  deckDefIds,
-  deckTotal,
-  isDeckComplete,
+  listSelectionOptions,
   loadActiveDeckId,
-  loadDecks,
   saveActiveDeckId,
+  selectionForPlay,
 } from './decks.js';
 import { REPLAY_VIEW_ENABLED } from './features.js';
 import { KEYWORD_NOTE, PHASE_LABEL } from './labels.js';
@@ -641,17 +639,30 @@ function WaitingRoom({ session }: { session: RoomSession }): React.JSX.Element {
   const meReady = room?.seats.find((s) => s && s.playerId === me)?.ready ?? false;
 
   /**
-   * 卡组（D-141）—— 准备页可改，准备后锁定（服务端同样只接受未开局）。
-   * 选择存本机；发给服务端的是展开后的 30 个 defId，空数组 = 阵营默认。
+   * 卡组（D-141 / D-184）—— 准备页可改，准备后锁定（服务端同样只接受未开局）。
+   *
+   * 选择存本机；发给服务端的是**一整套**：30 个 defId + 1 位指挥官。
+   * 没有「阵营默认」了，列表里恒有三套基础卡组兜底，所以永远能发出一套确定的选择。
    */
-  const [decks] = useState(loadDecks);
-  const [deckId, setDeckId] = useState(loadActiveDeckId);
-  const chosen = decks.find((d) => d.id === deckId && isDeckComplete(d)) ?? null;
-  const pickDeck = (id: string): void => {
-    setDeckId(id);
-    saveActiveDeckId(id);
-    const d = decks.find((x) => x.id === id && isDeckComplete(x));
-    setDeck(d ? deckDefIds(d) : []);
+  const [options] = useState(listSelectionOptions);
+  // 与主界面同口径：优先恢复本机记住的那一套（哪怕它已不满 30 张，那正是要提示的）。
+  const [deckValue, setDeckValue] = useState(() => {
+    const saved = loadActiveDeckId();
+    if (options.some((o) => o.value === saved)) return saved;
+    return options.find((o) => o.complete)?.value ?? options[0]?.value ?? '';
+  });
+  const chosen = options.find((o) => o.value === deckValue) ?? null;
+  const play = chosen?.complete ? chosen : selectionForPlay();
+  const pickDeck = (value: string): void => {
+    setDeckValue(value);
+    saveActiveDeckId(value);
+    const o = options.find((x) => x.value === value);
+    if (o?.complete) setDeck(o.deck, o.commander);
+    else {
+      // 选了不完整的一套 → 实际用的是兜底那套，服务端要收到与界面一致的东西（D-173）。
+      const fb = selectionForPlay();
+      setDeck(fb.deck, fb.commander);
+    }
   };
 
   return (
@@ -678,34 +689,34 @@ function WaitingRoom({ session }: { session: RoomSession }): React.JSX.Element {
           </li>
         ))}
       </ul>
-      {/* 卡组（D-141）：准备前可换；准备后锁定，避免开局瞬间还在改 */}
-      {!meReady && decks.length > 0 ? (
+      {/* 卡组（D-141 / D-184）：准备前可换；准备后锁定，避免开局瞬间还在改 */}
+      {!meReady && options.length > 0 ? (
         <label className="block w-full max-w-xs text-left">
-          <span className="text-xs text-slate-400">我的卡组</span>
+          <span className="text-xs text-slate-400">我的卡组（卡组自带指挥官）</span>
           <select
             className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm"
-            value={deckId}
+            value={deckValue}
             onChange={(e) => pickDeck(e.target.value)}
             data-testid="waiting-deck"
           >
-            <option value="">阵营默认卡组</option>
-            {decks.map((d) => {
-              const n = deckTotal(d);
+            {options.map((o) => {
+              const n = o.deck.length;
               return (
-                <option key={d.id} value={d.id} disabled={!isDeckComplete(d)}>
-                  {d.name}（{n}/{MAIN_DECK_SIZE} 张{isDeckComplete(d) ? '' : '，未完成'}）
+                <option key={o.value} value={o.value} disabled={!o.complete}>
+                  {o.label}（{n}/{MAIN_DECK_SIZE} 张{o.complete ? '' : '，未完成'}）·{' '}
+                  {CARD_POOL[o.commander]?.name ?? ''}
                 </option>
               );
             })}
           </select>
           <p className="mt-1 text-[11px] text-slate-500" data-testid="waiting-deck-current">
-            本局使用：{chosen ? chosen.name : '阵营默认卡组'}
+            本局使用：{play.label} · 指挥官 {CARD_POOL[play.commander]?.name ?? play.commander}
           </p>
-          {/* 选了但不足 30 张 → 上面那句已经说了「阵营默认」，这里补一句**为什么**，
+          {/* 选了但不足 30 张 → 上面那句已经说了实际用哪套，这里补一句**为什么**，
               否则下拉里还显示那套被选中，玩家会以为是它（D-173）。 */}
-          {deckId && !chosen ? (
+          {chosen && !chosen.complete ? (
             <p className="mt-1 text-[11px] text-amber-300" data-testid="waiting-deck-incomplete">
-              所选卡组不足 {MAIN_DECK_SIZE} 张，本局使用阵营默认卡组
+              所选卡组不足 {MAIN_DECK_SIZE} 张，本局使用「{play.label}」
             </p>
           ) : null}
         </label>

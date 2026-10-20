@@ -30,8 +30,8 @@ export const SOCKET_EVENTS = {
    * 换卡组 —— D-141（Era 2026-10-19：对局前与准备页都能选）。
    *
    * 只在**未开局**时允许；开局后服务端拒 `DECK_LOCKED`。
-   * payload 是 `{ deck: string[] }`（30 个 defId），空数组 = 回到阵营默认卡组。
-   * 指挥官不随卡组提交 —— 仍由席位阵营决定。
+   * payload 是 `{ deck: string[], commander?: string }`（30 个 defId + 指挥官，D-184）。
+   * 空数组 = 回到服务端默认卡组；指挥官与卡组一起换，不再有「按阵营决定」。
    */
   roomDeck: 'room:deck',
   gameIntent: 'game:intent',

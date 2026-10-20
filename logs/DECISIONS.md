@@ -970,3 +970,36 @@ E2E 里先后手由掷骰决定、起手牌由洗牌决定，两者都是随机�
 - 影响：`client/src/features.ts`（新增）、`TableScreen.tsx`（GameOverPanel 末尾一个按钮）、
   `e2e/game.spec.ts`（断言可见 + disabled + 文案）、`README-运行说明.md` §10。
 - 破坏性：**否**（纯 UI 新增；E2E 29/29、单测 278 全过）。
+
+## ADR-0042 · 删除「阵营」，一套卡组自带指挥官（D-184）
+
+- 背景：Era 2026-10-20 —— **「我的设计里不存在阵营之分，卡池可以混选，我建议删掉阵营限制，
+  根据卡组选择就行了。卡组编辑的时候还要有个地方选指挥官。」**
+  此前（D-235）建房 / 加入要选阵营，服务端据此装配「阵营对应的 30 张 + 该阵营指挥官」，
+  自建卡组只能覆盖主卡组那 30 张 —— 与 Era 的模型不符（他从没打算限制混搭）。
+- 决策：
+  1. **删掉阵营这一层**：`Faction` 类型、`FactionSchema`、`room:create` / `room:join` 的 `faction`
+     字段、主界面两个阵营下拉。
+  2. **一套卡组 = 30 张主卡 + 1 位指挥官**：`SavedDeck.commander`、`room:deck` 也带 `commander`；
+     服务端 `validateCommander` 校验（必须存在且 `type === 'commander'`）。
+  3. **编辑器顶部选指挥官**：三位指挥官横排（炎刃军统领 / 霜律裁决官 / 星轨观测者），
+     点击切换、高亮当前选中、「看效果」打开现有详情浮层。详情里**不显示 ±** ——
+     指挥官不占主卡组，摆两个必然无效的按钮只会让人以为坏了。
+  4. **缺省回退改为确定性**：`defaultDeckSetup` 不再按座位轮换三套；只给指挥官 → 用它自带那套，
+     都没给 → 第一套基础卡组。轮换是阵营时代的产物，会让两席「默认」就不同。
+- 为什么合成「一套」而不是并列两个字段各自生效：
+  玩家心智里「我带的这套牌」本来就包含指挥官。并列会允许「霜律指挥官 + 炎刃 30 张」这种
+  界面说不清的组合 —— 规则上合法（卡池不限体系），但它应该由玩家**主动**选出来，
+  而不是因为两个字段各自缺省、服务端随便补出来。
+- 兼容处理（三处都不能漏）：
+  1. 老客户端仍带 `faction`：`z.object()` 会 strip，**不报 400**（schema.test 钉住）；
+  2. 旧 localStorage 卡组没有 `commander`：补默认指挥官，**不丢那 30 张**；
+  3. 旧 `replay.json`：`setup` 里本来就有 `commanders`，结构与语义都没变，回放不受影响。
+- 一个容易踩的点：`RoomDeckSchema` 必须显式声明 `commander`。`z.object()` 对未声明键是 strip，
+  漏了就是「客户端换了、服务端还用旧的」，界面上完全看不出（`payload`、`deck` 各踩过一次）。
+- 影响：`shared/src/{types,schema,default-decks,index}.ts`、`server/src/{deck-pool,index}.ts`、
+  `server/src/room/{types,room,session}.ts`、`client/src/{decks,HomeScreen,DeckScreen,TableScreen,useRoom,types}.ts`、
+  测试 6 个文件、`README-运行说明.md` §9 / §10 / §11、`docs/01` §1.2、`docs/11` X-18、`docs/16` 模拟表。
+- 破坏性：**是（协议）** —— `faction` 字段删除。但入站是 strip 而非拒绝，老客户端只是失去
+  「按阵营分配」的行为，不会 400；对局照常开始。新客户端与旧服务端组合不兼容（`commander` 会被旧
+  schema strip → 回落默认卡组），因此**前后端必须一起更新**（本项目同端口同源发布，天然一致）。

@@ -18,9 +18,9 @@ test('首次进入预置三套基础卡组，每套 30 张且可直接设为开�
   const page = await newClient(browser, 'DeckDefault');
   await page.getByTestId('edit-deck').click();
 
-  // 三套基础卡组都在，且按阵营顺序
-  for (const faction of ['blade', 'frost', 'star']) {
-    await expect(page.getByTestId(`deck-tab-basic-${faction}`)).toBeVisible();
+  // 三套基础卡组都在（slug 只是标识，不是阵营 —— ADR-0042）
+  for (const slug of ['blade', 'frost', 'star']) {
+    await expect(page.getByTestId(`deck-tab-basic-${slug}`)).toBeVisible();
   }
 
   // 默认选中第一套，正好 30 张且判为合法
@@ -110,14 +110,17 @@ test('不进入编辑页，主界面下拉里已经有三套基础卡组', async
   const choice = page.getByTestId('deck-choice');
   await expect(choice).toBeVisible();
 
-  // 1 个「阵营默认卡组」+ 3 套基础卡组
-  await expect(choice.locator('option')).toHaveCount(4);
+  // 正好三套预置的基础卡组（D-184：没有「阵营默认」这一项了，也不再额外列一份虚拟的）
+  await expect(choice.locator('option')).toHaveCount(3);
   await expect(choice).toContainText('炎刃');
   await expect(choice).toContainText('霜律');
   await expect(choice).toContainText('星轨');
 
-  // 三套都是完整的 30 张，没有一项该被禁用
+  // 全部都是完整的 30 张，没有一项该被禁用
   await expect(choice.locator('option:disabled')).toHaveCount(0);
+
+  // 选中的那套必须显示它自带的指挥官 —— 卡组与指挥官是一个整体
+  await expect(page.getByTestId('deck-in-use')).toContainText('指挥官');
 });
 
 test('已设为开局的卡组被改到不足 30 张：两处都提示会回落', async ({ browser }) => {
@@ -131,7 +134,7 @@ test('已设为开局的卡组被改到不足 30 张：两处都提示会回落'
   // 减一张 → 29 张，不再合法
   await page.getByTestId('deck-sel-remove-starScout').click();
   await expect(page.getByTestId('deck-total')).toHaveText('29');
-  await expect(page.getByTestId('deck-fallback-hint')).toContainText('回落到阵营默认');
+  await expect(page.getByTestId('deck-fallback-hint')).toContainText('开局会回落');
 
   // 主界面也必须说清楚，否则玩家以为用的就是这套
   await page.getByRole('button', { name: '返回' }).click();
@@ -157,7 +160,7 @@ test('删除卡组要二次确认，取消不删', async ({ browser }) => {
   await expect(page.getByTestId('deck-tab-basic-star')).toBeVisible();
 });
 
-test('准备页也说明为什么回落到阵营默认', async ({ browser }) => {
+test('准备页也说明为什么回落（不再有「阵营默认」）', async ({ browser }) => {
   const host = await newClient(browser, 'WaitHint');
 
   // 选星轨 → 设为开局 → 减一张（29 张，不再合法）
@@ -168,8 +171,9 @@ test('准备页也说明为什么回落到阵营默认', async ({ browser }) => 
   await expect(host.getByTestId('deck-total')).toHaveText('29');
   await host.getByRole('button', { name: '返回' }).click();
 
-  // 建房即进准备页：结论（阵营默认）与原因（所选卡组不足）都要在
+  // 建房即进准备页：结论（实际用哪套）与原因（所选卡组不足）都要在
   await host.getByTestId('create').click();
-  await expect(host.getByTestId('waiting-deck-current')).toContainText('阵营默认卡组');
+  await expect(host.getByTestId('waiting-deck-current')).toContainText('本局使用');
+  await expect(host.getByTestId('waiting-deck-current')).toContainText('指挥官');
   await expect(host.getByTestId('waiting-deck-incomplete')).toBeVisible();
 });

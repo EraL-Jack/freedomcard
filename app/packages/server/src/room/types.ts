@@ -1,4 +1,4 @@
-import type { Faction, MatchFormat, PlayerId } from '@app/shared';
+import type { MatchFormat, PlayerId } from '@app/shared';
 import type { RoomErrorCode } from '@app/shared/constants';
 
 /**
@@ -31,16 +31,17 @@ export interface Seat {
    */
   ready: boolean;
   /**
-   * 阵营（D-235）—— 建房 / 加入时由玩家选择，决定这一席位的 30 张主卡组与指挥官。
-   * 缺省时由服务端按座位轮换（老客户端不带该字段也要能用）。
+   * 本局指挥官 `defId`（D-184 / ADR-0042）—— 与 `deck` 成对提交，开局装配时使用。
+   *
+   * 没有「阵营」了：卡池可以混选，指挥官由玩家在卡组里选。
+   * 缺省时落到第一套基础卡组的指挥官（老客户端不带该字段也要能用）。
    */
-  faction: Faction;
+  commander: string;
   /**
    * 自建主卡组（D-141）—— 30 个 `defId`，入站已用 `validateDeckList` 校验过。
    *
-   * `undefined` = 使用阵营默认卡组（客户端提交空数组等价于回到默认）。
+   * `undefined` = 使用服务端默认卡组（客户端提交空数组等价于回到默认）。
    * 只在未开局时可改，开局后锁定（`DECK_LOCKED`）。
-   * 指挥官**始终**由阵营决定，`deck` 只覆盖主卡组那 30 张。
    */
   deck?: readonly string[];
 }

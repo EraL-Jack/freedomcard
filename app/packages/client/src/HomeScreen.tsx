@@ -1,24 +1,15 @@
 import { useState } from 'react';
 
-import { MAIN_DECK_SIZE, type Faction, type MatchFormat } from '@app/shared';
+import { MAIN_DECK_SIZE, type MatchFormat } from '@app/shared';
+import { CARD_POOL } from '@app/shared/cards';
 
 import {
-  deckDefIds,
-  deckTotal,
-  isDeckComplete,
+  listSelectionOptions,
   loadActiveDeckId,
-  loadDecks,
   saveActiveDeckId,
+  selectionForPlay,
 } from './decks.js';
 import type { RoomSession } from './useRoom.js';
-
-/** 阵营选项 —— 与 shared 的 `Faction` 一一对应；空串 = 交给服务端按座位轮换。 */
-const FACTIONS: readonly { value: Faction | ''; label: string }[] = [
-  { value: '', label: '随机分配' },
-  { value: 'blade', label: '炎刃 · 除外成长' },
-  { value: 'frost', label: '霜律 · 冻结控制' },
-  { value: 'star', label: '星轨 · 展示引擎' },
-];
 
 /**
  * 主界面 —— B1 补充 1：「主界面就是加入房间、创建房间、编辑卡组」。
@@ -26,8 +17,13 @@ const FACTIONS: readonly { value: Faction | ''; label: string }[] = [
  * ⚠️ B1 明确说**不需要**大厅页、房间等待页、排行榜，故这里不建那些页面。
  * B1 补充 3：创建 / 加入房间即进入对战桌。
  *
- * D-132 / D-235：建房时选**赛制**（BO1/BO3）与**阵营**；加入时也选阵营。
- * docs/16 §1.3：先手胜率约 56.5%，座位差交给 BO3「双方各先手一次」消化。
+ * D-132：建房时选**赛制**（BO1/BO3）。
+ *
+ * ## D-184 / ADR-0042：阵营下拉已删除
+ *
+ * Era：「我的设计里不存在阵营之分，卡池可以混选……根据卡组选择就行了。」
+ * 于是这里只剩「用哪套卡组」——一套卡组自带 30 张主卡与 1 位指挥官，
+ * 建房与加入用的是同一个选择（准备页还能改）。
  */
 export default function HomeScreen(props: {
   session: RoomSession;
@@ -38,24 +34,39 @@ export default function HomeScreen(props: {
   const [code, setCode] = useState('');
   const [capacity, setCapacity] = useState('2');
   const [format, setFormat] = useState<MatchFormat>('bo1');
-  const [faction, setFaction] = useState<Faction | ''>('');
-  const [joinFaction, setJoinFaction] = useState<Faction | ''>('');
   const [localError, setLocalError] = useState('');
 
   /**
-   * 自建卡组（D-141）：对局前在这里选，准备页还能改。
+   * 卡组选择（D-141 / D-184）：对局前在这里选，准备页还能改。
    *
-   * 只列「正好 30 张」的卡组可选；未凑满的置灰并显示张数，避免把非法卡组发出去。
+   * 选项 = 三套基础卡组（恒可开局）+ 我的卡组（不足 30 张的置灰并显示张数）。
    * 选择落 localStorage，与准备页共用同一个「当前卡组」。
+   *
+   * ⚠️ 默认值不能留空：没有「阵营默认」这回事了，界面必须明确指向一套，
+   * 否则玩家看到的和实际开局的可能不是同一套。
    */
-  const [decks] = useState(loadDecks);
-  const [deckId, setDeckId] = useState(loadActiveDeckId);
-  const chosenDeck = decks.find((d) => d.id === deckId && isDeckComplete(d)) ?? null;
-  const chosenDefIds = chosenDeck ? deckDefIds(chosenDeck) : undefined;
+  const [options] = useState(listSelectionOptions);
+  /**
+   * 初始值优先用**本机记住的那一套**（哪怕它已经被改到不满 30 张 —— 那正是要提示的情况）。
+   * 只有记住的 id 已经不存在时，才退到第一套可用的。
+   *
+   * ⚠️ 不能直接用 `selectionForPlay().value`：那会**静默换掉**玩家的选择，
+   * 于是「这套不满 30 张」的提示永远不会出现，玩家以为用的就是它。
+   */
+  const [deckValue, setDeckValue] = useState(() => {
+    const saved = loadActiveDeckId();
+    if (options.some((o) => o.value === saved)) return saved;
+    return options.find((o) => o.complete)?.value ?? options[0]?.value ?? '';
+  });
+  /** 下拉里选中的那条（可能不满 30 张 —— 那只是「想用」）。 */
+  const chosen = options.find((o) => o.value === deckValue) ?? selectionForPlay();
+  /** 真正会提交的那一套 —— 选中的不可用时回落第一套基础卡组。 */
+  const play = chosen.complete ? chosen : selectionForPlay();
+  const playCommanderName = CARD_POOL[play.commander]?.name ?? play.commander;
 
-  const pickDeck = (id: string): void => {
-    setDeckId(id);
-    saveActiveDeckId(id);
+  const pickDeck = (value: string): void => {
+    setDeckValue(value);
+    saveActiveDeckId(value);
   };
 
   /** 建房 / 加房前的**本地**校验 —— 不发请求就能拦住的错误，不要等服务器打回。 */
@@ -106,38 +117,35 @@ export default function HomeScreen(props: {
           />
         </label>
 
-        {/* 自建卡组（D-141）：建房与加入都用这里的选择；准备页还能改 */}
+        {/* 卡组（D-141 / D-184）：建房与加入都用这里的选择；准备页还能改 */}
         <label className="block">
-          <span className="text-xs text-slate-400">我的卡组（不选 = 阵营默认）</span>
+          <span className="text-xs text-slate-400">我的卡组（卡组自带指挥官）</span>
           <select
             className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2"
-            value={deckId}
+            value={deckValue}
             onChange={(e) => pickDeck(e.target.value)}
             data-testid="deck-choice"
           >
-            <option value="">阵营默认卡组</option>
-            {decks.map((d) => {
-              const n = deckTotal(d);
+            {options.map((o) => {
+              const n = o.deck.length;
+              const suffix = o.complete ? '' : `，未完成`;
               return (
-                <option key={d.id} value={d.id} disabled={!isDeckComplete(d)}>
-                  {d.name}（{n}/{MAIN_DECK_SIZE} 张{isDeckComplete(d) ? '' : '，未完成'}）
+                <option key={o.value} value={o.value} disabled={!o.complete}>
+                  {o.label}（{n}/{MAIN_DECK_SIZE} 张{suffix}）· {CARD_POOL[o.commander]?.name ?? ''}
                 </option>
               );
             })}
           </select>
-          {decks.length === 0 ? (
-            <p className="mt-1 text-[11px] text-slate-500">
-              还没有自建卡组，点下方「编辑卡组」可以新建。
-            </p>
-          ) : null}
+          <p className="mt-1 text-[11px] text-slate-500" data-testid="deck-in-use">
+            本局使用：{play.label} · 指挥官 {playCommanderName}
+          </p>
           {/*
-            选了一套但不完整 —— 现在会静默回落到阵营默认。
-            `chosenDeck` 只在「找得到且正好 30 张」时非空，所以这里就是回落点；
+            选了一套但不完整 —— 现在会**回落**到第一套基础卡组（不再有「阵营默认」）。
             不提示等于骗玩家「我用的就是这套」。
           */}
-          {deckId && !chosenDeck ? (
+          {!chosen.complete ? (
             <p className="mt-1 text-[11px] text-amber-300" data-testid="deck-incomplete-hint">
-              所选卡组不足 {MAIN_DECK_SIZE} 张，开局将使用阵营默认卡组
+              所选卡组不足 {MAIN_DECK_SIZE} 张，开局将使用「{play.label}」
             </p>
           ) : null}
         </label>
@@ -169,23 +177,6 @@ export default function HomeScreen(props: {
           </select>
         </label>
 
-        {/* 阵营（D-235）：决定本方 30 张主卡组与指挥官 */}
-        <label className="block">
-          <span className="text-xs text-slate-400">我方阵营</span>
-          <select
-            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2"
-            value={faction}
-            onChange={(e) => setFaction(e.target.value as Faction | '')}
-            data-testid="faction"
-          >
-            {FACTIONS.map((f) => (
-              <option key={f.value || 'random'} value={f.value}>
-                {f.label}
-              </option>
-            ))}
-          </select>
-        </label>
-
         <button
           type="button"
           className="w-full rounded bg-emerald-700 px-4 py-3"
@@ -193,7 +184,8 @@ export default function HomeScreen(props: {
             createOrJoin((name) => {
               // 服务端上限 8：超范围在这里折回，不要等服务器打回。
               const n = Math.min(8, Math.max(1, Math.round(Number(capacity) || 2)));
-              session.create(name, n, format, faction || undefined, chosenDefIds);
+              const play = selectionForPlay();
+              session.create(name, n, format, play.deck, play.commander);
             })
           }
           data-testid="create"
@@ -213,28 +205,15 @@ export default function HomeScreen(props: {
             data-testid="code"
           />
         </label>
-        <label className="block">
-          <span className="text-xs text-slate-400">我方阵营</span>
-          <select
-            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2"
-            value={joinFaction}
-            onChange={(e) => setJoinFaction(e.target.value as Faction | '')}
-            data-testid="join-faction"
-          >
-            {FACTIONS.map((f) => (
-              <option key={f.value || 'random'} value={f.value}>
-                {f.label}
-              </option>
-            ))}
-          </select>
-        </label>
         <button
           type="button"
           className="w-full rounded bg-sky-700 px-4 py-3 disabled:opacity-50"
           onClick={() =>
-            createOrJoin((name) =>
-              session.join(code, name, joinFaction || undefined, chosenDefIds),
-            )
+            createOrJoin((name) => {
+              // 加入时也用同一套卡组选择（D-184：不再有单独的「加入阵营」下拉）。
+              const play = selectionForPlay();
+              session.join(code, name, play.deck, play.commander);
+            })
           }
           disabled={!code.trim()}
           data-testid="join"
