@@ -210,8 +210,15 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
               设为开局卡组
             </button>
           )
+        ) : deck && inUseId === deck.id ? (
+          // 已经设为开局，但事后被改到不足 30 张 —— 开局会静默回落到阵营默认，必须说出来。
+          <span className="px-1 text-xs text-amber-300" data-testid="deck-fallback-hint">
+            这套已设为开局卡组，但现在只有 {total} 张 —— 开局会回落到阵营默认
+          </span>
         ) : deck ? (
-          <span className="px-1 text-xs text-slate-500">凑满 {MAIN_DECK_SIZE} 张才能设为开局卡组</span>
+          <span className="px-1 text-xs text-slate-500">
+            凑满 {MAIN_DECK_SIZE} 张才能设为开局卡组
+          </span>
         ) : null}
       </section>
 

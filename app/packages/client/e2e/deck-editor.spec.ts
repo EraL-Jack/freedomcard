@@ -119,3 +119,21 @@ test('不进入编辑页，主界面下拉里已经有三套基础卡组', async
   // 三套都是完整的 30 张，没有一项该被禁用
   await expect(choice.locator('option:disabled')).toHaveCount(0);
 });
+
+test('已设为开局的卡组被改到不足 30 张：两处都提示会回落', async ({ browser }) => {
+  const page = await newClient(browser, 'DeckFallback');
+  await page.getByTestId('edit-deck').click();
+
+  await page.getByTestId('deck-tab-basic-star').click();
+  await page.getByTestId('use-deck').click();
+  await expect(page.getByTestId('deck-in-use')).toBeVisible();
+
+  // 减一张 → 29 张，不再合法
+  await page.getByTestId('deck-sel-remove-starScout').click();
+  await expect(page.getByTestId('deck-total')).toHaveText('29');
+  await expect(page.getByTestId('deck-fallback-hint')).toContainText('回落到阵营默认');
+
+  // 主界面也必须说清楚，否则玩家以为用的就是这套
+  await page.getByRole('button', { name: '返回' }).click();
+  await expect(page.getByTestId('deck-incomplete-hint')).toBeVisible();
+});

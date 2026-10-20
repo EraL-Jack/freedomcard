@@ -65,3 +65,43 @@ test('编辑卡组 → 设为开局 → 建房开局，手牌来自自建卡组�
   const allowed = new Set(PICKS.map((p) => p.name));
   for (const c of hand) expect(allowed.has(c.name), `不该出现的卡：${c.name}`).toBe(true);
 });
+
+/**
+ * 基础卡组（D-169）能不能真的用来开局。
+ *
+ * 上一条测的是「自建卡组」（PICKS 手搓 10 种卡），这条测**预置的三套**：
+ * 选一套 → 设为开局 → 建房开局 → 手牌必须全部来自该阵营。
+ *
+ * 分开测的理由：预置卡组的 id 是固定的（`basic-frost`），它能否被 `activeDeck()`
+ * 认出来、能否通过服务端校验，与"玩家现场搓出来的卡组"不是同一条路径。
+ */
+test('基础卡组：选霜律一套开局，手牌全部来自霜律（D-169）', async ({ browser }) => {
+  const host = await newClient(browser, 'BasicHost');
+
+  await host.getByTestId('edit-deck').click();
+  await host.getByTestId('deck-tab-basic-frost').click();
+  await expect(host.getByTestId('deck-total')).toHaveText('30');
+  await host.getByTestId('use-deck').click();
+  await expect(host.getByTestId('deck-in-use')).toBeVisible();
+
+  await host.getByRole('button', { name: '返回' }).click();
+  await expect(host.getByTestId('deck-choice')).not.toHaveValue('');
+
+  await host.getByTestId('create').click();
+  const code = ((await host.getByTestId('room-code').textContent()) ?? '').trim();
+
+  const guest = await newClient(browser, 'BasicGuest');
+  await guest.getByTestId('code').fill(code);
+  await guest.getByTestId('join').click();
+  await expect(guest.getByTestId('ready')).toBeVisible({ timeout: 10_000 });
+
+  await host.getByTestId('ready').click();
+  await guest.getByTestId('ready').click();
+  await expect(host.getByTestId('turn')).toBeVisible({ timeout: 15_000 });
+
+  const hand = await readHand(host);
+  expect(hand.length).toBeGreaterThanOrEqual(5);
+  for (const c of hand) {
+    expect(c.name.startsWith('霜律'), `手牌出现了非霜律卡：${c.name}`).toBe(true);
+  }
+});
