@@ -8,7 +8,8 @@
  * 坏数据一律丢弃 —— 读卡组不能把整个界面炸掉。
  */
 
-import { MAIN_DECK_SIZE } from '@app/shared';
+import { MAIN_DECK_SIZE } from '@app/shared/constants';
+import { BASIC_DECKS } from '@app/shared/default-decks';
 
 export interface SavedDeck {
   id: string;
@@ -46,6 +47,24 @@ export function loadDecks(): SavedDeck[] {
 
 export function saveDecks(decks: SavedDeck[]): void {
   localStorage.setItem(LS_DECKS, JSON.stringify(decks));
+}
+
+/**
+ * 首次使用：预置三套基础卡组（D-169）。
+ *
+ * 判定依据是 **`fc.decks` 这个键存在与否**，而不是「读出来是空数组」——
+ * 玩家主动把卡组全删光也是一种有效状态，下次进来不该又冒出三套。
+ * 三套配方来自 `@app/shared/default-decks`，与服务端未选卡组时的回退同源。
+ */
+export function ensureDefaultDecks(): SavedDeck[] {
+  if (localStorage.getItem(LS_DECKS) !== null) return loadDecks();
+  const seeded: SavedDeck[] = BASIC_DECKS.map((d) => ({
+    id: `basic-${d.faction}`,
+    name: d.name,
+    cards: { ...d.recipe },
+  }));
+  saveDecks(seeded);
+  return seeded;
 }
 
 export function deckTotal(deck: SavedDeck): number {

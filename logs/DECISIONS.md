@@ -867,3 +867,22 @@ E2E 里先后手由掷骰决定、起手牌由洗牌决定，两者都是随机�
   实测约 1.6s，在可接受范围。若将来出现 10 张以上的批量展示，需要改成「整批固定时长」而不是逐张累加。
 - 影响：`client/src/useRoom.ts`、`docs/09`（H37）、`README §11.6`。
 - 破坏性：**否**（纯表现层）。
+
+## ADR-0037 · 默认卡组配方下沉 shared，客户端与服务端同源（D-169）
+
+- 背景：三套基础卡组（炎刃 / 霜律 / 星轨）原本只存在于 `server/src/deck-pool.ts`，
+  注释里还写着「卡组编辑落地后本文件即可删除」。结果就是：服务端能按阵营发牌，
+  但**客户端编辑页永远是空白**，玩家开局前得从 44 张（不含指挥官）里手动凑 30 张。
+- 决策：把配方与阵营→指挥官映射下沉到 `@app/shared/default-decks`，
+  服务端 `deck-pool.ts` 改为 re-export 只保留「按座位装配」的职责；
+  客户端 `decks.ts` 的 `ensureDefaultDecks()` 首次进入时写入三套。
+- 为什么放 shared 而不是 client：同一份数据必须被两端消费，各写一份就会漂移
+  —— 客户端预置的卡组与服务端校验口径不一致时，玩家看到「合法」却开不了局。
+  这与 `cards.ts` 下沉的理由完全一致（ADR-0020）。
+- 判定「首次」的依据是 **`fc.decks` 键存在与否**，不是「读出来是空数组」：
+  玩家主动删光卡组是有效状态，不该下次进来又冒出三套。
+- 边界：配方是**数据**不是规则，改它不触发任何结算逻辑；合法性由
+  `deckRecipeProblems()` 与服务端 `validateDeckList()` 各自校验，口径一致。
+- 影响：`shared/src/default-decks.ts`（新增）、`shared/package.json`（新子路径导出）、
+  `server/src/deck-pool.ts`、`client/src/decks.ts`、`client/src/DeckScreen.tsx`。
+- 破坏性：**否**（服务端导出名保持不变，`defaultDeckSetup` 行为不变）。
