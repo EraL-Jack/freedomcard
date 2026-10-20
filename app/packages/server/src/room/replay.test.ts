@@ -56,3 +56,69 @@ describe('回放装配参数（D-159）', () => {
     expect(stateHash(createInitialState(out.setup!))).toBe(out.initialHash);
   });
 });
+
+/**
+ * BO3 多局归档（D-175）。
+ *
+ * 要钉住的是：`markStart` 每局都会调一次，若 `intents` 继续往同一个数组里 push，
+ * 记录里会出现**两个 `game:start`** —— 重放到第二个必然被拒（「对局已开始」），
+ * 整份文件就不可重放了。实测在 4 份历史文件上复现过。
+ */
+describe('BO3 多局归档（D-175）', () => {
+  const mkSetup = (seed: number) => ({
+    seed,
+    seats: ['a', 'b'],
+    decks: { a: [] as string[], b: [] as string[] },
+    commanders: { a: 'bladeLord', b: 'frostAdjudicator' },
+  });
+  const mkIntent = (seq: number) => ({
+    type: 'game:start',
+    actor: 'system' as const,
+    playerId: 'a',
+    seq,
+  });
+
+  it('第二局开始时把上一局推进 rounds，并从空序列重新开始', () => {
+    const rec = new ReplayRecorder(0);
+
+    rec.markStart(mkSetup(1), 'hashA');
+    rec.recordStep(mkIntent(1), [], 'h1');
+    expect(rec.current().rounds).toHaveLength(0);
+
+    // 第 2 局开局
+    rec.markStart(mkSetup(2), 'hashB');
+    const mid = rec.current();
+    expect(mid.rounds).toHaveLength(1);
+    expect(mid.rounds[0]!.setup.seed).toBe(1);
+    expect(mid.rounds[0]!.initialHash).toBe('hashA');
+    expect(mid.rounds[0]!.intents).toHaveLength(1);
+    // 新局从空开始 —— 这条是关键：不然就会有两个 game:start 挤在同一段
+    expect(mid.intents).toHaveLength(0);
+    expect(mid.hashChain).toHaveLength(0);
+    expect(mid.setup?.seed).toBe(2);
+  });
+
+  it('三局时 rounds 有两项，顶层是最后一局', () => {
+    const rec = new ReplayRecorder(0);
+    for (const seed of [1, 2, 3]) {
+      rec.markStart(mkSetup(seed), `hash${seed}`);
+      rec.recordStep(mkIntent(1), [], `h${seed}`);
+    }
+    const out = rec.finish();
+
+    expect(out.rounds.map((r) => r.setup.seed)).toEqual([1, 2]);
+    expect(out.setup?.seed).toBe(3);
+    expect(out.intents).toHaveLength(1);
+    // 每局各自的 intent 数都是 1 —— 没有被前面的局污染
+    expect(out.rounds.every((r) => r.intents.length === 1)).toBe(true);
+  });
+
+  it('单局记录不产生 rounds（保持旧格式形状）', () => {
+    const rec = new ReplayRecorder(0);
+    rec.markStart(mkSetup(1), 'hashA');
+    rec.recordStep(mkIntent(1), [], 'h1');
+    const out = rec.finish();
+    expect(out.rounds).toEqual([]);
+    expect(out.setup?.seed).toBe(1);
+  });
+});
