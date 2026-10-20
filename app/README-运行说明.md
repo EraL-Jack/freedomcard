@@ -35,6 +35,18 @@ pnpm dev          # 同时起 server(3000) 与 client(5173)
 
 客户端通过 Vite 代理访问 `/health` 与 `/socket.io`，因此页面与服务端**同源**，无需处理 CORS。
 
+### 3.1 人机对战（D-242）
+
+主界面点 **「人机对战（对手：电脑）」** 就能开一间单人房，**不用再开第二个窗口**：
+
+- 建房瞬间服务端就坐入一个 AI 席位（昵称「电脑」），房间容量固定 2 人；
+- AI 永远就绪 —— 你点「准备」立刻开局；
+- AI 每 600ms 走一步，走法与真人**完全相同**（服务端系统 Intent），
+  所以断线重连、回放记录、事件日志全都照常，不需要任何特殊处理；
+- 用的是你当前选的**卡组与赛制** —— 想试新卡组就开人机房；
+- 定位是「能完整打完一局」的启发式，不是博弈 AI（不算斩杀、不留牌）。
+  要调强度只改 `core/src/ai.ts` 的 `decideAiMove`，其它层不受影响。
+
 ## 4. 局域网联机测（手机同 WiFi）
 
 ```bash
@@ -51,9 +63,9 @@ Windows 需放行 5173 / 3000 端口的入站规则（网络配置文件为 Publ
 | `pnpm dev` | 并行起服务端与客户端 |
 | `pnpm typecheck` | 全量 `tsc --noEmit` |
 | `pnpm lint` | ESLint（flat config） |
-| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层，2026-10-13 时点 **131 passed** |
+| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层，2026-10-21 时点 **334 passed**（core 200 + server 134） |
 | `pnpm build` | 构建客户端到 `packages/client/dist` |
-| `pnpm --filter @app/client test:e2e` | 端到端（Playwright）：**7 条** —— 房间流程 / 视口溢出 / 联机开局 / 回合操作链路 / 攻击与指挥官伤害 |
+| `pnpm --filter @app/client test:e2e` | 端到端（Playwright）：**37 条** —— 房间流程 / 视口溢出 / 联机开局 / 回合操作 / 攻击与指挥官伤害 / 卡组编辑 / 人机对战 |
 
 > 首次跑 E2E 需先下载浏览器：`pnpm --filter @app/client exec playwright install chromium`（约 197 MiB，慢）。
 > 截图落在 `packages/client/e2e/screenshots/`（已被 `.gitignore` 忽略）。

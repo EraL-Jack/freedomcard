@@ -131,6 +131,8 @@ export interface RoomSession {
     format?: MatchFormat,
     deck?: string[],
     commander?: string,
+    /** 人机房（D-242）：服务端自动占一个 AI 席位，`capacity` 被强制为 2。 */
+    solo?: boolean,
   ): void;
   join(code: string, nickname: string, deck?: string[], commander?: string): void;
   /** 准备页换卡组（D-184）—— 未开局时可用；卡组与指挥官一起换。 */
@@ -515,6 +517,7 @@ export function useRoom(): RoomSession {
       format: MatchFormat = 'bo1',
       deck?: string[],
       commander?: string,
+      solo?: boolean,
     ): void => {
       localStorage.setItem(LS.nickname, nickname);
       socket.emit(
@@ -523,12 +526,16 @@ export function useRoom(): RoomSession {
           nickname: nickname || '玩家',
           capacity,
           format,
+          // D-242：人机房 —— 服务端会立刻坐入 AI 并把容量收到 2。
+          ...(solo ? { solo: true } : {}),
           // D-141 / D-184：只有正好 30 张才会传；指挥官与它成对。
           ...(deck && deck.length > 0 ? { deck } : {}),
           ...(commander ? { commander } : {}),
         },
         (res: Ack) => {
-          if (acceptIdentity(res)) setNotice(`已建房，房间码 ${res.room?.code ?? ''}`);
+          if (acceptIdentity(res)) {
+            setNotice(solo ? '已开人机房，对手是电脑' : `已建房，房间码 ${res.room?.code ?? ''}`);
+          }
         },
       );
     },

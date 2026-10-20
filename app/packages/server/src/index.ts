@@ -16,6 +16,8 @@ import {
   SOCKET_EVENTS,
   RECONNECT_GRACE_MS,
   TURN_TIMEOUT_MS,
+  AI_PLAYER_ID,
+  AI_STEP_DELAY_MS,
   type GameState,
   type EchoPayload,
   type Intent,
@@ -311,9 +313,109 @@ function handleTurnTimeout(roomId: string): void {
     rt.timer.arm(); // 已进入下一回合 —— 重新计时
   }
   broadcastRoom(roomId);
+  // 超时是把回合交给下一个人，人机房里可能正好轮到 AI（D-242）。
+  scheduleAi(roomId);
 }
 
-/** 一小局是否已结束（血空 / 认输 / 40 轮判和）。 */
+/* ------------------------------ 人机对战（D-242） ------------------------------ */
+
+/**
+ * 每个房间最多一个待执行的 AI 定时器 —— 「已排队」的标记本身就是去重。
+ *
+ * 为什么必须有去重：玩家每操作一次都会 `scheduleAi`，而 AI 自己每动一手也会再排一拍。
+ * 不去重就会在同一时刻堆出多个定时器，AI 一步接一步地瞬间打完整回合，
+ * 玩家只看到事件齐刷刷蹦出来，既看不清也失去了「对面在思考」的反馈。
+ */
+const aiTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** 现在是否轮到 AI（含「受伤展示把待定选择挂给 AI」这种非行动方场景）。 */
+function aiToMove(state: GameState): boolean {
+  if (!state.started || state.winner !== null || state.draw) return false;
+  if (state.pendingChoice) return state.pendingChoice.playerId === AI_PLAYER_ID;
+  return state.seats[state.activeSeat] === AI_PLAYER_ID;
+}
+
+/** 若轮到 AI，安排下一拍；不是 AI 的场合直接返回（不排空转的定时器）。 */
+function scheduleAi(roomId: string): void {
+  const rt = runtimes.get(roomId);
+  const room = roomManager.getRoom(roomId);
+  if (!rt || !room) return;
+  if (room.phase !== 'playing' || room.awaitingNext) return;
+  if (!room.seats.some((s) => s?.playerId === AI_PLAYER_ID)) return;
+  if (!aiToMove(rt.state)) return;
+  if (aiTimers.has(roomId)) return;
+  const timer = setTimeout(() => {
+    aiTimers.delete(roomId);
+    runAiStep(roomId);
+  }, AI_STEP_DELAY_MS);
+  // 不阻止进程退出 —— 服务端关停时不必等 AI 这一拍跑完。
+  timer.unref?.();
+  aiTimers.set(roomId, timer);
+}
+
+/**
+ * AI 走一拍。
+ *
+ * 与真人**完全同一条链路**（`submitSystemIntent` → 引擎 → 事件广播 → 回放记录），
+ * 区别只有两处：`actor: 'system'`（AI 不是 socket 客户端）、`reason: 'ai'`（日志可辨）。
+ *
+ * ⚠️ **被拒必须兜底**：AI 的启发式不保证每一步都合法（例如某张法术当前找不到合法目标）。
+ * 原地重试会让同一拍无限发出同一条必被拒的 Intent，对局就停死在那里。
+ * 所以一旦被拒就直接推进阶段 —— 宁可少打一张牌，也不能让玩家干等。
+ */
+function runAiStep(roomId: string): void {
+  const rt = runtimes.get(roomId);
+  const room = roomManager.getRoom(roomId);
+  if (!rt || !room || room.phase !== 'playing' || room.awaitingNext) return;
+  if (gameOver(rt.state)) return;
+
+  const move = core.decideAiMove(rt.state, AI_PLAYER_ID, CARD_POOL, Date.now());
+  if (!move) return;
+
+  const fire = (type: string, payload?: Record<string, unknown>) => {
+    const intent: Intent = {
+      type,
+      actor: 'system',
+      playerId: AI_PLAYER_ID,
+      seq: rt.serverSeq + 1,
+      reason: 'ai',
+      ...(payload ? { payload } : {}),
+    };
+    return submitSystemIntent(rt.state, intent, {
+      engine,
+      replay: rt.replay,
+      now: () => Date.now(),
+      cards: CARD_POOL,
+      emit: (out) => emitGameOut(roomId, rt, out),
+    });
+  };
+
+  let result = fire(move.type, move.payload);
+  if (result.out.kind !== 'accepted') {
+    fastify.log.warn(
+      {
+        roomId,
+        type: move.type,
+        reason: result.out.kind === 'rejected' ? result.out.error.code : 'dropped',
+      },
+      'AI 操作被拒，兜底推进阶段',
+    );
+    result = fire(core.INTENTS.phaseAdvance);
+  }
+  rt.state = result.state;
+
+  if (gameOver(rt.state)) {
+    finishGame(roomId);
+    return;
+  }
+  // 与玩家 Intent 同一口径：只有被接受才重新计时（否则非法操作能无限续命）。
+  rt.timer.arm();
+  broadcastRoom(roomId);
+  // 可能仍是 AI 的回合（出牌 / 攻击可以连着做），继续排下一拍。
+  scheduleAi(roomId);
+}
+
+/** 一小局是否已结束（血空 / 认输 / 40 轮血量裁定 / 即死模式掉血）。 */
 function gameOver(state: GameState): boolean {
   return state.winner !== null || state.draw;
 }
@@ -426,6 +528,8 @@ function startGame(roomId: string, opts: { firstPlayerId?: string } = {}): void 
   // 再发一次快照：这次才带上计时截止时刻（首次快照在 arm 之前，只能给 deadline = 0）。
   broadcastSnapshot(roomId);
   broadcastRoom(roomId);
+  // 人机房（D-242）：先手可能是 AI，开局即排第一拍。
+  scheduleAi(roomId);
 }
 
 /**
@@ -529,6 +633,12 @@ function sweepRuntimes(): void {
   for (const [roomId, rt] of runtimes) {
     if (roomManager.getRoom(roomId)) continue;
     runtimes.delete(roomId);
+    // 房间没了，还挂着的 AI 定时器也要拔掉（D-242）—— 否则它会对着已销毁的房间空跑一次。
+    const pending = aiTimers.get(roomId);
+    if (pending) {
+      clearTimeout(pending);
+      aiTimers.delete(roomId);
+    }
     // 不 clear 的话，定时器句柄会把已销毁房间的运行时吊住不释放。
     rt.timer.clear();
     // 没开过局的房间不落盘（D-177）—— 否则每间「建房后散了」的房间都会留一个空壳。
@@ -843,6 +953,8 @@ io.on('connection', (socket) => {
         finishGame(located.room.id);
       } else {
         rt.timer.arm();
+        // 人机房（D-242）：玩家这一手做完可能就轮到 AI 了。
+        scheduleAi(located.room.id);
       }
       broadcastRoom(located.room.id);
     }

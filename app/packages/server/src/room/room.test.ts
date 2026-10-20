@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { DEFAULT_MAIN_DECK } from '../deck-pool.js';
+import { BASIC_DECKS } from '@app/shared/default-decks';
 
 import { RoomManager } from './room.js';
 import type { Clock, IdGen } from './types.js';
@@ -404,5 +405,78 @@ describe('RoomManager · prune 的回收边界（D-181）', () => {
     expect(r.ok).toBe(true);
     // 空房立即销毁，不必等 prune
     expect(manager.getRoom(a.value.room.id)).toBeUndefined();
+  });
+});
+
+/* ------------------------------ 人机房（D-242） ------------------------------ */
+
+describe('RoomManager · 人机房', () => {
+  it('建房即坐入 AI：容量收到 2、席位满员、AI 已准备', () => {
+    const { manager } = harness();
+    const r = manager.create({ nickname: 'Era', capacity: 8, solo: true });
+    if (!r.ok) throw new Error('create failed');
+
+    const room = r.value.room;
+    // 人数输入是 8，人机房必须被强制收到 2 —— 规则只验证过 2 人
+    expect(room.capacity).toBe(2);
+    expect(room.seats).toHaveLength(2);
+    expect(room.seats[1]?.playerId).toBe('ai');
+    expect(room.seats[1]?.nickname).toBe('电脑');
+    // AI 永远就绪，否则玩家点准备也开不了局
+    expect(room.seats[1]?.ready).toBe(true);
+    // 系列赛比分要包含 AI 这一席
+    expect(room.wins['ai']).toBe(0);
+  });
+
+  it('AI 用了一套合法的基础卡组 + 对应指挥官（能直接开局）', () => {
+    const { manager } = harness();
+    const r = manager.create({ nickname: 'Era', capacity: 2, solo: true });
+    if (!r.ok) throw new Error('create failed');
+    const ai = r.value.room.seats[1]!;
+    expect(ai.deck).toHaveLength(30);
+    expect(ai.commander).toBeTruthy();
+    // 卡组与指挥官必须**成套** —— 否则开局会装配成「霜律指挥官 + 炎刃 30 张」。
+    // 具体是哪一套由房间码散列决定，这里不断言系别，只断言配对正确。
+    const basic = BASIC_DECKS.find((d) => d.commander === ai.commander);
+    expect(basic).toBeTruthy();
+    expect(ai.deck).toEqual(basic!.deck);
+  });
+
+  it('AI 不泄漏卡组内容给客户端（只给张数）', () => {
+    const { manager } = harness();
+    const r = manager.create({ nickname: 'Era', capacity: 2, solo: true });
+    if (!r.ok) throw new Error('create failed');
+    const view = manager.publicView(r.value.room);
+    const aiView = view.seats[1] as Record<string, unknown>;
+    expect(aiView['deckSize']).toBe(30);
+    expect(aiView['deck']).toBeUndefined();
+  });
+
+  it('AI 席位不登记玩家绑定（不会被当成可重连的席位）', () => {
+    const { manager } = harness();
+    manager.create({ nickname: 'Era', capacity: 2, solo: true });
+    expect(manager.locate('ai')).toBeNull();
+  });
+
+  it('真人离开后房间销毁（AI 不会把房间撑在内存里）', () => {
+    const { manager } = harness();
+    const r = manager.create({ nickname: 'Era', capacity: 2, solo: true });
+    if (!r.ok) throw new Error('create failed');
+    const humanId = r.value.seat.playerId;
+
+    const left = manager.leave(humanId);
+    expect(left.ok).toBe(true);
+    if (!left.ok) return;
+    expect(left.value.room).toBeNull();
+    // 房间确实没了（否则每进一次人机房就泄漏一间）
+    expect(manager.count()).toBe(0);
+  });
+
+  it('非人机房的建房行为不受影响（capacity 照传、没有 AI 席位）', () => {
+    const { manager } = harness();
+    const r = manager.create({ nickname: 'Era', capacity: 3 });
+    if (!r.ok) throw new Error('create failed');
+    expect(r.value.room.capacity).toBe(3);
+    expect(r.value.room.seats.every((s) => s === null || s.playerId !== 'ai')).toBe(true);
   });
 });
