@@ -149,6 +149,31 @@ function broadcastRoom(roomId: string): void {
 }
 
 /**
+ * 一条连接只能占一个席位（D-181）。
+ *
+ * 建房 / 加入 / 重连都会写 `socket.data.playerId`，**覆盖前必须先把旧席位放掉**。
+ * 不释放的后果不是「留下一个空房间」那么简单：
+ *
+ * - 旧席位仍是 `connected: true`，而 `prune()` 只回收 `connected: false` 的席位
+ *   （那条契约本身是对的 —— 断线有 `RECONNECT_GRACE` 的保留窗口）；
+ * - 于是旧房间连同它的运行时（回合计时器、SeqGuard、ReplayRecorder）**永不释放**；
+ * - 实测：单条连接 0.3ms 就能建一间房，2000 间约涨 17 MB —— 挂机脚本一两分钟就能把进程撑爆。
+ *
+ * 2026-10-20 实测复现：单连接建 2000 间后断开，只有最后那间被回收，其余全部滞留。
+ */
+function releaseSeatOf(socket: Socket): void {
+  const prev = socket.data.playerId as string | undefined;
+  socket.data.playerId = undefined;
+  if (!prev) return;
+  // 退出 socket.io 的房间频道 —— 房间若还在（还有别人），别让这条连接继续收它的事件。
+  const located = roomManager.locate(prev);
+  if (located) void socket.leave(located.room.id);
+  const r = roomManager.leave(prev);
+  // 旧房间可能因这次离开而销毁（room 为 null），那就没有可广播的对象。
+  if (r.ok && r.value.room) broadcastRoom(r.value.room.id);
+}
+
+/**
  * 统一的对局事件广播出口。
  *
  * - 被**接受**的事件 → 广播给整个房间（双方都要看到同一串事件）；
@@ -423,7 +448,10 @@ io.on('connection', (socket) => {
         error: 'INVALID_PAYLOAD',
         message: '参数不合法：昵称需 1–24 个字，人数需 1–8 的整数',
       });
-    const r = roomManager.create(parsed.data);    if (!r.ok) return ack?.({ ok: false, error: r.error, message: r.message });
+    const r = roomManager.create(parsed.data);
+    if (!r.ok) return ack?.({ ok: false, error: r.error, message: r.message });
+    // 先放掉旧席位再挂新的（D-181）：否则旧房间永不释放。
+    releaseSeatOf(socket);
     socket.data.playerId = r.value.seat.playerId;
     void socket.join(r.value.room.id);
     runtimeOf(r.value.room.id);
@@ -447,6 +475,8 @@ io.on('connection', (socket) => {
       });
     const r = roomManager.join(parsed.data);
     if (!r.ok) return ack?.({ ok: false, error: r.error, message: r.message });
+    // 先加入成功再放旧席位（D-181）：反过来一旦加入失败，玩家会连原来那间也没了。
+    releaseSeatOf(socket);
     socket.data.playerId = r.value.seat.playerId;
     void socket.join(r.value.room.id);
     // 中途加入（有人离开后补位）时，对局可能已开始 —— 需要下发快照作为 reduce 起点。
@@ -470,6 +500,8 @@ io.on('connection', (socket) => {
       return ack?.({ ok: false, error: 'INVALID_PAYLOAD', message: '重连参数不合法，请重新加入房间' });
     const r = roomManager.reconnect(parsed.data);
     if (!r.ok) return ack?.({ ok: false, error: r.error, message: r.message });
+    // 同一条连接换了席位才需要放旧的；重连同一席位时释放会把刚恢复的席位删掉。
+    if (socket.data.playerId && socket.data.playerId !== parsed.data.playerId) releaseSeatOf(socket);
     socket.data.playerId = r.value.seat.playerId;
     void socket.join(r.value.room.id);
     const rt = runtimeOf(r.value.room.id);
