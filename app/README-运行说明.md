@@ -177,6 +177,7 @@ app/
 | `game:intent` | C→S | `Intent` | 走完整处理链：去重 → 引擎 → reduce → 哈希 → 回放 → 广播 |
 | `game:events` | S→C | 处理结果 | `accepted` 广播全房；`rejected` / `dropped` 只回发送方 |
 | `game:snapshot` | S→C | 状态快照 | 重连 / 开局前下发**起点状态**；客户端必须先用它建立起点，否则那一批事件会被丢弃 |
+| `echo` | C→S→C | `{ message }` | 连通性自检，无业务含义（`EchoSchema` 校验；D-180 补进本表） |
 
 要记住的三条：
 
