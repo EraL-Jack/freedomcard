@@ -4,7 +4,7 @@ import * as core from '@app/core';
 import { MAIN_DECK_SIZE, type CardInstance, type GameState, type PlayerId, type PlayerState, type Zone } from '@app/shared';
 
 import { ACTIVATABLE_EFFECTS, CARD_POOL } from '@app/shared/cards';
-import { MULLIGAN_WINDOW_MS } from '@app/shared/constants';
+import { MULLIGAN_WINDOW_MS, RECONNECT_GRACE_MS } from '@app/shared/constants';
 
 import CardTile from './CardTile.js';
 import {
@@ -61,7 +61,7 @@ function FxOverlay({ fx }: { fx: Fx | null }): React.JSX.Element | null {
  *
  * 内容：大卡面数值（力量为**当前值**，指挥官显示成长档位）+ 完整效果文本
  * （Era 样例卡原文已转录入卡池）+ 关键词注释（A7 已填行）。
- * 占位卡无效果文本（ADR-0018 纪律），明示等待正式卡表替换。
+ * 局内数值一律显示**实际值**（D-232）；白板卡没有效果文本，明示「无额外效果」。
  */
 function CardDetail(props: {
   card: CardInstance;
@@ -73,6 +73,14 @@ function CardDetail(props: {
 }): React.JSX.Element {
   const def = CARD_POOL[props.card.defId];
   const power = core.unitPower(props.state, CARD_POOL, props.card.uid) ?? def?.power ?? 0;
+  // 局内一律显示**实际值**（D-232）：实际支付费用 + 当前力量下的打脸伤害。
+  const statLine =
+    def === undefined
+      ? ''
+      : def.type === 'commander'
+        ? ''
+        : ` · 费 ${core.costToPay(def)} · 力 ${power}` +
+          (def.type === 'minion' ? ` · 伤 ${core.faceDamageOf(def, power)}` : '');
   const notes = (def?.keywords ?? [])
     .map((k) => KEYWORD_NOTE[k])
     .filter((x): x is string => typeof x === 'string');
@@ -90,7 +98,7 @@ function CardDetail(props: {
         <p className="mt-1 text-xs text-slate-400">
           {/* 指挥官没有力量值（docs/16 §6.2.1 / D-230）：一行只写类型，不写数值 */}
           {def ? KIND_TAG_FOR_DETAIL[def.type] : '未知'}
-          {def?.type === 'commander' ? '' : ` · 费 ${def?.cost ?? 0} · 力 ${power}`}
+          {statLine}
         </p>
         {notes.length > 0 ? (
           <ul className="mt-2 space-y-1">
@@ -102,7 +110,8 @@ function CardDetail(props: {
           </ul>
         ) : null}
         <p className="mt-3 whitespace-pre-wrap rounded bg-slate-950/60 p-2 text-xs leading-relaxed text-slate-200">
-          {def?.text ?? '（占位卡：无效果文本 —— 正式卡表到位后整批替换，ADR-0018）'}
+          {/* D-232：`text` 只写效果描述（数值走上方数值行），白板随从没有描述 */}
+          {def?.text ?? '无额外效果。'}
         </p>
         {/* 效果发动入口（ADR-0023）—— 发动按钮长在详情里，不在桌上另占位置；
             不可发动的不展示（Era 2026-10-19），卡面文本本身仍可读。 */}
@@ -163,6 +172,14 @@ function CardOf(props: {
 }): React.JSX.Element {
   const def = CARD_POOL[props.card.defId];
   const power = core.unitPower(props.state, CARD_POOL, props.card.uid) ?? def?.power ?? 0;
+  /**
+   * 局内卡面显示**实际值**（Era 2026-10-21 拍板，D-232）：
+   *  - 费用 = 实际支付（随从 −1，`costToPay`），不是卡面印的 `cost`；
+   *  - 伤害 = 打脸实际结算（`faceDamageOf`，按**当前**力量分档），只在随从上有意义。
+   * 数值算法一律走 core 的导出函数，不在客户端重写一遍口径。
+   */
+  const payCost = def ? core.costToPay(def) : 0;
+  const faceDamage = def?.type === 'minion' ? core.faceDamageOf(def, power) : undefined;
   return (
     // compact（区域/格子内）：高由格子决定、宽按 5:7 反算，不出框（Era 2026-10-18 截图实测）
     <div
@@ -172,8 +189,9 @@ function CardOf(props: {
     >
       <CardTile
         name={def?.name ?? props.card.defId}
-        cost={def?.cost ?? 0}
+        cost={payCost}
         power={power}
+        faceDamage={faceDamage}
         kind={def?.type ?? 'minion'}
         text={def?.text}
         sleeping={props.sleeping ?? props.card.sleeping}
@@ -870,6 +888,15 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
     return <p className="p-4 text-slate-400">等待对手加入…</p>;
   }
 
+  /**
+   * 对手连线状态（PM-03 / AR-23 / D-233）：`connected` 一直存在协议里，
+   * 但界面从未消费 —— 于是「对手掉线 / 对手在想 / 自己卡了」在玩家眼里无法区分。
+   * 宽限期内提示可重连，到期由服务端按「已离开」收尾（判负本局与系列赛）。
+   */
+  const foeSeat = room.seats.find((s) => s !== null && s.playerId === foe);
+  const foeOffline = foeSeat !== null && foeSeat !== undefined && !foeSeat.connected;
+  const graceSeconds = Math.round(RECONNECT_GRACE_MS / 1000);
+
   const myTurn = state.seats[state.activeSeat] === me;
   /**
    * 我方有挂起的待定选择 —— 此刻引擎只放行「回答选择」和「认输」，其余 Intent 一律被拒。
@@ -1103,6 +1130,15 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
         <span className={myTurn ? 'text-emerald-400' : 'text-slate-400'}>
           {myTurn ? '你的回合' : '对手回合'}
         </span>
+        {/* 对手断线（D-233）：宽限期内给明确提示，否则「对面不动」看起来像自己卡了 */}
+        {foeOffline ? (
+          <span
+            className="rounded bg-amber-900/80 px-2 py-0.5 text-amber-200"
+            data-testid="foe-offline"
+          >
+            对手已断线（{graceSeconds} 秒内可重连）
+          </span>
+        ) : null}
         {/* 赛制与比分（D-132）—— 只在 BO3 显示，BO1 显示会占位制造噪音。
             `gameNo` 是**已完成**的小局数，故进行中的是第 `gameNo + 1` 局。 */}
         {room.format === 'bo3' ? (
@@ -1125,7 +1161,7 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
             onClick={() => session.commanderAttack()}
             data-testid="commander-attack"
           >
-            指挥官攻击（1 点）
+            指挥官攻击（{1 + mine.commanderDamageBonus} 点）
           </button>
         ) : null}
         {/* 星轨观测者：攻击时【1】展示（docs/17 §3）—— 先展示、后结算伤害 */}
@@ -1528,19 +1564,15 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
         </button>
       </footer>
 
-      {/* 拖拽预览 —— 跟随指针的浮动卡（B3-1 拖拽手感）。pointer-events-none 不挡落点判定。 */}
+      {/* 拖拽预览 —— 跟随指针的浮动卡（B3-1 拖拽手感）。pointer-events-none 不挡落点判定。
+          复用 `CardOf`（而不是手抄一份数值）—— 否则局内「实际值」口径会在这里漏掉一处。 */}
       {dragCard && dragPos ? (
         <div
-          className="pointer-events-none fixed z-50 w-16 opacity-90"
+          className="pointer-events-none fixed z-50 opacity-90"
           style={{ left: dragPos.x - 32, top: dragPos.y - 44 }}
           data-testid="drag-preview"
         >
-          <CardTile
-            name={CARD_POOL[dragCard.defId]?.name ?? dragCard.defId}
-            cost={CARD_POOL[dragCard.defId]?.cost ?? 0}
-            power={core.unitPower(state, CARD_POOL, dragCard.uid) ?? CARD_POOL[dragCard.defId]?.power ?? 0}
-            kind={CARD_POOL[dragCard.defId]?.type ?? 'minion'}
-          />
+          <CardOf card={dragCard} state={state} />
         </div>
       ) : null}
     </div>

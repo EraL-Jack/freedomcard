@@ -1,8 +1,12 @@
 /**
  * 起手换牌 —— `docs/06` A8-3 / A10-1。
  *
- * 原文顺序：选任意数量返回卡组底 → 从卡组顶抽满 5 张 → 再洗牌。
+ * 原文顺序：选任意数量返回卡组底 → 从卡组顶抽牌补满手牌 → 再洗牌。
  * 三步严格照做，不调换顺序 —— 顺序变了「不会换到返回去的牌」这个性质就不成立。
+ *
+ * 补牌张数（Era 2026-10-21 拍板，D-231）：**补到该玩家的起手张数**，
+ * 即先手 5 张、后手 6 张（`docs/16 §1` 的后手补偿）。此前这里写死 `INITIAL_HAND`(5)，
+ * 导致后手只要换 ≥1 张就永久少 1 张 —— 相当于换一次牌就把后手补偿吐回去。
  *
  * 时间窗（Era 2026-10-19）：开局换牌只在 `MULLIGAN_WINDOW_MS` 内可用；
  * 窗口过后服务端拒绝、客户端隐藏按钮。X-17（同日拍板）：**双方都能换**，
@@ -13,6 +17,7 @@
 import {
   INITIAL_HAND,
   MULLIGAN_WINDOW_MS,
+  SECOND_PLAYER_HAND,
   RULE_ERRORS,
   type CardInstance,
   type GameEvent,
@@ -93,8 +98,11 @@ export const mulliganRule = (
   const remainingHand = hand.filter((c) => !returning.has(c.uid));
   const deckAfterReturn: CardInstance[] = [...p.zones.deck, ...[...returning.values()]];
 
-  // ② 从卡组顶抽满 5 张
-  const need = Math.max(0, INITIAL_HAND - remainingHand.length);
+  // ② 从卡组顶抽牌补满手牌 —— 补到**该玩家的起手张数**（先手 5 / 后手 6，D-231）。
+  //
+  // 先手 = `seats[0]`（`startRule` 按掷骰结果重排座位，第 0 席恒为先攻方）。
+  const handSize = state.seats[0] === intent.playerId ? INITIAL_HAND : SECOND_PLAYER_HAND;
+  const need = Math.max(0, handSize - remainingHand.length);
   const drawn = drawCards(
     at,
     intent.playerId,

@@ -3065,3 +3065,130 @@ Era：**「目前下发卡池在上方已选卡组里卡较多的时候框很小
   待选框同理；页面整体出现滚动条，页脚说明可见。
 
 - **破坏性**：**否**（纯样式布局调整）。
+
+## D-231 · 后手换牌补到 6 张（起手张数），不再换一次就永久少一张（2026-10-21）
+
+Era：**「1、后手换牌补到6」**
+
+### 改动
+
+- `core/src/rules/mulligan.ts` 第 ② 步的手牌目标，从写死的 `INITIAL_HAND`(5) 改成
+  **该玩家的起手张数**：`state.seats[0] === intent.playerId ? INITIAL_HAND : SECOND_PLAYER_HAND`。
+  先手路径行为不变；后手换 2 张后补回 6 张，不再「换一次就把后手补偿吐回去」。
+- 单测 `rules.test.ts`：新增 `HAND_6` 夹具（真·6 张手牌）。原来那条 `X-17 后攻方换牌`
+  用的是**空手牌**夹具，`remainingHand.length = 0` 使 `need` 恒等于目标张数，
+  正好把「写死 5」这个缺陷挡在外面 —— 夹具换掉后先让它变红，再改实现。
+  断言同时改成不变量：`换完手牌数 === 换前手牌数`，而不是写死某个数字。
+  另加一条 `D-231` 用例，覆盖换 1 张 / 换 2 张两种情况。
+- E2E `turn.spec.ts` 新增「后攻方换牌：起手 6 张，换 2 张后仍补到 6 张」。
+  后攻方的换牌窗口在**自己的第一个充能阶段**（X-17），故用例先让先攻方结束回合。
+- 顺带修掉两条换牌 E2E 的**假绿**：原来「点确认 → 立刻数手牌」，断言会在服务端事件到达
+  之前就被**换牌前的张数**满足 —— 拿坏代码跑照样绿（本轮实测踩到）。现在先等日志出现
+  「完成换牌」，再数手牌。
+
+### 验证
+
+- 单测 **288 全过**（core 164 + server 124）。
+- E2E **36/36 通过**（2.6m，本轮 +2）。
+- **红绿验证（关键）**：把 `handSize` 临时改回 `INITIAL_HAND` 后 ——
+  core 单测 `1 failed | 163 passed`（D-231 用例红）、新 E2E `Expected 6 / Received 5` 红；
+  恢复后全绿。改之前先确认「测试会红」，否则修没修都一样。
+- typecheck 0；lint 0；生产构建 gzip **144.16 kB**（+0.08 kB）。
+- 客户端与服务端均有改动 → `pnpm build` **且**重启生产进程（§9 的老坑）。
+
+- **破坏性**：**否**（规则口径修正；`GameEvent` 与协议字段未动）。
+
+## D-232 · 卡面不写数值；局内显示实际支付费用与打脸伤害（2026-10-21）
+
+Era：**「2、局内卡面显示实际值」**
+
+### 改动
+
+- **数据层**：`shared/src/cards.ts` 去掉 44 处卡面文本里的数值行（`【N】随从 / 力量值X / 伤害值Y`）。
+  `text` 此后只放效果描述，数值唯一来源是 `cost` / `power` / `damage` 字段。
+  `docs/18 §3.2` 整节改写为「卡面文本里不写数值行」+ 数值来源对照表（数据字段 / 局内显示 / 构筑视角）。
+- **渲染**：`CardTile` 新增 `faceDamage`；底部数值区改为右侧竖排 `力 N` + `伤 N`
+  （新增 `data-testid="card-damage"`）；`cost` 的语义写明为「局内传实际支付值」。
+- **调用方**：`TableScreen` 的 `CardOf` 传 `core.costToPay(def)` 与 `core.faceDamageOf(def, power)`；
+  卡详情数值行同步改为 `费 X · 力 Y · 伤 Z`；拖拽预览改为复用 `<CardOf>` ——
+  原先手抄了一份 `CARD_POOL[...].cost`，与正式卡面是两套口径，迟早分叉。
+- `ops.ts` 的 `costToPay` 注释补一句：本回合一次性减费（`nextMinionDiscount`）**不在**这里，
+  界面同理只显示常规实付。
+- E2E `helpers.ts` 的 `payOf()` 改为直接读卡面 `cost`：局内已是实付值，再 −1 就是二次打折。
+
+### 验证
+
+- 单测 **288 全过**（卡池 47 个 defId 仍全部有测试引用，`shared` 文本变动未影响任何断言）。
+- E2E **36/36 通过**（2.6m）：`payOf()` 口径变化后，`turn.spec` 选牌仍能选出手牌，
+  说明「费用区 / 剩余额度」判断跟着实际值走。
+- typecheck 0；lint 0；gzip **144.16 kB**（+0.08 kB，数值由字段渲染、文本变短，体积基本持平）。
+
+- **破坏性**：**否**（纯展示与文本；协议字段未动）。
+
+## D-233 · 掉线等 60s，且「对面不动」要看得见（2026-10-21）
+
+Era：**「3、掉线等60s」**
+
+### 改动
+
+- 宽限期确认 **60s**：代码里 `RECONNECT_GRACE_MS` 本来就是 60s，过期的是输入表
+  （`docs/06` A3-4 写的 30s）。处理方式 **不回改 Era 的输入原文**，在 A3-4 下方加
+  「实现口径备注」说明以 60s 为准。
+- 服务端 `room.ts`：`prune()` 返回类型从 `PlayerId[]` 改为 `{ playerId, roomId }[]`。
+  只回 playerId 时调用方反查不到房间 —— 绑定刚刚被删掉了（D-181 同一个坑的翻版）。
+- 服务端 `index.ts`：新增 `abandonSeat(roomId, playerId)`，与「主动离开」共用同一条收尾路径 ——
+  对局中以 `actor: 'system'` 的 `concede`（`reason: 'opponent-left'`）收尾并 `forfeitSeries`，
+  局间（`awaitingNext`）直接 `forfeitSeries`。`pruneTimer` 逐个释放后 `broadcastRoom`。
+  此前超时释放是「悄悄把席位删了」，对局挂在半空。
+- 客户端 `TableScreen`：顶栏新增 `data-testid="foe-offline"` 徽标
+  「对手已断线（60 秒内可重连）」，消费席位上的 `connected` 字段 —— 这个字段此前
+  一路传到客户端但零引用。`graceSeconds` 由 `RECONNECT_GRACE_MS` 计算，不写死。
+- E2E `room.spec.ts` 新增「对手掉线不点离开」：直接关页面（只有 socket 断开、没有
+  `room:leave`），断言徽标出现 + 文案含 60 + 宽限期内**不**出现结束面板。
+
+### 验证
+
+- E2E **36/36 通过**（2.6m，本轮 +2）。
+- server 单测 **124 全过**（`room.test.ts` 的 `prune()` 断言改为带 `roomId` 的结构）。
+- typecheck 0；lint 0。
+- `README-运行说明.md` §9 补上「两个时刻都要有反馈」：刚断开的广播 + 到期释放的收尾。
+
+- **破坏性**：**否（协议）** —— 广播的房间快照字段未变，只是 `connected` 现在真的会被
+  客户端用上；老客户端会忽略它，行为退化成「对面不动但没提示」。
+
+## D-234 · 「展示」收敛为 core 里唯一一个动作 `revealAction`；指挥官受伤算展示（2026-10-21）
+
+Era：**「4、算展示，展示这个动作需要单独提取出来」**
+
+### 改动
+
+- `core/src/effects/index.ts` 新增**唯一展示动作** `revealAction(at, state, owner, ctx, { n | uids, reason, settle })`，
+  固定五步：取 uid → 逐个 `deck → reveal` + `card:revealed` → 星轨观测者按张数 `star:mark`
+  → 星轨环每回合首次展示抽 1 → 逐张派发 `onReveal` → 按 `settle` 归位
+  （`bottom` 牌库底 / `cost` 费用区 / `graveyard` 弃牌区）。`settleRevealed()` 单独成函数，
+  保证「归位」这一步也只有一处实现。
+- 删除 `primitives.ts` 的 `revealFromDeck`（旧展示，只挪牌不触发任何东西）；
+  `starRevealEvents` 退化为 `settle: 'bottom'` 的薄封装。
+  新增 `ensureDeckSize`：牌库不足时把弃牌区洗回，**放进动作内部** —— 放调用方就一定有人忘写
+  （此前只有星图凝视写了）。
+- 五种来源全部改走它：技能展示、星图凝视、**指挥官受伤**、焚典、号令。
+  焚典 / 号令不再各自手写 `card:revealed`；号令的候选判定改在归位后的状态上做。
+- **口径变化**：指挥官受伤从「只翻开」变成「真展示」—— 触发星轨 +1 与「展示时」效果，
+  只是归位到费用区。`combat.ts` 的 `commanderDamageEvents` 逐点循环调用
+  `revealAction(..., { n: 1, reason: 'commander-damage', settle: 'cost' })`，五个调用点补传 `ctx`。
+- 文档：`docs/16 §5.7` 改为「受伤展示就是展示，走同一动作」；`docs/17` 新增 §2.1.1
+  展示来源表（来源 × 张数 × 归位 × 是否触发）；决策见 **ADR-0043**。
+
+### 验证
+
+- 单测 **288 全过**（core 164 / server 124）。`growth.test.ts` 两处跟着规则口径调整：
+  ① 一条 starTrack 断言 `7 → 8`（多出的 1 层来自受伤展示连锁），注释写明来由；
+  ② `markAt < putBottomAt` 的取值改为「归位之前的最后一个 mark」（受伤展示产生的 mark 排在归位之后）。
+  另加一条用例「受伤展示同样加星轨并进费用区」：断言 `starTrack === 1`、`zones.cost.length === 1`、
+  `zones.reveal` 为空、`health === 7`、`deck.length === 29`。
+- E2E **36/36 通过**（2.6m）：战斗、指挥官攻击、焚典 / 号令相关链路全部仍绿。
+- typecheck 0；lint 0；gzip **144.16 kB**（+0.08 kB）。
+
+- **破坏性**：**否（协议）/ 是（规则语义）** —— `GameEvent` 类型与协议字段一个没动；
+  但指挥官受伤现在会产生额外的 `star:mark` 与展示时效果，同一批 Intent 重跑会得到不同的
+  `stateHash`。本项目回放只做**当次**校验、不做跨版本回放，既有 `replay.json` 不受影响。

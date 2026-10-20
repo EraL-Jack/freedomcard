@@ -98,6 +98,38 @@ test('对局中一方离开：另一方看到对局结束并可返回主界面�
   await expect(host.getByTestId('nickname')).toBeVisible({ timeout: 10_000 });
 });
 
+/**
+ * 掉线可见化（D-233）：宽限期 60s 内，留下的一方顶栏要出现重连提示。
+ *
+ * 与上一条的区别：这里**不点「离开」**，直接关页面 —— 只有 socket 断开、
+ * 没有 `room:leave`，走的正是「席位保留 + 等重连」那条路。
+ */
+test('对手掉线不点离开：席位保留，留下的一方顶栏出现 60 秒重连提示（D-233）', async ({ browser }) => {
+  const host = await newClient(browser, 'Host');
+  await host.getByTestId('create').click();
+  const codeEl = host.getByTestId('room-code');
+  await expect(codeEl).toBeVisible({ timeout: 10_000 });
+  const code = ((await codeEl.textContent()) ?? '').trim();
+
+  const guest = await newClient(browser, 'Guest');
+  await guest.getByTestId('code').fill(code);
+  await guest.getByTestId('join').click();
+  await expect(guest.getByText('2/2 人')).toBeVisible({ timeout: 10_000 });
+
+  await host.getByTestId('ready').click();
+  await guest.getByTestId('ready').click();
+  await expect(host.getByTestId('turn')).toBeVisible({ timeout: 15_000 });
+
+  // 直接关页面 = 断连（没有 room:leave）
+  await guest.close();
+
+  const badge = host.getByTestId('foe-offline');
+  await expect(badge).toBeVisible({ timeout: 15_000 });
+  await expect(badge).toContainText('60');
+  // 宽限期内**不判负** —— 席位还在等重连，结束面板不该出现
+  await expect(host.getByTestId('game-result')).toHaveCount(0);
+});
+
 test('三档视口下占位界面不溢出', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByText('服务端已连接')).toBeVisible({ timeout: 15_000 });

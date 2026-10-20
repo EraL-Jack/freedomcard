@@ -4,10 +4,11 @@ import type { CardType } from '@app/shared';
  * 卡牌渲染 —— D-118 视觉重做（Era 2026-10-18「展示方面不像是卡牌游戏」/ docs/11 R2）。
  *
  * 卡牌游戏通用视觉语言：竖版卡框（5:7）、类型色框、卡名条、插图区
- * （B7-1 素材缺，类型色块占位）、底部费用/力量**胶囊徽章**、休眠横置。
+ * （B7-1 素材缺，类型色块占位）、底部费用/力量/伤害**胶囊徽章**、休眠横置。
  *
  * ⚠️ 三条纪律：
  *  1. **不做任何规则判断** —— 「能不能出」由服务端校验（ADR-0002），置灰/发光只是呈现。
+ *     数值怎么算是调用方的事（局内传实际值、构筑视角传卡面值，见 `cost` / `faceDamage` 注释）。
  *  2. **E2E 文本锚点不动**：`data-testid="card"` 的 innerText 第一行必须是卡名，
  *     且含「费 N」「力 N」字样与 `data-testid="card-kind"` —— helpers.readHand 依赖它们。
  *  3. 占位方案仍是「纯色+文字」（B7-2 架构默认），本组件只是把它做得像卡；
@@ -44,8 +45,14 @@ const KIND_TAG: Readonly<Record<CardType, string>> = {
 
 export interface CardTileProps {
   name: string;
+  /** 显示费用。**局内传实际支付值**（`costToPay`，随从 −1），卡组编辑等「构筑视角」传卡面值（D-232）。 */
   cost: number;
   power: number;
+  /**
+   * 打脸伤害（D-232）—— 局内传**实际结算值**（`faceDamageOf`，按当前力量分档），
+   * 未传则不渲染伤害位。指挥官没有这个数值（打脸伤害是玩家级属性）。
+   */
+  faceDamage?: number;
   kind: CardType;
   text?: string;
   /** 休眠态（A9-2：攻击后休眠，重置阶段清除）—— 横置 90°，卡牌游戏通用语言。 */
@@ -123,12 +130,23 @@ export default function CardTile(props: CardTileProps): React.JSX.Element {
             ⚠️ 指挥官没有费用与力量值（docs/16 §6.2.1 / docs/18 §3.1）：不渲染胶囊，
             否则卡面会出现「费 0 / 力 0」这种与规则矛盾的数值。 */}
         {props.kind === 'commander' ? null : (
-          <span className="mt-0.5 flex items-center justify-between leading-none">
+          <span className="mt-0.5 flex items-end justify-between leading-none">
             <span className="rounded-full bg-blue-900/80 px-1.5 py-0.5 text-[10px] font-medium text-blue-200">
               费 {props.cost}
             </span>
-            <span className="rounded-full bg-red-900/80 px-1.5 py-0.5 text-[10px] font-medium text-red-200">
-              力 {props.power}
+            <span className="flex flex-col items-end gap-0.5">
+              <span className="rounded-full bg-red-900/80 px-1.5 py-0.5 text-[10px] font-medium text-red-200">
+                力 {props.power}
+              </span>
+              {/* 打脸伤害（D-232）—— 只有局内传了实际值才显示；卡面旧文案里的「伤害值」不再是权威。 */}
+              {props.faceDamage === undefined ? null : (
+                <span
+                  className="rounded-full bg-rose-800/90 px-1.5 py-0.5 text-[9px] font-medium text-rose-100"
+                  data-testid="card-damage"
+                >
+                  伤 {props.faceDamage}
+                </span>
+              )}
             </span>
           </span>
         )}

@@ -101,67 +101,38 @@ export function millTop(
 
 /* ------------------------------ 展示 ------------------------------ */
 
-export interface RevealResult {
-  events: GameEvent[];
-  /** 被展示的卡（按翻开顺序）。调用方据此做后续选择（如「凝视星空」选 1 张进手牌）。 */
-  revealed: CardInstance[];
-  state: GameState;
-}
-
 /**
- * **展示**（docs/17 §2.1 / D-230）：从卡组顶依次翻开 `n` 张，公开给双方，
- * 结算完毕按原顺序置入**牌库底**。
+ * 牌库不足 `n` 张时把弃牌区洗回牌库（A9 补充 2），供抽牌 / 展示共用。
  *
- * 与抽牌的区别：不进手牌、不烧牌库、触发「展示时」效果。
- *
- * 实现口径（Era 2026-10-20）：卡片在结算期间**停在展示区**（`Zone = 'reveal'`），
- * 结算完再由调用方置底。它等价于「先离场、再结算」——
- * 若让展示卡留在卡组顶结算，触发里的抽牌会把它抽走（既算展示过、又躺在手里，
- * 之后再被展示会二次触发）。
+ * 显式用 `card:moved` 把弃牌区卡搬回牌库，再整体重排 ——
+ * `deck:shuffled` 只会重排「已在卡组里的卡」，不替调用方搬区域（这是 ENG-01 的坑）。
+ * 洗牌消耗随机，故同步产出 `rng:advance`，且必须紧邻 `deck:shuffled`。
  */
-export function revealFromDeck(
+export function ensureDeckSize(
   at: number,
   state: GameState,
   playerId: PlayerId,
   n: number,
-  ctx: RuleContext,
-  reason = 'reveal',
-): RevealResult {
+): { events: GameEvent[]; state: GameState } {
   const p = state.players[playerId];
-  if (!p || n <= 0) return { events: [], revealed: [], state };
+  if (!p || p.zones.deck.length >= n) return { events: [], state };
+  const gy = p.zones.graveyard;
+  if (gy.length === 0) return { events: [], state };
   const e = emitter(state);
-
-  // 牌库不足 → 弃牌区洗回。显式用 `card:moved` 把弃牌区卡搬回牌库，再整体重排：
-  // `deck:shuffled` 只会重排「已在卡组里的卡」，不会替我们搬区域。
-  if (e.state.players[playerId]!.zones.deck.length < n) {
-    const gy = e.state.players[playerId]!.zones.graveyard;
-    if (gy.length > 0) {
-      for (const c of gy) e.push(moved(at, playerId, c.uid, 'graveyard', 'deck'));
-      const deckNow = e.state.players[playerId]!.zones.deck;
-      const s = shuffle(e.state.rngCursor, deckNow);
-      e.push(ev(at, 'rng:advance', { steps: Math.max(0, deckNow.length - 1) }));
-      e.push(ev(at, 'deck:shuffled', { playerId, order: s.items.map((c) => c.uid) }));
-    }
-  }
-
-  const deck = e.state.players[playerId]!.zones.deck;
-  const top = deck.slice(0, Math.min(n, deck.length));
-  if (top.length === 0) return { events: e.events, revealed: [], state: e.state };
-
-  for (const c of top) {
-    // 先离开卡组、进入展示区，再公开。
-    // 顺序很关键：展示触发的效果里可能有抽牌（守卫 / 星轨环）。卡若还留在卡组顶，
-    // 那次抽牌会把同批的展示卡抽走；移进展示区后，抽牌只会抽到下一张。
-    e.push(moved(at, playerId, c.uid, 'deck', 'reveal'));
-    e.push(ev(at, 'card:revealed', { playerId, uid: c.uid, from: 'deck', reason }));
-  }
-  // 置底不在这里做 —— 调用方结算完「展示时」后统一调 `putRevealedBottom`，
-  // 这样效果执行期间卡片确实停在展示区（Era 2026-10-20）。
-  return { events: e.events, revealed: top, state: e.state };
+  for (const c of gy) e.push(moved(at, playerId, c.uid, 'graveyard', 'deck'));
+  const deckNow = e.state.players[playerId]!.zones.deck;
+  const s = shuffle(e.state.rngCursor, deckNow);
+  e.push(ev(at, 'rng:advance', { steps: Math.max(0, deckNow.length - 1) }));
+  e.push(ev(at, 'deck:shuffled', { playerId, order: s.items.map((c) => c.uid) }));
+  return { events: e.events, state: e.state };
 }
 
 /**
- * 把展示区里的一批卡按给定顺序送回牌库底（docs/17 §2.1）。
+ * **展示动作的结算收尾**（docs/17 §2.1）—— 把展示区里的一批卡按给定顺序送回牌库底。
+ *
+ * ⚠️ 展示的**翻开与触发**不在这里：唯一的入口是 `effects/index.ts` 的 `revealAction`
+ * （「展示」是一个动作，不是一个区域操作 —— Era 2026-10-21 / D-234）。
+ * 本函数只负责「结算完毕后归位」这一步，供 `revealAction` 内部调用。
  *
  * 只处理**仍在展示区**的卡：展示时效果可能已经把某张移走（进手牌 / 弃牌区 / 场上），
  * 这类卡跳过 —— `deck:put-bottom` 对找不到的 uid 本来就是静默跳过，

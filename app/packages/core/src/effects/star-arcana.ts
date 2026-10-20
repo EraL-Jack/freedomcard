@@ -38,7 +38,7 @@ export const starFallEffect: EffectModule = {
   onPlay: (state, ctx, owner, uid) => {
     const foe = opponentOf(state, owner);
     if (!foe) return [];
-    return commanderDamageEvents(ctx.now, state, foe, 2, uid, owner);
+    return commanderDamageEvents(ctx.now, state, foe, 2, uid, owner, ctx);
   },
 };
 

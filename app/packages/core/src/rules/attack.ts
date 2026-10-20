@@ -138,7 +138,7 @@ export function resolveAttackEvents(
 
   if (targetIsCommander) {
     // ADR-0014 / docs/16 §5.5：指挥官受伤扣血；伤害值由力量分档决定。
-    events.push(...commanderDamageEvents(at, state, foe, atkDamage, attackerUid, me));
+    events.push(...commanderDamageEvents(at, state, foe, atkDamage, attackerUid, me, ctx));
   } else if (defenderLoses) {
     events.push(moved(at, tgt.playerId, targetUid, tgt.zone, 'graveyard'));
   }

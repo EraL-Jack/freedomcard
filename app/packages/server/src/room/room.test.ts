@@ -214,7 +214,8 @@ describe('RoomManager · 断线保留与重连', () => {
 
     manager.markDisconnected(playerId);
     advance(61_000);
-    expect(manager.prune()).toEqual([playerId]);
+    // D-233：prune 的回包带上 roomId，会话层据此广播房间状态并按「已离开」收尾对局。
+    expect(manager.prune()).toEqual([{ playerId, roomId: created.value.room.id }]);
     expect(manager.getRoomByCode(code)).toBeUndefined();
   });
 

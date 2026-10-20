@@ -218,7 +218,12 @@ app/
 
 1. **客户端须保存 `playerId` 与 `token`** —— 重连全靠它俩。
 2. 重连后 **从 `lastSeq + 1` 续发** Intent，本地计数归零重来会被判 `STALE` 全部丢弃。
-3. 断线席位保留 **60s（`RECONNECT_GRACE_MS`）**，超时由服务端巡检释放。
+3. 断线席位保留 **60s（`RECONNECT_GRACE_MS`）**，超时由服务端巡检释放。两个时刻都要有反馈（D-233）：
+   - **刚断开**：`markDisconnected` 后立即 `broadcastRoom`，对手顶栏出现
+     「对手已断线（60 秒内可重连）」徽标（`data-testid="foe-offline"`，消费席位上的 `connected` 字段）；
+   - **到期释放**：按「离开」处理 —— 对局中 → 以 `actor: 'system'` 的 `concede` 收尾
+     （`reason: 'opponent-left'`）、BO 系列赛同时判负；局间（`awaitingNext`）→ 直接判负系列赛；
+     随后再广播一次，留下的一方看到对局结束。
 
 > ⚠️ 自建卡组的 `deck` 字段**必须在入站 schema 里显式声明**。`z.object()` 对未声明的键是
 > strip，漏掉会让卡组被静默丢弃、服务端回退默认卡组，且没有任何报错。已由

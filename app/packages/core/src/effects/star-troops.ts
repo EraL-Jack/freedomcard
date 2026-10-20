@@ -50,7 +50,7 @@ export const starArcherEffect: EffectModule = {
     if (usedThisTurn(state, owner, 'star:archer')) return [];
     return [
       markUsed(ctx.now, owner, 'star:archer'),
-      ...commanderDamageEvents(ctx.now, state, foe, 1, uid, owner),
+      ...commanderDamageEvents(ctx.now, state, foe, 1, uid, owner, ctx),
     ];
   },
 };

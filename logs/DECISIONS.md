@@ -1005,3 +1005,45 @@ E2E 里先后手由掷骰决定、起手牌由洗牌决定，两者都是随机�
 - 破坏性：**是（协议）** —— `faction` 字段删除。但入站是 strip 而非拒绝，老客户端只是失去
   「按阵营分配」的行为，不会 400；对局照常开始。新客户端与旧服务端组合不兼容（`commander` 会被旧
   schema strip → 回落默认卡组），因此**前后端必须一起更新**（本项目同端口同源发布，天然一致）。
+
+## ADR-0043 · 「展示」收敛为 core 里唯一一个动作 `revealAction`（D-234）
+
+- 背景：Era 2026-10-21 —— **「算展示，展示这个动作需要单独提取出来」**。
+  此前「展示」在代码里有**两套实现、两种含义**：
+  1. `effects/index.ts` 的 `starRevealEvents()` —— 技能展示（星图凝视等）：翻开 → 进展示区 →
+     星轨 +1 → 星轨环抽牌 → 逐张「展示时」→ 回牌库底。**完整展示**。
+  2. `effects/primitives.ts` 的 `revealFromDeck()` —— 指挥官受伤用：只把牌从卡组挪到展示区再归位，
+     **不触发星轨、不触发「展示时」**。同一个词，行为却不同。
+  更糟的是第三、四、五处（焚典 / 号令 / 受伤）各自手写 `card:revealed` 事件，新增一个展示来源
+  就得再抄一遍顺序，漏一步就是「展示了但没算星轨」这种只有对着日志才看得出的错。
+- 决策：core 只保留**一个**展示入口 —— `effects/index.ts` 的
+  `revealAction(at, state, owner, ctx, { n | uids, reason, settle })`，
+  固定五步：① 取 uid（按张数取卡组顶 / 或调用方指定）→ 逐个 `deck → reveal` + `card:revealed`
+  → ② 星轨观测者 Ⅱ 按张数 `star:mark` → ③ 星轨环每回合首次展示抽 1 → ④ 逐张派发 `onReveal`
+  → ⑤ 按 `settle` 归位（`bottom` 牌库底 / `cost` 费用区 / `graveyard` 弃牌区）。
+  `revealFromDeck` 删除；`starRevealEvents` 退化为 `settle: 'bottom'` 的薄封装。
+- 五种来源全部改走它：
+  | 来源 | 张数 | 归位 | 触发星轨 / 展示时 |
+  | --- | --- | --- | --- |
+  | 技能展示（星图凝视等） | 由卡面定 | 牌库底 | 是 |
+  | 焚典 | `CREMATION_REVEAL` | 牌库底 | 是 |
+  | 号令 | `ORDER_REVEAL_COUNT` | 牌库底 | 是 |
+  | **指挥官受伤** | 每 1 点伤害各 1 张 | **费用区** | **是（本次改口径）** |
+- 关键口径变化：指挥官受伤**从「只翻开」变成「真展示」**——受 1 点伤害也会触发星轨 +1
+  与「展示时」效果（含连锁：受伤展示翻出的卡若有展示时效果，照样结算）。
+  理由：Era 的指令是「算展示」，那么它就该和别的展示走同一条路；若保留「不触发的展示」，
+  就是在 core 里留第二套语义，等于没提取。
+  代价：`growth.test.ts` 一条既有断言从 `starTrack === 7` 变 `8`（多出的 1 层来自受伤展示），
+  已在用例注释里写明来由。这是**规则层的实质变化**，不只是重构。
+- 为什么把「归位」做成参数而不是三个函数：归位是展示的**最后一步**，前四步完全一致；
+  拆成三个函数会让「新加一个展示来源」又要选函数，而源与归位并非一一对应（受伤也是 1 张/次）。
+- 为什么 `ensureDeckSize` 放在动作内部：牌库不够时把弃牌区洗回，是**展示能不能成立**的前置条件，
+  放在调用方就一定有调用方忘写（原先只有星图凝视写了）。
+- 影响：`core/src/effects/{index,primitives,blade-arcana,blade-order}.ts`、`core/src/combat.ts`、
+  五个 `commanderDamageEvents` 调用点（`rules/attack`、`rules/commander-attack`、
+  `effects/{frost-arcana,star-arcana,star-troops}`）、`effects/growth.test.ts`、
+  `docs/16 §5.7`、`docs/17 §2.1.1`。
+- 破坏性：**否（协议）/ 是（规则语义）** —— `GameEvent` 类型与协议字段一个没动，回放仍可重放；
+  但「指挥官受伤」现在会产生额外的 `star:mark` 与展示时效果，历史回放重跑会得到不同的
+  `stateHash`。本项目回放只用于**当次**校验（`replay:verify` 对比录制时的 hash），
+  不做跨版本回放，故不影响既有文件。

@@ -411,9 +411,12 @@ export class RoomManager {
   /**
    * 释放超出保留窗口的断线席位；房间空了则销毁。
    * 由调用方定时驱动（会话层持有定时器），不在这里自建定时器 —— 便于单测。
+   *
+   * 返回值带上 `roomId`（D-233）：会话层要据此广播房间状态、并按「该玩家已离开」
+   * 收尾对局 —— 只回 playerId 的话，调用方还得反查房间，而那时绑定已被删掉。
    */
-  prune(now: number = this.clock.now()): PlayerId[] {
-    const freed: PlayerId[] = [];
+  prune(now: number = this.clock.now()): { playerId: PlayerId; roomId: string }[] {
+    const freed: { playerId: PlayerId; roomId: string }[] = [];
     for (const room of [...this.rooms.values()]) {
       for (let i = 0; i < room.seats.length; i++) {
         const seat = room.seats[i];
@@ -421,7 +424,7 @@ export class RoomManager {
         if (now - seat.disconnectedAt <= this.graceMs) continue;
         room.seats[i] = null;
         this.byPlayer.delete(seat.playerId);
-        freed.push(seat.playerId);
+        freed.push({ playerId: seat.playerId, roomId: room.id });
       }
       if (room.seats.every((s) => s === null)) {
         this.rooms.delete(room.id);

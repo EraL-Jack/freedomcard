@@ -4,7 +4,8 @@
  * 卡面原文：展示卡组顶7张卡，选择其中一个力量值在你除外区的炎刃数量以下的随从召唤。
  *
  * 流程：
- *  1. 出牌结算（play.ts 接线）：支付 + 进法术区后，展示卡组顶 7 张（`card:revealed`，不动卡）；
+ *  1. 出牌结算（play.ts 接线）：支付 + 进法术区后，**走展示动作**看卡组顶 7 张
+ *     （`revealAction`：翻开 → 触发星轨与「展示时」 → 归位，D-234）；
  *  2. 若展示中有斥候 → 先问「是否除外斥候」（斥候卡面：从卡组展示时可以被除外）；
  *  3. 再从展示中选择力量值 ≤ 除外区炎刃数的随从召唤（随从区满则无可选）；
  *  4. 未选中的洗回卡组（H21，卡面未说去处，取通行做法；`rng:advance` + `deck:shuffled`）。
@@ -22,7 +23,7 @@ import {
   type RuleContext,
 } from '@app/shared';
 
-import { ev, moved, reject, rngAdvance, deckShuffled, strArg } from '../ops.js';
+import { moved, reject, rngAdvance, deckShuffled, strArg } from '../ops.js';
 import { reduce } from '../reducer.js';
 import { shuffle } from '../rng.js';
 
@@ -30,6 +31,7 @@ import {
   bladeExileCount,
   choiceCleared,
   choicePending,
+  revealAction,
   summonEntryEvents,
   type EffectModule,
 } from './index.js';
@@ -53,12 +55,15 @@ export function bladeOrderResolution(
   playerId: string,
   sourceUid: string,
 ): GameEvent[] {
-  const p = state.players[playerId];
-  if (!p) return [];
-  const revealed = p.zones.deck.slice(0, ORDER_REVEAL_COUNT);
-  const events: GameEvent[] = revealed.map((c) =>
-    ev(at, 'card:revealed', { playerId, uid: c.uid, from: 'deck', reason: 'blade-order' }),
-  );
+  // D-234：走统一的**展示动作**。号令的 7 张此前只发 `card:revealed`、不触发星轨与展示时，
+  // 与技能展示是同一个词两种含义；现在两者是同一条实现。
+  const r = revealAction(at, state, playerId, ctx, {
+    n: ORDER_REVEAL_COUNT,
+    reason: 'blade-order',
+    settle: 'bottom',
+  });
+  const events: GameEvent[] = [...r.events];
+  const revealed = r.revealed;
   if (revealed.length === 0) return events;
 
   const scouts = revealed.filter((c) => c.defId === 'bladeScout');
@@ -75,7 +80,8 @@ export function bladeOrderResolution(
     );
     return events;
   }
-  events.push(summonChoice(at, state, ctx, playerId, sourceUid, revealed.map((c) => c.uid)));
+  // 候选判定要在**归位之后**的状态上算（卡此时在卡组里，按 uid 查得到）。
+  events.push(summonChoice(at, r.state, ctx, playerId, sourceUid, revealed.map((c) => c.uid)));
   return events;
 }
 

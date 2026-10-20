@@ -76,6 +76,15 @@ const CTX: RuleContext = { now: 1000, cards: CARDS };
 
 const c = (uid: string, defId: string): CardInstance => ({ uid, defId });
 
+/**
+ * 后攻方起手 6 张（`SECOND_PLAYER_HAND`）的手牌夹具 —— D-231 用。
+ *
+ * ⚠️ `craft()` 默认不发手牌（`createInitialState` 只把 30 张塞进卡组），
+ * 而换牌的两条不变量（补到起手数 / 换牌前后手牌数不变）都依赖真实手牌，
+ * 空手夹具下它们恒真 —— 这正是 D-231 那个缺陷能活到 PR #79 的原因。
+ */
+const HAND_6: CardInstance[] = [1, 2, 3, 4, 5, 6].map((i) => c(`p2#h${i}`, 'm1'));
+
 function intent(playerId: string, type: string, payload?: Record<string, unknown>): Intent {
   return { type, actor: 'player', playerId, seq: 1, payload };
 }
@@ -371,7 +380,7 @@ describe('起手换牌 mulliganRule', () => {
 
   it('X-17：后攻方在自己的第一个充能阶段（第 2 回合）也能换牌', () => {
     // 后攻方首次拿到回合：turn 2、activeSeat 1、chargeCount 1、firstChargeAt 已写入
-    const base = craft({ phase: 'charge', turn: 2, activeSeat: 1 });
+    const base = craft({ phase: 'charge', turn: 2, activeSeat: 1, foeZones: { hand: HAND_6 } });
     const p2 = base.players['p2']!;
     const s: GameState = {
       ...base,
@@ -379,7 +388,36 @@ describe('起手换牌 mulliganRule', () => {
     };
     const after = run(s, intent('p2', INTENTS.mulligan, { returns: [] }));
     expect(after.players['p2']!.mulliganDone).toBe(true);
-    expect(after.players['p2']!.zones.hand.length).toBe(INITIAL_HAND);
+    expect(after.players['p2']!.zones.hand.length).toBe(SECOND_PLAYER_HAND);
+  });
+
+  /**
+   * D-231（Era 2026-10-21 拍板）：换牌补到**该玩家的起手张数**。
+   *
+   * 断言用**不变量**（换牌前后手牌数不变）而不是常量 —— 引用 `INITIAL_HAND`
+   * 会让「补到 5」与「补到 6」两种语义在测试里不可区分，缺陷因此被掩盖过一次。
+   */
+  it('D-231：后手（起手 6 张）换 1 张 / 换 2 张后手牌仍是 6 张', () => {
+    const base = craft({ phase: 'charge', turn: 2, activeSeat: 1, foeZones: { hand: HAND_6 } });
+    const p2 = base.players['p2']!;
+    const s: GameState = {
+      ...base,
+      players: { ...base.players, p2: { ...p2, chargeCount: 1, firstChargeAt: CTX.now } },
+    };
+    const before = s.players['p2']!.zones.hand.length;
+    expect(before).toBe(SECOND_PLAYER_HAND);
+
+    for (const n of [1, 2]) {
+      const after = run(s, intent('p2', INTENTS.mulligan, { returns: HAND_6.slice(0, n).map((x) => x.uid) }));
+      const p = after.players['p2']!;
+      expect(p.zones.hand.length).toBe(before);
+      // 牌库张数不变：返回 n 张进库 → 再抽 n 张补满（30 + n − n）
+      expect(p.zones.deck.length).toBe(s.players['p2']!.zones.deck.length);
+      // 返回的卡没被换回来（换牌的三步顺序不变）
+      for (const uid of HAND_6.slice(0, n).map((x) => x.uid)) {
+        expect(p.zones.hand.some((x) => x.uid === uid)).toBe(false);
+      }
+    }
   });
 
   it('第二次及以后的充能阶段不可换（每人一次机会，X-17）', () => {

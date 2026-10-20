@@ -198,6 +198,45 @@ function releaseSeatOf(socket: Socket): void {
 }
 
 /**
+ * 席位作废后的收尾 —— **主动离开**与**断线宽限到期**共用（D-233）。
+ *
+ * - 对局进行中：系统代认输（引擎产出标准 `game:ended`，留下的玩家按正常事件流收到结束，
+ *   客户端不需要特例）；随后判负整个系列赛，否则 BO3 会停在「等待下一局」。
+ * - 局间（`awaitingNext`）：直接判负系列赛。
+ *
+ * ⚠️ 两条路径必须同一口径。此前只有 `roomLeave` 收尾，断线宽限到期仅释放席位 ——
+ * 留下的一方会对着一个永远不动的对手继续打，最长拖到 40 轮判和（AR-23 / PM-03）。
+ */
+function abandonSeat(roomId: string, playerId: string): void {
+  const rt = runtimes.get(roomId);
+  if (!rt) return;
+  if (rt.state.started && rt.state.winner === null && playerId in rt.state.players) {
+    const intent: Intent = {
+      type: core.INTENTS.concede,
+      actor: 'system',
+      playerId,
+      seq: rt.serverSeq + 1,
+      reason: 'opponent-left',
+    };
+    const result = submitSystemIntent(rt.state, intent, {
+      engine,
+      replay: rt.replay,
+      now: () => Date.now(),
+      cards: CARD_POOL,
+      emit: (out) => emitGameOut(roomId, rt, out),
+    });
+    rt.state = result.state;
+    if (gameOver(rt.state)) {
+      rt.timer.clear();
+      roomManager.forfeitSeries(roomId, playerId);
+    }
+    return;
+  }
+  const room = roomManager.getRoom(roomId);
+  if (room?.awaitingNext) roomManager.forfeitSeries(roomId, playerId);
+}
+
+/**
  * 统一的对局事件广播出口。
  *
  * - 被**接受**的事件 → 广播给整个房间（双方都要看到同一串事件）；
@@ -491,12 +530,20 @@ function sweepRuntimes(): void {
   }
 }
 
-/** 定期回收超出保留窗口的断线席位；频率取窗口的一半，够用且开销可忽略。 */
+/**
+ * 定期回收超出保留窗口的断线席位；频率取窗口的一半，够用且开销可忽略。
+ *
+ * D-233（Era 2026-10-21「掉线等 60s」）：宽限到期 = 该玩家已离开 ——
+ * ① 按离开收尾对局（`abandonSeat`，与主动离开同一路径）；
+ * ② 广播房间状态，让留下的一方立刻看到席位变化（此前只写日志，界面毫无变化）。
+ */
 const pruneTimer = setInterval(() => {
   const freed = roomManager.prune();
-  for (const playerId of freed) {
+  for (const { playerId, roomId } of freed) {
     for (const rt of runtimes.values()) rt.guard.reset(playerId);
-    fastify.log.info({ playerId }, '席位因超出保留窗口已释放');
+    fastify.log.info({ playerId, roomId }, '席位因超出保留窗口已释放');
+    abandonSeat(roomId, playerId);
+    broadcastRoom(roomId);
   }
   sweepRuntimes();
 }, RECONNECT_GRACE_MS / 2);
@@ -713,37 +760,8 @@ io.on('connection', (socket) => {
     if (before) void socket.leave(before.room.id);
 
     // 对局进行中离场 = 系统代为认输（Era 2026-10-18：一方离开后另一方卡在空白页）。
-    // 走系统 Intent 而非直接改状态 —— 结算仍由引擎产出标准 game:ended 事件，
-    // 留下的玩家按正常事件流收到「对局结束」，不需要客户端特例。
-    //
-    // D-132：离场同时**判负整个系列赛** —— 否则 BO3 会停在「等待下一局」。
-    if (before) {
-      const rt = runtimes.get(before.room.id);
-      if (rt && rt.state.started && rt.state.winner === null && playerId in rt.state.players) {
-        const intent: Intent = {
-          type: core.INTENTS.concede,
-          actor: 'system',
-          playerId,
-          seq: rt.serverSeq + 1,
-          reason: 'opponent-left',
-        };
-        const result = submitSystemIntent(rt.state, intent, {
-          engine,
-          replay: rt.replay,
-          now: () => Date.now(),
-          cards: CARD_POOL,
-          emit: (out) => emitGameOut(before.room.id, rt, out),
-        });
-        rt.state = result.state;
-        if (gameOver(rt.state)) {
-          rt.timer.clear();
-          roomManager.forfeitSeries(before.room.id, playerId);
-        }
-      } else if (rt && before.room.awaitingNext) {
-        // 小局之间离开同样结束系列赛：否则留下的人卡在「等待房主开始下一局」。
-        roomManager.forfeitSeries(before.room.id, playerId);
-      }
-    }
+    // D-132：同时判负整个系列赛；与「断线宽限到期」共用 `abandonSeat`（D-233）。
+    if (before) abandonSeat(before.room.id, playerId);
 
     if (r.value.room) broadcastRoom(r.value.room.id);
     else sweepRuntimes();

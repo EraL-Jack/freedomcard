@@ -14,6 +14,7 @@ import {
   COMMANDER_SKILL_COST,
   RULE_ERRORS,
   type CardDef,
+  type CardInstance,
   type GameEvent,
   type GameState,
   type Intent,
@@ -71,7 +72,13 @@ import {
   starSovereignEffect,
   starWeaverEffect,
 } from './star-troops.js';
-import { applyEvents, drawTop, emitter, putRevealedBottom, revealFromDeck } from './primitives.js';
+import {
+  applyEvents,
+  drawTop,
+  emitter,
+  ensureDeckSize,
+  putRevealedBottom,
+} from './primitives.js';
 
 /** 效果模块接口。 */
 export interface EffectModule {
@@ -336,36 +343,107 @@ export function spellEntryEvents(
   return mod?.onPlay ? mod.onPlay(state, ctx, owner, uid) : [];
 }
 
-/**
- * **展示**（docs/17 §2.1）+ 星轨结算 —— 星轨三处展示入口（指挥官攻击 / 星图 / 凝视星空）
- * 共用，保证「展示 → 星轨 +1 → 触发展示时 → 归位」的次序只有一份实现。
- *
- * 次序：
- *  1. `revealFromDeck`：翻牌、**移入展示区**、公开；
- *  2. 指挥官是星轨观测者 → 每展示 1 张，星轨 +1（Ⅱ 被动）；
- *  3. 星轨环：本回合第一次展示时抽 1 张；
- *  4. 逐张结算「展示时」效果（按翻开顺序）；
- *  5. 结算完毕，把仍在展示区的卡按原顺序送回牌库底。
- *
- * 第 1 步先离场、第 5 步才回底，就是 Era 2026-10-20 的口径「效果执行的时候放在展示区」：
- * 效果期间卡停在展示区，玩家看得见，而抽牌也抽不走它们。
- */
-export function starRevealEvents(
+/* ------------------------------ 展示动作 ------------------------------ */
+
+/** 展示结算后的去向。`bottom` = 回牌库底（默认）；其余为区域名。 */
+export type RevealSettle = 'bottom' | 'cost' | 'graveyard';
+
+export interface RevealActionOptions {
+  /** 从卡组顶展示几张（与 `uids` 二选一）。 */
+  n?: number;
+  /** 指定要展示的 uid（焚典 / 号令：范围先定、再翻开）。 */
+  uids?: readonly string[];
+  /** 写进 `card:revealed.reason`，供日志与回放区分来源。 */
+  reason?: string;
+  /** 结算后去向，默认 `'bottom'`。 */
+  settle?: RevealSettle;
+}
+
+export interface RevealActionResult {
+  events: GameEvent[];
+  /** 按翻开顺序的卡（已触发完毕）。调用方据此做后续选择。 */
+  revealed: CardInstance[];
+  state: GameState;
+}
+
+/** 把仍在展示区的卡送入指定区域（指挥官受伤：展示 → 费用区）。 */
+export function settleRevealed(
   at: number,
   state: GameState,
   owner: PlayerId,
-  n: number,
-  ctx: RuleContext,
-): { events: GameEvent[]; revealed: { uid: string; defId: string }[] } {
-  const r = revealFromDeck(at, state, owner, n, ctx, 'star-reveal');
-  const e = emitter(r.state);
+  uids: readonly string[],
+  to: Exclude<RevealSettle, 'bottom'>,
+): GameEvent[] {
+  const p = state.players[owner];
+  if (!p) return [];
+  const present = new Set(p.zones.reveal.map((c) => c.uid));
+  return uids.filter((uid) => present.has(uid)).map((uid) => moved(at, owner, uid, 'reveal', to));
+}
 
+/**
+ * **展示动作** —— 全局唯一实现（Era 2026-10-21 拍板，D-234）。
+ *
+ * 「展示」不是「读一张卡组顶」，而是一个有固定次序的动作；凡是展示都必须走这里，
+ * 否则同一个词在不同卡上会算出不同结果（此前：技能展示触发「展示时」效果，
+ * 而指挥官受伤展示不触发 —— 同一个词两种含义）。
+ *
+ * ① 翻牌离库、进入**展示区**（`Zone = 'reveal'`）并公开（`card:revealed`）；
+ * ② 指挥官是星轨观测者 → 每展示 1 张，星轨 +1（Ⅱ 被动）；
+ * ③ 星轨环：本回合第一次展示时抽 1 张；
+ * ④ 按翻开顺序逐张结算「展示时」效果；
+ * ⑤ 结算完毕后归位：默认回牌库底，也可送进指定区域（受伤展示 → 费用区）。
+ *
+ * 为什么要先进展示区（H35 / D-146 / Era 2026-10-20）：
+ * 触发里存在「展示时：抽 1 张」这类效果。若展示卡还留在卡组顶，那次抽牌会把同批的卡
+ * 抽走 —— 同一张卡既算展示过、又躺在手里，下次展示再触发一次。先离库再结算就没有这个问题。
+ * 展示区是**瞬时区域**：动作结束时清空，不跨 Intent。
+ *
+ * 牌库不足时先把弃牌区洗回（A9 补充 2），洗牌消耗随机并同步产出 `rng:advance`。
+ */
+export function revealAction(
+  at: number,
+  state: GameState,
+  owner: PlayerId,
+  ctx: RuleContext,
+  opts: RevealActionOptions,
+): RevealActionResult {
+  const reason = opts.reason ?? 'reveal';
+  const settle = opts.settle ?? 'bottom';
+  if (!state.players[owner]) return { events: [], revealed: [], state };
+
+  const e = emitter(state);
+
+  // ① 取本次要展示的 uid：要么按张数取卡组顶，要么用调用方给的范围（只保留确实在卡组里的）。
+  let uids: string[];
+  if (opts.uids) {
+    const deck = e.state.players[owner]!.zones.deck;
+    uids = opts.uids.filter((uid) => deck.some((c) => c.uid === uid));
+  } else {
+    const n = opts.n ?? 0;
+    if (n <= 0) return { events: [], revealed: [], state };
+    e.push(...ensureDeckSize(at, e.state, owner, n).events);
+    uids = e.state.players[owner]!.zones.deck.slice(0, n).map((c) => c.uid);
+  }
+  if (uids.length === 0) return { events: e.events, revealed: [], state: e.state };
+
+  const revealed: CardInstance[] = [];
+  for (const uid of uids) {
+    const card = e.state.players[owner]!.zones.deck.find((c) => c.uid === uid);
+    if (!card) continue;
+    revealed.push(card);
+    // 先离开卡组、进入展示区，再公开 —— 顺序决定「展示时的抽牌抽不到同批的卡」。
+    e.push(moved(at, owner, uid, 'deck', 'reveal'));
+    e.push(ev(at, 'card:revealed', { playerId: owner, uid, from: 'deck', reason }));
+  }
+  if (revealed.length === 0) return { events: e.events, revealed: [], state: e.state };
+
+  // ② 星轨观测者 Ⅱ：每展示 1 张 +1 层。
   const cmd = e.state.players[owner]?.zones.commander[0];
-  if (cmd && ctx.cards[cmd.defId]?.defId === 'starWatcher' && r.revealed.length > 0) {
-    e.push(ev(at, 'star:mark', { playerId: owner, amount: r.revealed.length }));
+  if (cmd && ctx.cards[cmd.defId]?.defId === 'starWatcher') {
+    e.push(ev(at, 'star:mark', { playerId: owner, amount: revealed.length }));
   }
 
-  // 星轨环（持续）：每回合**第一次**展示时抽 1 张。
+  // ③ 星轨环（持续）：每回合**第一次**展示时抽 1 张。
   const p = e.state.players[owner];
   if (p) {
     for (const c of p.zones.spell) {
@@ -377,24 +455,38 @@ export function starRevealEvents(
     }
   }
 
-  for (const card of r.revealed) {
+  // ④ 逐张结算「展示时」。
+  for (const card of revealed) {
     const mod = EFFECTS[card.defId];
     if (!mod?.onReveal) continue;
     e.push(...mod.onReveal(e.state, ctx, owner, card.uid));
   }
 
-  // 结算完才归位：`e.state` 已是全部效果应用后的状态，只把仍在展示区的卡送回牌库底。
+  // ⑤ 归位：默认回牌库底；受伤展示送进费用区。
+  const order = revealed.map((c) => c.uid);
   e.push(
-    ...putRevealedBottom(
-      at,
-      e.state,
-      owner,
-      r.revealed.map((c) => c.uid),
-    ),
+    ...(settle === 'bottom'
+      ? putRevealedBottom(at, e.state, owner, order)
+      : settleRevealed(at, e.state, owner, order, settle)),
   );
 
+  return { events: e.events, revealed, state: e.state };
+}
+
+/**
+ * 星轨三处展示入口（指挥官攻击 / 星图 / 凝视星空）的旧名 —— 现在只是
+ * `revealAction`（默认回牌库底）的薄封装，保留签名以免改动调用方。
+ */
+export function starRevealEvents(
+  at: number,
+  state: GameState,
+  owner: PlayerId,
+  n: number,
+  ctx: RuleContext,
+): { events: GameEvent[]; revealed: { uid: string; defId: string }[] } {
+  const r = revealAction(at, state, owner, ctx, { n, reason: 'star-reveal', settle: 'bottom' });
   return {
-    events: [...r.events, ...e.events],
+    events: r.events,
     revealed: r.revealed.map((c) => ({ uid: c.uid, defId: c.defId })),
   };
 }
