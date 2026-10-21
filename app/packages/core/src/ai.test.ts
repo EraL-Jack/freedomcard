@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import type { CardDef, CardInstance, GameState, Phase } from '@app/shared';
+import type { CardDef, CardInstance, GameState, Phase } from '@app/shared/types';
 
 import { decideAiMove } from './ai.js';
 import { applyIntent, reduce, INTENTS } from './index.js';

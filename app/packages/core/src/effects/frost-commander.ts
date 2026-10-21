@@ -19,13 +19,8 @@
  * （放弃即少冻一个，仍结算抽牌）。
  */
 
-import {
-  FROST_MARK_TIERS,
-  RULE_ERRORS,
-  type GameEvent,
-  type Result,
-  type Rejection,
-} from '@app/shared';
+import { FROST_MARK_TIERS, RULE_ERRORS } from '@app/shared/constants';
+import type { GameEvent, Result, Rejection } from '@app/shared/types';
 
 import { baseGuard, ev, firstRejection, locate, playerOf, reject, strArg } from '../ops.js';
 

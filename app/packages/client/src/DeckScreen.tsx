@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 
-import type { CardType } from '@app/shared';
+import type { CardType } from '@app/shared/types';
 import { MAIN_DECK_SIZE, MAX_COPIES } from '@app/shared/constants';
 import { CARD_POOL, TOKEN_CARD_IDS } from '@app/shared/cards';
 import { COMMANDER_IDS, DEFAULT_COMMANDER_ID, deckRecipeProblems } from '@app/shared/default-decks';

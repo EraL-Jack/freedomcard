@@ -1,7 +1,9 @@
 import { useState } from 'react';
 
-import { MAIN_DECK_SIZE, type MatchFormat } from '@app/shared';
+import { MAIN_DECK_SIZE } from '@app/shared/constants';
+import type { MatchFormat } from '@app/shared/types';
 import { CARD_POOL } from '@app/shared/cards';
+import { TURN_TIMEOUT_MS, TURN_TIMEOUT_OPTIONS } from '@app/shared/constants';
 
 import {
   listSelectionOptions,
@@ -9,6 +11,7 @@ import {
   saveActiveDeckId,
   selectionForPlay,
 } from './decks.js';
+import { turnTimeoutLabel } from './labels.js';
 import type { RoomSession } from './useRoom.js';
 
 /**
@@ -32,8 +35,9 @@ export default function HomeScreen(props: {
   const { session } = props;
   const [nickname, setNickname] = useState(() => localStorage.getItem('fc.nickname') ?? '');
   const [code, setCode] = useState('');
-  const [capacity, setCapacity] = useState('2');
   const [format, setFormat] = useState<MatchFormat>('bo1');
+  /** 回合时限（H18）：30 / 60 / 180 / 999 秒，默认 60s。 */
+  const [turnMs, setTurnMs] = useState(String(TURN_TIMEOUT_MS));
   const [localError, setLocalError] = useState('');
 
   /**
@@ -86,7 +90,10 @@ export default function HomeScreen(props: {
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col gap-4 p-4">
-      <h1 className="text-xl font-semibold">卡牌对战 Demo</h1>
+      <h1 className="text-xl font-semibold">ETCG</h1>
+      {/* A1（P-08）：Era 2026-10-21 —— 「暂时代称可以叫 ETCG，风格为混合风格，什么样的卡组都会有」。
+          游戏名仍是他起的名，副标题把这句风格原话直接摆出来，不另行发挥。 */}
+      <p className="-mt-2 text-xs text-slate-400">混合风格 · 什么样的卡组都有</p>
 
       <p className="text-xs text-slate-400">
         {session.link === 'online' ? (
@@ -150,19 +157,6 @@ export default function HomeScreen(props: {
           ) : null}
         </label>
 
-        <label className="block">
-          <span className="text-xs text-slate-400">人数（建房用，1–8）</span>
-          <input
-            className="mt-1 w-20 rounded border border-slate-700 bg-slate-950 px-3 py-2"
-            value={capacity}
-            onChange={(e) => setCapacity(e.target.value.replace(/\D/g, ''))}
-            inputMode="numeric"
-            min={1}
-            max={8}
-            data-testid="capacity"
-          />
-        </label>
-
         {/* 赛制（D-132）：BO1 一局定胜负；BO3 三局两胜、双方各先手一次 */}
         <label className="block">
           <span className="text-xs text-slate-400">赛制</span>
@@ -177,15 +171,42 @@ export default function HomeScreen(props: {
           </select>
         </label>
 
+        {/*
+          回合时限（H18）—— Era 2026-10-21：「时长建议在建房能选择，30-60-180-999」。
+          档位写死在 shared（`TURN_TIMEOUT_OPTIONS`），客户端只负责选择与展示；
+          服务端仍按白名单归一，非法值回落默认，老客户端不带该字段也能建房。
+        */}
+        <label className="block">
+          <span className="text-xs text-slate-400">每回合时限</span>
+          <select
+            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2"
+            value={turnMs}
+            onChange={(e) => setTurnMs(e.target.value)}
+            data-testid="turn-timeout"
+          >
+            {TURN_TIMEOUT_OPTIONS.map((ms) => (
+              <option key={ms} value={String(ms)}>
+                {turnTimeoutLabel(ms)}
+              </option>
+            ))}
+          </select>
+        </label>
+
         <button
           type="button"
           className="w-full rounded bg-emerald-700 px-4 py-3"
           onClick={() =>
             createOrJoin((name) => {
-              // 服务端上限 8：超范围在这里折回，不要等服务器打回。
-              const n = Math.min(8, Math.max(1, Math.round(Number(capacity) || 2)));
               const play = selectionForPlay();
-              session.create(name, n, format, play.deck, play.commander);
+              // 人数固定 2（T-07）：规则只验证过 2 人，界面不再给出 3~8 的入口。
+              session.create({
+                nickname: name,
+                capacity: 2,
+                format,
+                deck: play.deck,
+                commander: play.commander,
+                turnTimeoutMs: Number(turnMs),
+              });
             })
           }
           data-testid="create"
@@ -195,7 +216,7 @@ export default function HomeScreen(props: {
 
         {/*
           人机对战（D-242，Era 2026-10-21）—— 开房即坐入一个 AI 席位，
-          不用再开两个窗口自己跟自己打。用的仍是上面选的**卡组 / 赛制**，
+          不用再开两个窗口自己跟自己打。用的仍是上面选的**卡组 / 赛制 / 时限**，
           所以人机房也能拿来试新卡组。
         */}
         <button
@@ -204,7 +225,15 @@ export default function HomeScreen(props: {
           onClick={() =>
             createOrJoin((name) => {
               const play = selectionForPlay();
-              session.create(name, 2, format, play.deck, play.commander, true);
+              session.create({
+                nickname: name,
+                capacity: 2,
+                format,
+                deck: play.deck,
+                commander: play.commander,
+                solo: true,
+                turnTimeoutMs: Number(turnMs),
+              });
             })
           }
           data-testid="create-solo"

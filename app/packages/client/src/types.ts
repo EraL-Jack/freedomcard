@@ -1,4 +1,5 @@
-import type { GameState, MatchFormat, RoomErrorCode } from '@app/shared';
+import type { GameState, MatchFormat } from '@app/shared/types';
+import type { RoomErrorCode } from '@app/shared/constants';
 
 /**
  * 客户端视图类型 —— 与服务端 `RoomManager.publicView` 的返回结构**逐字段对应**。
@@ -26,6 +27,8 @@ export interface RoomView {
   hostId: string;
   /** 赛制（D-132）：BO1 单局 / BO3 三局两胜。 */
   format: MatchFormat;
+  /** 回合时限（H18）：30 / 60 / 180 / 999 秒的毫秒值，建房时选定，全场公开。 */
+  turnTimeoutMs: number;
   /** 已完成的小局数。 */
   gameNo: number;
   /** 系列赛比分（playerId → 胜场）。 */

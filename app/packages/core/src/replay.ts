@@ -1,12 +1,4 @@
-import type {
-  CardDef,
-  GameEvent,
-  GameState,
-  Intent,
-  Rejection,
-  Result,
-  RuleContext,
-} from '@app/shared';
+import type { CardDef, GameEvent, GameState, Intent, Rejection, Result, RuleContext } from '@app/shared/types';
 
 /**
  * 回放与确定性校验。

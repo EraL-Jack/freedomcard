@@ -24,15 +24,8 @@
  * 强度可调，但**先保证不卡死** —— 调度器在 AI 操作被拒时会兜底推进阶段。
  */
 
-import {
-  BOARD_SLOTS,
-  KEYWORD_TAUNT,
-  MULLIGAN_WINDOW_MS,
-  type CardDef,
-  type CardInstance,
-  type GameState,
-  type PlayerId,
-} from '@app/shared';
+import { BOARD_SLOTS, KEYWORD_TAUNT, MULLIGAN_WINDOW_MS } from '@app/shared/constants';
+import type { CardDef, CardInstance, GameState, PlayerId } from '@app/shared/types';
 
 import { costToPay, defOf, hasKeyword, unitPower } from './ops.js';
 import { INTENTS } from './rules/index.js';

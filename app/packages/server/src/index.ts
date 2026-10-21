@@ -41,6 +41,7 @@ import { normalizePlayerIntent } from './room/inbound.js';
 import { WindowRateLimit } from './room/rate-limit.js';
 import { sweepReplayDir } from './room/replay-maintenance.js';
 import { TurnTimer, hostScheduler } from './room/turn-timer.js';
+import { buildTimeoutIntent } from './room/timeout-intent.js';
 import { nextSeed, seedGameState, seedSetup } from './room/session.js';
 
 /** 与 packages/server/package.json 的 version 保持一致。 */
@@ -147,6 +148,20 @@ const runtimes = new Map<string, RoomRuntime>();
 /** 引擎端口实例 —— `core` 的公开签名与 `EnginePort` 结构一致，此处仅作显式绑定。 */
 const engine: EnginePort = core;
 
+/**
+ * 本房间该用多长的回合时限（H18）。
+ *
+ * 优先级：**环境变量 > 房间设置 > 默认值**。
+ *
+ * 环境变量留最前，是因为它唯一的用途是测试放宽（全量并发下 30~60s 墙钟可能被
+ * 播放队列 + 慢速渲染吃掉，超时兜底会抢在测试动作前结束回合）；生产不得设置。
+ */
+function resolveTurnTimeout(roomId: string): number {
+  const env = Number(process.env['TURN_TIMEOUT_MS'] ?? '');
+  if (Number.isFinite(env) && env > 0) return env;
+  return roomManager.getRoom(roomId)?.turnTimeoutMs ?? TURN_TIMEOUT_MS;
+}
+
 function runtimeOf(roomId: string): RoomRuntime {
   let rt = runtimes.get(roomId);
   if (!rt) {
@@ -170,10 +185,9 @@ function runtimeOf(roomId: string): RoomRuntime {
     rt.timer = new TurnTimer({
       now: () => Date.now(),
       scheduler: hostScheduler,
-      // 测试可经环境变量放宽时限（与 GAME_SEED 同先例，ADR-0021）：全量并发下
-      // 30s 墙钟可能被播放队列 + 慢速渲染吃掉，超时兜底会抢在测试动作前结束回合。
-      // 生产不得设置。
-      timeoutMs: Number(process.env['TURN_TIMEOUT_MS'] ?? TURN_TIMEOUT_MS),
+      // 测试可经环境变量放宽时限（与 GAME_SEED 同先例，ADR-0021）；否则按建房选的档位
+      // （H18：30 / 60 / 180 / 999 秒）。生产不得设置该环境变量。
+      timeoutMs: resolveTurnTimeout(roomId),
       onTimeout: () => handleTurnTimeout(roomId),
     });
     runtimes.set(roomId, rt);
@@ -287,16 +301,10 @@ function handleTurnTimeout(roomId: string): void {
   if (!rt || !room) return;
   if (room.phase !== 'playing' || gameOver(rt.state) || room.awaitingNext) return;
 
-  const active = core.activePlayer(rt.state);
-  if (!active) return;
-
-  const intent: Intent = {
-    type: core.INTENTS.turnEnd,
-    actor: 'system',
-    playerId: active,
-    seq: rt.serverSeq + 1,
-    reason: 'timeout',
-  };
+  // 构造交给纯函数（T-05）：那段逻辑抽出去之后才能单测。
+  // 无行动方（未开局 / 已结束）时返回 null —— 同样的情况上面已经挡过一遍。
+  const intent = buildTimeoutIntent(rt.state, rt.serverSeq);
+  if (!intent) return;
 
   const result = submitSystemIntent(rt.state, intent, {
     engine,
@@ -733,7 +741,8 @@ io.on('connection', (socket) => {
     releaseSeatOf(socket);
     socket.data.playerId = r.value.seat.playerId;
     void socket.join(r.value.room.id);
-    runtimeOf(r.value.room.id);
+    // H18：新建的 runtime 按房间档位定时限（建房时一定未开始计时）。
+    runtimeOf(r.value.room.id).timer.setTimeoutMs(resolveTurnTimeout(r.value.room.id));
     broadcastRoom(r.value.room.id);
     ack?.({
       ok: true,

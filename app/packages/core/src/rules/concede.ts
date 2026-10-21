@@ -6,7 +6,8 @@
  * 房间层判负时构造的系统 Intent 带 `reason: 'opponent-left'`，本规则把它原样写进事件成因（D-238）。
  */
 
-import { RULE_ERRORS, type GameEvent, type GameState, type Intent, type Result, type Rejection, type RuleContext } from '@app/shared';
+import { RULE_ERRORS } from '@app/shared/constants';
+import type { GameEvent, GameState, Intent, Result, Rejection, RuleContext } from '@app/shared/types';
 
 import { ev } from '../ops.js';
 import { opponentOf } from '../state.js';

@@ -82,6 +82,13 @@ export const RoomCreateSchema = z.object({
    * 让人机房开放 3~8 席等于造一个跑不通的房间。
    */
   solo: z.boolean().optional(),
+  /**
+   * 回合时限（毫秒）—— H18 / Era 2026-10-21「时长建议在建房能选择，30-60-180-999」。
+   *
+   * 这里只做「是正整数」的类型约束，**档位白名单在房间层**（`normalizeTurnTimeout`）：
+   * 传了未定义档位（如 120000）不报错、回落默认 60s —— 老客户端与手误都不该被 400 挡住。
+   */
+  turnTimeoutMs: z.number().int().positive().max(999_000).optional(),
   /** 本局的 30 张主卡组 —— 空/缺省 = 用服务端默认卡组。 */
   deck: DeckSchema.optional(),
   /** 本局的指挥官 —— 缺省 = 由所选卡组决定（基础卡组自带一位）。 */

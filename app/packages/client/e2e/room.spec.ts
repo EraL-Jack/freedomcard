@@ -1,4 +1,6 @@
-import { expect, test, type Browser, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+
+import { newClient } from './helpers.js';
 
 /**
  * 房间流程端到端验证（占位界面）。
@@ -7,16 +9,12 @@ import { expect, test, type Browser, type Page } from '@playwright/test';
  * 点击是否真的生效、两个客户端是否真的互相看见、重开页面是否真的自动重连。
  *
  * ⚠️ 这里验证的是**占位界面**的可用性，不是产品界面 —— 视觉与交互设计仍待 B 组输入。
+ *
+ * ⚠️ T-02 同期修掉的坑：本文件原来**自己抄了一份 `newClient`**（与 `helpers.ts` 里的
+ * 几乎一样）。于是给公共 helper 加「新手引导已看」预置时，本文件的三条用例全被
+ * 引导浮层挡住 —— 表现为「点 leave 一直超时」，而错误里只提到 `intercepts pointer events`。
+ * 同一份逻辑写两处，改一处必然漏另一处；现已改为从 `helpers.js` 导入。
  */
-
-async function newClient(browser: Browser, nickname: string): Promise<Page> {
-  const context = await browser.newContext();
-  const page = await context.newPage();
-  await page.goto('/');
-  await expect(page.getByText('服务端已连接')).toBeVisible({ timeout: 15_000 });
-  await page.getByTestId('nickname').fill(nickname);
-  return page;
-}
 
 test('建房 → 加入 → 双方可见 → 刷新自动重连', async ({ browser }) => {
   const host = await newClient(browser, 'Host');

@@ -6,7 +6,7 @@
  * 记为「本回合它登场时获得 +N」（`card:pending-buff`，docs/17 §6.3 方案 A）。
  */
 
-import type { GameEvent, GameState, PlayerId } from '@app/shared';
+import type { GameEvent, GameState, PlayerId } from '@app/shared/types';
 
 import { commanderDamageEvents } from '../combat.js';
 import { ev, locate } from '../ops.js';

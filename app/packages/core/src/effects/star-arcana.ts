@@ -8,13 +8,8 @@
  * 这里没有 `onPlay`。
  */
 
-import {
-  RULE_ERRORS,
-  type GameEvent,
-  type PendingChoice,
-  type Result,
-  type Rejection,
-} from '@app/shared';
+import { RULE_ERRORS } from '@app/shared/constants';
+import type { GameEvent, PendingChoice, Result, Rejection } from '@app/shared/types';
 
 import { commanderDamageEvents } from '../combat.js';
 import { ev, moved, reject, strArg } from '../ops.js';

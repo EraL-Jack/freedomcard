@@ -5,12 +5,8 @@
  * 寒域 `frostDomain` 没有模块：它是静态光环，结算在 `ops.unitPower`。
  */
 
-import {
-  RULE_ERRORS,
-  type GameEvent,
-  type Result,
-  type Rejection,
-} from '@app/shared';
+import { RULE_ERRORS } from '@app/shared/constants';
+import type { GameEvent, Result, Rejection } from '@app/shared/types';
 
 import { commanderDamageEvents } from '../combat.js';
 import { moved, reject, strArg, unitPower } from '../ops.js';

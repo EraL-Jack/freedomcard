@@ -1,4 +1,4 @@
-import type { CardType } from '@app/shared';
+import type { CardType } from '@app/shared/types';
 
 /**
  * 卡牌渲染 —— D-118 视觉重做（Era 2026-10-18「展示方面不像是卡牌游戏」/ docs/11 R2）。

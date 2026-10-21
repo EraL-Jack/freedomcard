@@ -3390,3 +3390,258 @@ AI 是**服务端的一个真实席位**（`playerId = 'ai'`、昵称「电脑�
 
 - **破坏性**：**否** —— `solo` 是可选入站字段；不传即原行为。
   服务端 + 客户端都有改动，部署仍需 `pnpm build` 后重启进程。
+
+## D-243 · 结算面板说清「怎么输的」（P-02，2026-10-21）
+
+Era 2026-10-21：「P02按推荐来」。同一句「败北」有四种成因（被打死 / 认输 / 对手掉线 / 40 轮血量裁定），
+结算页只有大标题与比分，复盘全靠回忆，验收时也无法从截图判断败因。
+
+### 改动
+
+- `client/src/labels.ts`：新增 `endReasonText(reason, draw, iWon)` —— 把中性的
+  `endReason`（`health` / `sudden-death` / `turn-limit` / `concede` / `opponent-left` / `draw`）
+  按**视角**说成一句话（「你的指挥官生命归零」而不是「health」）。未知 / 缺失成因返回 `null`，
+  宁可少一行也不印 `undefined`。
+- `client/src/TableScreen.tsx`：结算面板第二行 BO1 固定为「对局结束」，第三行显示成因
+  （`data-testid="end-reason"`）；BO3 的第二行仍是比分，成因行照常追加。
+- 不改协议：`GameState.endReason` 早在 D-238 就落进状态。
+
+### 验证
+
+- client 单测 `labels.test.ts` 6 条（含「四种成因按视角说对」「未知成因返回 null」）。
+  红绿验证：把 `health` 的 win/lose 文案互换 → 用例立刻红。
+- E2E：`guide.spec` / `mobile.spec` 之外，结算面板由 `room.spec`（对局中一方离开）覆盖。
+
+- **破坏性**：否。
+
+## D-244 · 回合时限成为建房选项：30 / 60 / 180 / 999 秒（H18，2026-10-21）
+
+Era：「H18时长建议在建房能选择，30-60-180-999」。此前 `TURN_TIMEOUT_MS = 30s` 是全局常量，
+8 血节奏下一个回合要「充能 → 推阶段 → 出牌 → 攻击」四步，30s 实测常被自动结束回合。
+
+### 改动
+
+- `shared/src/constants.ts`：
+  - `TURN_TIMEOUT_OPTIONS = [30_000, 60_000, 180_000, 999_000]`（Era 定的四档）；
+  - `TURN_TIMEOUT_MS` 从 30s 改为 **60s**，并降级为「默认值」而非常量口径；
+  - 新增 `normalizeTurnTimeout(ms)` —— **只认白名单，其余回落默认**（不在 schema 里 400，
+    老客户端与手误不该被卡住建不了房）。
+- `shared/src/schema.ts`：`RoomCreateSchema` 新增可选 `turnTimeoutMs`（正整数、上限 999000）。
+  ⚠️ 必须显式声明 —— `z.object()` 对未声明键是 strip，漏了就是「玩家选 999 秒、服务端按 60 秒跑，界面无异常」。
+- `server/src/room/types.ts`：`Room.turnTimeoutMs` —— 房间级事实（「这间房怎么打」的约定，不随单局重置）。
+- `server/src/room/room.ts`：`create({ turnTimeoutMs })` 归一后落进房间；`publicView` 暴露该字段。
+- `server/src/room/turn-timer.ts`：新增 `setTimeoutMs(ms)`，**计时中调用直接抛错** ——
+  中途改时限会让当前回合的截止时刻莫名跳动，或只对下一回合生效，玩家看到的就是不确定。
+- `server/src/index.ts`：新增 `resolveTurnTimeout(roomId)`，优先级 **环境变量 > 房间档位 > 默认值**
+  （环境变量留给测试放宽，生产不得设置）；建房后按房间档位设一次。
+- `client/src/HomeScreen.tsx`：新增「每回合时限」下拉（`turn-timeout`），建房 / 人机对战都带上。
+- `client/src/TableScreen.tsx`：准备页新增 `room-rules` 一行（赛制 · 每回合多久），对手也看得见。
+- `client/src/useRoom.ts`：`create()` 改为**对象参数** —— 加到第 7 个位置参数后，
+  调用点只剩 `create(name, 2, format, deck, cmdr, true, 60000)`，「哪个 true 是什么」全靠数位。
+
+### 验证
+
+- server 单测：`turn-timer.test.ts` 从 6 条扩到 8 条（改时限生效 / 计时中改报错），
+  且把「默认时限」的断言从写死 30000 改为 `TURN_TIMEOUT_MS` —— 原来那条测试在值变更时会假红；
+  `room.test.ts` 新增「按时限记录 + 非法档位回落」；`schema.test.ts` 新增 `turnTimeoutMs` 透传用例。
+- E2E：`form.spec.ts` 新增「选 999 秒 → 准备页显示『999 秒（基本不限时）』」。
+- 单测总数 server 142（+4）。
+
+- **破坏性**：**否** —— 字段可选；不传即 60s。默认值由 30s 变 60s 属于**行为变化**，
+  已记入 `docs/09`（H18 销项）。
+
+## D-245 · 房间容量统一收到 2 人（T-07，2026-10-21）
+
+`capacity` 允许 1–8，但规则引擎只验证过 2 人（前排、嘲讽、伤害裁定全是二人语义）。
+3~8 席能建出房、能开局，但没人验证过它会发生什么。
+
+### 改动
+
+- `server/src/room/room.ts`：`create()` 的 `capacity` 恒为 2、`seats` 恒为两格。
+  无论客户端传几（含老客户端传 8），都建出双人房 —— **不报错**，只是不照传。
+- `client/src/HomeScreen.tsx`：删掉「人数（建房用，1–8）」输入框（`capacity` testid 一并消失）。
+- 人机房本来就强制 2 席，两条路径在这里统一。
+
+### 验证
+
+- `room.test.ts`：「非人机房的建房行为不受影响」改为断言 `capacity === 2` 且 `seats` 长度为 2。
+- `form.spec.ts`：原「人数填 22 自动折回」用例改写为「没有人数输入也能建房，房间恒为 2 人」。
+
+- **破坏性**：**是（对协议值）** —— 传 `capacity: 3` 不再得到 3 席。规则从未支持 3 人，
+  故按「收口」处理而非「破坏既有能力」。
+
+## D-246 · 全站改名 ETCG + 副标题（P-08 / A1，2026-10-21）
+
+Era：「A1游戏名不知道取啥，暂时代称可以叫ETCG，风格为混合风格，什么样的卡组都会有」。
+
+### 改动
+
+- `client/index.html`：`<title>ETCG · 网页卡牌对战</title>`（原「卡牌对战 Demo · 骨架」）。
+- `client/src/HomeScreen.tsx`：`<h1>ETCG</h1>` + 副标题「混合风格 · 什么样的卡组都有」。
+  副标题直接用 Era 的原话，不另行发挥 —— 游戏名仍是他起的名。
+
+- **破坏性**：否。
+
+## D-247 · 三步新手引导，只出现一次（P-03，2026-10-21）
+
+Era：「P03用1方案」（首局进入对战桌时给 3 步浮层）。
+
+### 改动
+
+- `client/src/IntroGuide.tsx`（新）：三步浮层 —— ① 先充能 ② 推进阶段（六阶段不可跳、抽牌要手动点卡组）
+  ③ 出牌与攻击（随从没有生命值，只比力量）。有「上一步 / 下一步 / 跳过」。
+- `client/src/TableScreen.tsx`：首次进入对战桌（`state.started`）时渲染；**点完最后一步才写**
+  `localStorage['fc.introSeen']`（中途刷新不算看过）。
+- `client/e2e/helpers.ts`：`newClient` 预置 `fc.introSeen=1` —— 否则这个 `fixed inset-0` 的模态
+  会挡住全量 E2E 的每一次点击。引导本身由新的 `guide.spec.ts` 单独验（不走 helper）。
+- `client/e2e/guide.spec.ts`（新）：开局即弹 → 三步走完 → 关闭后桌面可点 → 刷新不再弹。
+
+### 验证
+
+- `guide.spec.ts` 1 条通过（950ms）。
+
+- **破坏性**：否（首次进入会多一次点击「跳过」）。
+
+## D-248 · 三条程序化合成音效：打击 / 抽牌 / 结算（P-06，2026-10-21）
+
+Era：「P06素材先整音效吧，你来整」。
+
+### 改动
+
+- `client/src/sfx.ts`（新）：Web Audio 现场合成，**不引外部素材**（X-15 未拍板，授权与风格都没定）。
+  - 打击：噪声爆（带通 900Hz）+ 低频 170→52Hz 下坠，音量随伤害点数夹在 [0.6, 1.6]；
+  - 抽牌：高通噪声 + 460→920Hz 三角波上扫，短促不抢戏；
+  - 结算：三个正弦一组，胜为大三和弦上行、负为同一组下行。
+  - 静音状态存 `localStorage['fc.sfxMuted']`。
+- `client/src/useRoom.ts`：在事件流唯一消费点（`pump`）按事件发声 ——
+  `commander:damaged` / `combat:resolved` → 打击、`draw:completed` → 抽牌、`game:ended` → 结算。
+  放在这里而不是组件里，是因为事件流是唯一入口，重连后的增量也不会漏。
+- `client/src/TableScreen.tsx`：操作条新增「音效：开/关」（`sfx-toggle`）。
+
+### 验证
+
+- E2E 在 `<mute-audio>` 下运行（Playwright 默认），不产生音频输出也不报错；
+  音频 API 不可用时 `ac()` 返回 `null`，调用点静默跳过。
+
+- **破坏性**：否。
+
+## D-249 · 第一版不做清单（C2-2，2026-10-21）
+
+Era：「C2-2你先起草吧」。新增 `docs/22-第一版不做清单.md`：25 条按「玩法 / 系统联机 / 表现内容 / 工程运维」
+四类，每条写「为什么不做 + 什么时候做」，末尾列出待 Era 确认的 4 个问题。
+判定口径只有一条：**不做它，两个人能不能顺畅打完一局**。
+
+- **破坏性**：否（纯文档）。
+
+## D-250 · 首屏去掉 zod：shared 拆成「类型 / 常量 / 协议」三入口（T-03，2026-10-21）
+
+`core` 有 43 处从 `@app/shared` 根导入，而根的 `index.ts` re-export 了 `schema.ts`（引 zod）。
+客户端经 `@app/core` 间接把 zod 拖进首屏 —— `shared/constants.ts` 顶部的注释早就点明了这个坑，
+但只有 client 自己走了子路径，core 一直走根。
+
+### 改动
+
+- `shared/package.json`：新增 `./types` 子路径出口（`types.ts` 是**纯类型**文件：零 import、零运行时导出）。
+- `shared/src/index.ts`：re-export `TURN_TIMEOUT_OPTIONS` / `normalizeTurnTimeout`（新增 public API）。
+- `core/src/**` 与 `client/src/**` 共 **49 个文件**的导入按符号分派：
+  - 类型 → `@app/shared/types`（编译后完全消失）；
+  - 常量 → `@app/shared/constants`；
+  - 卡池 → `@app/shared/cards`（早已如此）。
+- 服务端继续用根导入（它本来就要 schema，体积无所谓）。
+
+### 验证
+
+- 全仓 `grep "from '@app/shared'"` 在 `core/src` 与 `client/src` 下**零命中**。
+- 生产构建 gzip **144.53 → 121.16 kB（−23.37 kB，−16.2%）**，且这次还**净新增**了引导与音效代码。
+  module 数 97。
+- 单测全绿（core 200 / server 142 / client 28）。
+
+- **破坏性**：否（纯模块边界）。
+
+## D-251 · 390px 竖屏的日志抽屉（T-02）+ E2E helper 去重（2026-10-21）
+
+T-02：日志列写的是 `hidden sm:flex`，于是 390px 竖屏下**整列消失** —— 手机上看不到战报。
+
+### 改动
+
+- `client/src/TableScreen.tsx`：
+  - 窄屏改为「日志」按钮展开的浮层抽屉（`fixed inset-x-2 top-16 bottom-2`），桌面仍是常驻右列；
+  - 抽屉层级 `z-[65]`：**必须高于操作条 `z-[60]`**，否则「收起日志」按钮被 footer 盖住，
+    实测表现为「点了没反应 / 一直重试到超时」；
+  - 操作条新增 `log-toggle`（仅窄屏显示）与抽屉内的 `log-close`。
+- `client/e2e/mobile.spec.ts`（新）：390×844 下入口存在、默认收起、展开可见且有内容、能收起。
+- `client/e2e/room.spec.ts`：删掉文件内**自己抄的一份 `newClient`**，改从 `helpers.js` 导入。
+  这是本轮最典型的「两处都对的契约拼起来会漏」：给公共 helper 加「引导已看」预置后，
+  本文件的用例全被引导浮层挡住，而错误信息只提到 `intercepts pointer events`。
+
+- **破坏性**：否。
+
+## D-252 · client 接入单测与覆盖率，可操作性判定抽成 `selectors.ts`（T-04，2026-10-21）
+
+T-04：client 3849 行零单测，且没有覆盖率工具链。
+
+### 改动
+
+- `client/package.json`：`test` / `test:coverage`；新增 devDeps `vitest` + `@vitest/coverage-v8`。
+- `client/vitest.config.ts`（新）：`environment: 'node'`（被测文件不碰 DOM），覆盖率 `include: src/**`。
+- `client/src/selectors.ts`（新）：`actionability(state, me, now)` —— 把「按钮展不展示」的 9 条判据
+  从组件体里搬出来（手牌可点 / 可宣告攻击 / 换牌窗口 / 可抽牌 / 指挥官攻击 / 攻击并展示 …）。
+  `TableScreen` 改为只取值，`act` 在 early return 之后断言非空。
+- 测试：`selectors.test.ts`（14 条）、`labels.test.ts`（9 条）、`log.test.ts`（5 条）共 **28 条**。
+- 红绿验证：把换牌窗口的 `<=` 改成 `<`、把 `health` 的 win/lose 文案互换 —— 对应用例**立即变红**，还原后复绿。
+
+### 验证
+
+- client 单测 28 通过；`labels.ts` 行/分支/函数覆盖 100%，`selectors.ts` 行覆盖 100%（分支 86.67%）。
+
+- **破坏性**：否（纯重构 + 新增测试；`TableScreen` 行为不变，由 E2E 兜底）。
+
+## D-253 · 超时 Intent 的构造抽成纯函数并补测（T-05，2026-10-21）
+
+T-05：`handleTurnTimeout` 从未被任何测试执行 —— 「不动就自动结束回合」这条规则的唯一实现，
+一旦 Intent 形状写错（少 `actor: 'system'`、`playerId` 指向自己），只有真等满 60 秒才会发现。
+
+### 改动
+
+- `server/src/room/timeout-intent.ts`（新）：`buildTimeoutIntent(state, serverSeq)` ——
+  纯函数，返回 `turn:end` + `actor: 'system'` + `reason: 'timeout'` + 当前行动方；
+  **未开局 / 已分胜负 / 无行动方返回 `null`**。
+  自守一层 `winner`/`draw` 判断：定时器回调可能比会话层的 `gameOver` 检查晚一拍，
+  否则会把已经结束的对局推到下一回合，日志里凭空多一条 `turn:changed`。
+- `server/src/index.ts`：`handleTurnTimeout` 改用它（其余链路未动）。
+- `server/src/room/timeout-intent.test.ts`（新）4 条：未开局不给 / 字段形状正确 /
+  **交给 `applyIntent` + `reduce` 后回合真的推进且行动方换人** / 已结束不给。
+
+- **破坏性**：否。
+
+## D-254 · 文档一致性复扫（T-08，2026-10-21）
+
+- `docs/21`：把第二批待办（P-02 / P-03 / P-06 / P-08 / C2-2、T-02~T-05 / T-07）逐条销项，附落地编号。
+- `docs/09`：H18 销项（改为建房可选四档）；新增 H52~H55（见下）。
+- `docs/22`（新）：第一版不做清单，见 D-249。
+- `README-运行说明.md`：改名 ETCG；§3.1 补建房选项（赛制 / 每回合时限 / 人机对战）；
+  §9 事件表补 `room:create.turnTimeoutMs`；§10 已知限制更新（T-02 已修、首屏体积）。
+- 根 `README.md`：标题与一句话描述跟进。
+
+- **破坏性**：否。
+
+---
+
+### 本轮总体验证（D-243 ~ D-254，2026-10-21 09:40）
+
+| 项 | 结果 |
+| --- | --- |
+| 单测 | **370 passed** —— core 200 / server 142（+4）/ client 28（新增） |
+| E2E | **40 passed**（2.7m）—— 原 37 条 + `guide.spec` / `mobile.spec` / `form.spec` 改写 |
+| typecheck | 0 错（shared / core / server / client） |
+| lint | 0 错（`eslint .`） |
+| 生产构建 | gzip **121.16 kB**（较上一轮 **−23.37 kB**），97 modules，CSS 7.54 kB |
+
+**过程中发现并修掉的两个真问题**（都不是「实现没写」，而是「写对了但拼起来漏」）：
+
+1. **E2E 的 `newClient` 有两份**（`helpers.ts` 与 `room.spec.ts` 各一份）。
+   给公共 helper 加「新手引导已看」预置后，`room.spec` 的三条用例全被引导浮层挡住，
+   报错只说 `intercepts pointer events`。处置：删掉重复实现，统一从 `helpers.js` 导入（D-251）。
+2. **日志抽屉 `z-40` 低于操作条 `z-[60]`** —— 抽屉里的「收起日志」按钮被 footer 盖住，
+   表现为「点了没反应，一直重试到测试超时」。处置：抽屉抬到 `z-[65]`（D-251）。
+   这条是「两处都对的契约拼起来会漏」的又一例：抽屉写 `fixed` 是对的、footer 写 `z-[60]` 也是对的。

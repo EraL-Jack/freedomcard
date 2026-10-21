@@ -1,25 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  BOARD_SLOTS,
-  COST_INCOME_PER_TURN,
-  DECK_SIZE,
-  INITIAL_HAND,
-  INITIAL_HEALTH,
-  KEYWORD_TAUNT,
-  MAIN_DECK_SIZE,
-  MULLIGAN_WINDOW_MS,
-  RULE_ERRORS,
-  SECOND_PLAYER_HAND,
-  type CardDef,
-  type CardInstance,
-  type GameEvent,
-  type GameState,
-  type Intent,
-  type Phase,
-  type RuleContext,
-  type Zone,
-} from '@app/shared';
+import { BOARD_SLOTS, COST_INCOME_PER_TURN, DECK_SIZE, INITIAL_HAND, INITIAL_HEALTH, KEYWORD_TAUNT, MAIN_DECK_SIZE, MULLIGAN_WINDOW_MS, RULE_ERRORS, SECOND_PLAYER_HAND } from '@app/shared/constants';
+import type { CardDef, CardInstance, GameEvent, GameState, Intent, Phase, RuleContext, Zone } from '@app/shared/types';
 
 import { applyIntent, createInitialState, reduce, stateHash, INTENTS } from '../index.js';
 import { commanderDamageEvents } from '../combat.js';

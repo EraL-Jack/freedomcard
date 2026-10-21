@@ -1,6 +1,6 @@
 // `ZONES` 只有 core 导出（shared 只有类型），而类型是 shared 的 —— 两边都要引。
 import { ZONES } from '@app/core';
-import type { GameEvent, GameState, PlayerState, Zone } from '@app/shared';
+import type { GameEvent, GameState, PlayerState, Zone } from '@app/shared/types';
 
 import { CARD_POOL } from '@app/shared/cards';
 

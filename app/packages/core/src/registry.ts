@@ -1,4 +1,4 @@
-import type { GameEvent, GameState, Intent, Result, Rejection, RuleContext } from '@app/shared';
+import type { GameEvent, GameState, Intent, Result, Rejection, RuleContext } from '@app/shared/types';
 
 /**
  * 规则注册表 —— 一个机制一个文件，经本表插拔。

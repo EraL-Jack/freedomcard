@@ -8,20 +8,8 @@
  * 否则回放时游标错位，后续所有随机全部偏离。
  */
 
-import {
-  INITIAL_HAND,
-  RULE_ERRORS,
-  SECOND_PLAYER_HAND,
-  SEQUENCE_DIE,
-  type CardInstance,
-  type GameEvent,
-  type GameState,
-  type Intent,
-  type PlayerId,
-  type Result,
-  type Rejection,
-  type RuleContext,
-} from '@app/shared';
+import { INITIAL_HAND, RULE_ERRORS, SECOND_PLAYER_HAND, SEQUENCE_DIE } from '@app/shared/constants';
+import type { CardInstance, GameEvent, GameState, Intent, PlayerId, Result, Rejection, RuleContext } from '@app/shared/types';
 
 import { drawCards, ev, deckShuffled, rngAdvance } from '../ops.js';
 import { nextInt, shuffle } from '../rng.js';

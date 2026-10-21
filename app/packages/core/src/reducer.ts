@@ -6,7 +6,7 @@
  * 若 `reduce` 在 `engine.ts` 里，规则模块就会反向依赖引擎。
  */
 
-import type { CardInstance, GameEvent, GameState, PlayerId, Zone } from '@app/shared';
+import type { CardInstance, GameEvent, GameState, PlayerId, Zone } from '@app/shared/types';
 
 import { ZONES } from './state.js';
 

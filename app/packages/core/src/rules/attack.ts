@@ -17,18 +17,8 @@
  *    因此攻击被拆成「挂起选择 → 回答后结算」两段（`resolveAttackEvents` 可复用）。
  */
 
-import {
-  KEYWORD_TAUNT,
-  RULE_ERRORS,
-  type CardDef,
-  type GameEvent,
-  type GameState,
-  type Intent,
-  type PlayerId,
-  type Result,
-  type Rejection,
-  type RuleContext,
-} from '@app/shared';
+import { KEYWORD_TAUNT, RULE_ERRORS } from '@app/shared/constants';
+import type { CardDef, GameEvent, GameState, Intent, PlayerId, Result, Rejection, RuleContext } from '@app/shared/types';
 import { isBladeCard } from '@app/shared/cards';
 
 import { commanderDamageEvents } from '../combat.js';

@@ -12,17 +12,8 @@
  * 超时链路走 `drawForPhase` **自动兜底抽牌** —— 否则超时会卡死在抽牌阶段。
  */
 
-import {
-  DRAW_PER_TURN,
-  FIRST_TURN_DRAW,
-  RULE_ERRORS,
-  type GameEvent,
-  type GameState,
-  type Intent,
-  type Result,
-  type Rejection,
-  type RuleContext,
-} from '@app/shared';
+import { DRAW_PER_TURN, FIRST_TURN_DRAW, RULE_ERRORS } from '@app/shared/constants';
+import type { GameEvent, GameState, Intent, Result, Rejection, RuleContext } from '@app/shared/types';
 
 import { baseGuard, drawCards, ev, firstRejection } from '../ops.js';
 import { reduce } from '../reducer.js';

@@ -6,23 +6,8 @@
  * 「新增规则不得修改既有规则文件内部实现」的可达性前提。
  */
 
-import type {
-  CardDef,
-  CardInstance,
-  GameEvent,
-  GameState,
-  Intent,
-  PlayerId,
-  PlayerState,
-  Rejection,
-  Zone,
-} from '@app/shared';
-import {
-  DAMAGE_TIER_MAX_LOW,
-  DAMAGE_TIER_MAX_MID,
-  MINION_COST_DISCOUNT,
-  RULE_ERRORS,
-} from '@app/shared';
+import type { CardDef, CardInstance, GameEvent, GameState, Intent, PlayerId, PlayerState, Rejection, Zone } from '@app/shared/types';
+import { DAMAGE_TIER_MAX_LOW, DAMAGE_TIER_MAX_MID, MINION_COST_DISCOUNT, RULE_ERRORS } from '@app/shared/constants';
 
 import { advanceCursor, shuffle } from './rng.js';
 import { ZONES, activePlayer } from './state.js';

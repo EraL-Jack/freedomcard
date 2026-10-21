@@ -11,7 +11,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import type { CardDef } from '@app/shared';
+import type { CardDef } from '@app/shared/types';
 import { CARD_POOL, TOKEN_CARD_IDS, validateCardPool } from '@app/shared/cards';
 
 import { checkDeck } from './deck.js';

@@ -129,6 +129,32 @@ describe('房间入站 schema · 指挥官（D-184）', () => {
     expect(parsed).not.toHaveProperty('faction');
     expect(parsed.commander).toBe('bladeLord');
   });
+
+  /**
+   * H18（Era 2026-10-21）：回合时限在建房时可选。
+   *
+   * 这条测试守的是那个老坑 —— `z.object()` 默认 strip 未声明的键：
+   * 协议加了 `turnTimeoutMs` 但 schema 忘了声明，字段会被静默丢掉，
+   * 玩家选 999 秒、服务端仍按默认 60 秒跑，界面上没有任何异常。
+   */
+  it('RoomCreateSchema 保留 turnTimeoutMs；非白名单档位在房间层回落（不报 400）', () => {
+    expect(
+      RoomCreateSchema.parse({ nickname: 'Era', capacity: 2, turnTimeoutMs: 180_000 }).turnTimeoutMs,
+    ).toBe(180_000);
+    // 缺省 = 不带该字段，房间层取默认值
+    expect(RoomCreateSchema.parse({ nickname: 'Era', capacity: 2 }).turnTimeoutMs).toBeUndefined();
+    // 类型层面只约束正整数：120000 这种未定义档位能过 schema（回落逻辑在 room.create）
+    expect(
+      RoomCreateSchema.parse({ nickname: 'Era', capacity: 2, turnTimeoutMs: 120_000 }).turnTimeoutMs,
+    ).toBe(120_000);
+    // 负数 / 非整数直接拒
+    expect(
+      RoomCreateSchema.safeParse({ nickname: 'Era', capacity: 2, turnTimeoutMs: -1 }).success,
+    ).toBe(false);
+    expect(
+      RoomCreateSchema.safeParse({ nickname: 'Era', capacity: 2, turnTimeoutMs: 60_000.5 }).success,
+    ).toBe(false);
+  });
 });
 
 /**

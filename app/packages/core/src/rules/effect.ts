@@ -5,15 +5,8 @@
  * 具体卡的效果在 `core/src/effects/` 注册表派发，本文件只做通用校验与分发。
  */
 
-import {
-  RULE_ERRORS,
-  type GameEvent,
-  type GameState,
-  type Intent,
-  type Result,
-  type Rejection,
-  type RuleContext,
-} from '@app/shared';
+import { RULE_ERRORS } from '@app/shared/constants';
+import type { GameEvent, GameState, Intent, Result, Rejection, RuleContext } from '@app/shared/types';
 
 import { baseGuard, ev, locate, reject, strArg } from '../ops.js';
 
