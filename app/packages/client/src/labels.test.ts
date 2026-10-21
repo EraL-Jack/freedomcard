@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { endReasonText, linkBannerText, turnTimeoutLabel } from './labels.js';
+import { ackTimeoutText, endReasonText, linkBannerText, turnTimeoutLabel } from './labels.js';
 
 /**
  * 结算成因与时限档位的文案（P-02 / H18）。
@@ -81,5 +81,29 @@ describe('断线横幅文案（D-255）', () => {
   it('两种异常态都要说明「操作暂停」或「连上后可继续」，不能只报状态', () => {
     expect(linkBannerText('connecting')).toContain('继续操作');
     expect(linkBannerText('offline')).toContain('暂停');
+  });
+});
+
+/**
+ * ack 超时提示（D-256）。
+ *
+ * 这条文案是「点了没反应」的最后一道网：8 秒没回应时，玩家必须知道
+ * 「可以重试」和「一直不好就刷新」这两件具体的事，而不是盯着一个转圈的按钮。
+ */
+describe('建/加房等不到回应的提示（D-256）', () => {
+  it('说清等了几秒', () => {
+    expect(ackTimeoutText(8)).toContain('8 秒');
+  });
+
+  it('给两条可执行的出路：重试、刷新', () => {
+    const t = ackTimeoutText(8);
+    expect(t).toContain('重试');
+    expect(t).toContain('刷新');
+  });
+
+  it('不出现 undefined / 空串（拼接秒数时最容易漏）', () => {
+    const t = ackTimeoutText(8);
+    expect(t).not.toContain('undefined');
+    expect(t.length).toBeGreaterThan(10);
   });
 });

@@ -99,6 +99,41 @@ export default function HomeScreen(props: {
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col gap-4 p-4">
+      {/*
+        系统提示条（D-256）—— 这是「点了没反应」的根治。
+
+        Era 2026-10-21 第二次报「创建房间、人机对战都没反应」。查下来不是业务坏了，
+        而是**这两句提示原本渲染在页面最底部**：390×844 的手机上它落在 top≈900，
+        屏幕外 56px。服务端其实回了错误，玩家一个字都看不见。
+
+        两个设计决定：
+        ① **粘在视口顶部**（`sticky top-0`）而不是跟着某个按钮走 ——
+           建房按钮在上半屏、加入按钮在下半屏，玩家滚到哪儿都得能看见它；
+        ② **只在有话说的时候出现**，正常状态不占位、不制造噪音。
+      */}
+      {localError || session.notice ? (
+        <div className="sticky top-0 z-20 -mx-4 -mt-4 space-y-2 bg-[#020617] px-4 pb-2 pt-4">
+          {localError ? (
+            <p
+              className="rounded border border-rose-700 bg-rose-950/60 px-3 py-2 text-sm text-rose-200"
+              role="alert"
+              data-testid="local-error"
+            >
+              {localError}
+            </p>
+          ) : null}
+          {session.notice ? (
+            <p
+              className="rounded border border-amber-700/60 bg-amber-950/40 px-3 py-2 text-sm text-amber-200"
+              role="status"
+              data-testid="notice"
+            >
+              {session.notice}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
       <h1 className="text-xl font-semibold">ETCG</h1>
       {/* A1（P-08）：Era 2026-10-21 —— 「暂时代称可以叫 ETCG，风格为混合风格，什么样的卡组都会有」。
           游戏名仍是他起的名，副标题把这句风格原话直接摆出来，不另行发挥。 */}
@@ -210,7 +245,7 @@ export default function HomeScreen(props: {
         <button
           type="button"
           className="w-full rounded bg-emerald-700 px-4 py-3 disabled:opacity-50"
-          disabled={!online}
+          disabled={!online || session.busy !== null}
           onClick={() =>
             createOrJoin((name) => {
               const play = selectionForPlay();
@@ -227,7 +262,7 @@ export default function HomeScreen(props: {
           }
           data-testid="create"
         >
-          创建房间
+          {session.busy === 'create' ? '正在建房…' : '创建房间'}
         </button>
 
         {/*
@@ -238,7 +273,7 @@ export default function HomeScreen(props: {
         <button
           type="button"
           className="w-full rounded border border-emerald-700 bg-emerald-900/40 px-4 py-3 text-emerald-100 disabled:opacity-50"
-          disabled={!online}
+          disabled={!online || session.busy !== null}
           onClick={() =>
             createOrJoin((name) => {
               const play = selectionForPlay();
@@ -255,7 +290,7 @@ export default function HomeScreen(props: {
           }
           data-testid="create-solo"
         >
-          人机对战（对手：电脑）
+          {session.busy === 'create-solo' ? '正在开人机房…' : '人机对战（对手：电脑）'}
         </button>
       </section>
 
@@ -280,10 +315,10 @@ export default function HomeScreen(props: {
               session.join(code, name, play.deck, play.commander);
             })
           }
-          disabled={!code.trim() || !online}
+          disabled={!code.trim() || !online || session.busy !== null}
           data-testid="join"
         >
-          加入房间
+          {session.busy === 'join' ? '正在加入…' : '加入房间'}
         </button>
       </section>
 
@@ -295,18 +330,6 @@ export default function HomeScreen(props: {
       >
         编辑卡组
       </button>
-
-      {localError ? (
-        <p className="text-sm text-rose-300" data-testid="local-error">
-          {localError}
-        </p>
-      ) : null}
-
-      {session.notice ? (
-        <p className="text-sm text-amber-300" data-testid="notice">
-          {session.notice}
-        </p>
-      ) : null}
 
       <p className="mt-auto text-[11px] text-slate-500">
         视觉为占位风格（纯色 + 文字卡），等待 B6 / B7 的美术输入。

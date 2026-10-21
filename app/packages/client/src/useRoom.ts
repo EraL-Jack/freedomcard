@@ -6,7 +6,7 @@ import type { RoomErrorCode } from '@app/shared/constants';
 import type { CardInstance, GameEvent, GameState, Intent, MatchFormat, PlayerId } from '@app/shared/types';
 
 import { describeEvent } from './log.js';
-import { PHASE_LABEL } from './labels.js';
+import { PHASE_LABEL, ackTimeoutText } from './labels.js';
 import { sfx } from './sfx.js';
 import { socket } from './socket.js';
 import type { Ack, RoomView } from './types.js';
@@ -96,6 +96,27 @@ interface SnapshotOut {
   turnDeadline?: number;
 }
 
+/**
+ * 建房 / 加房的「进行中」状态（D-256）。
+ *
+ * 为什么需要它：玩家点下按钮到 ack 回来之间，界面原本**一点变化都没有**。
+ * 服务端慢一点、或者 ack 丢了，玩家看到的就是「点了没反应」，于是反复点，
+ * 反复点又会撞上限流 —— 越点越糟。所以点击必须**立刻**在按钮上体现出来。
+ *
+ * 值与按钮一一对应，不能合并成一个 `boolean`：人机对战卡住时，
+ * 「创建房间」不该跟着一起显示「创建中…」。
+ */
+export type BusyKind = 'create' | 'create-solo' | 'join';
+
+/**
+ * 建房 / 加房的 ack 等待上限（毫秒）。
+ *
+ * 为什么是 8 秒：正常局域网 ack 在 100ms 内，公网经隧道也就 1s 级。
+ * 8 秒还没有回应，基本可以判定这次请求回不来了（丢包 / 服务端卡住），
+ * 此时「一直转圈」比「明确失败」对玩家更糟 —— 他连要不要重试都不知道。
+ */
+export const ACK_TIMEOUT_MS = 8_000;
+
 export interface RoomSession {
   link: LinkState;
   room: RoomView | null;
@@ -112,6 +133,8 @@ export interface RoomSession {
   /** 展示区内容（D-123）：按玩家记的最近一批「从卡组展示」的卡。 */
   revealed: Record<string, { uid: string; defId: string }[]>;
   notice: string;
+  /** 正在等待服务端回应的操作（D-256）；`null` = 空闲。 */
+  busy: BusyKind | null;
   /**
    * 建房 —— 参数用**对象**而不是位置参数。
    *
@@ -193,12 +216,47 @@ export function useRoom(): RoomSession {
   const [me, setMe] = useState<PlayerId | null>(null);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [notice, setNotice] = useState<string>('');
+  const [busy, setBusy] = useState<BusyKind | null>(null);
   const [turnDeadline, setTurnDeadline] = useState<number | null>(null);
 
   const seqRef = useRef(0);
   const meRef = useRef<PlayerId | null>(null);
   const namesRef = useRef<Record<string, string>>({});
   const stateRef = useRef<GameState | null>(null);
+  /** 当前等待 ack 的操作（D-256）；超时计时器与 ack 回调用它对齐，避免旧请求的超时清掉新请求的 busy。 */
+  const busyRef = useRef<BusyKind | null>(null);
+  const ackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /**
+   * 请求开始：立即给出可见反馈 + 挂 8 秒兜底（D-256）。
+   *
+   * 这三件事必须同时发生，缺一个都会退化成「点了没反应」：
+   * ① 按钮变文案（`busy`）；② 屏幕上有句话（`notice`）；③ 万一 ack 永不回来，8 秒后有个交代。
+   */
+  const beginRequest = (kind: BusyKind, waiting: string): void => {
+    if (ackTimerRef.current !== null) clearTimeout(ackTimerRef.current);
+    busyRef.current = kind;
+    setBusy(kind);
+    setNotice(waiting);
+    ackTimerRef.current = setTimeout(() => {
+      // 期间又发了别的请求 → 这条超时已经不作数。
+      if (busyRef.current !== kind) return;
+      busyRef.current = null;
+      ackTimerRef.current = null;
+      setBusy(null);
+      setNotice(ackTimeoutText(ACK_TIMEOUT_MS / 1000));
+    }, ACK_TIMEOUT_MS);
+  };
+
+  /** 请求结束（ack 回来了 / 被本地守卫拦下 / 发送时抛错）—— 一定要清计时器。 */
+  const finishRequest = (): void => {
+    busyRef.current = null;
+    setBusy(null);
+    if (ackTimerRef.current !== null) {
+      clearTimeout(ackTimerRef.current);
+      ackTimerRef.current = null;
+    }
+  };
   // 事件播放队列（见 FX_MS 注释）：服务端事件逐条播放而非瞬时 reduce 完。
   const queueRef = useRef<GameEvent[]>([]);
   const pumpingRef = useRef(false);
@@ -502,7 +560,20 @@ export function useRoom(): RoomSession {
     socket.emit(SOCKET_EVENTS.gameIntent, intent);
   }, []);
 
-  const acceptIdentity = (res: Ack): boolean => {
+  /**
+   * 收下服务端给的席位身份。
+   *
+   * ⚠️ `res` 可能整个是 `undefined` —— socket.io 只在服务端**真的调用了**
+   * ack 回调时才给它传参。服务端处理器中途抛异常、或事件名对不上，
+   * 对方的 ack 就不会执行，这边拿到的是 `undefined`。
+   * 原来直接读 `res.ok` 会在这里抛 TypeError，而它发生在 socket 回调里，
+   * 界面不会有任何反应 —— 又是一种「点了没反应」（D-256）。
+   */
+  const acceptIdentity = (res: Ack | undefined): boolean => {
+    if (!res) {
+      setNotice('服务器没有返回任何结果 —— 请刷新页面后重试');
+      return false;
+    }
     if (!res.ok || !res.playerId || !res.token) {
       setNotice(failText(res));
       return false;
@@ -530,7 +601,20 @@ export function useRoom(): RoomSession {
       turnTimeoutMs?: number;
     }): void => {
       const { nickname, capacity, format = 'bo1', deck, commander, solo, turnTimeoutMs } = opts;
-      localStorage.setItem(LS.nickname, nickname);
+      // 先表态再干活（D-256）：点击到 ack 之间原本界面毫无变化。
+      beginRequest(solo ? 'create-solo' : 'create', solo ? '正在开人机房…' : '正在建房…');
+      /*
+       * localStorage 写入可能直接抛错（隐私模式 / 配额满 / 存储被策略禁用）。
+       * 原来它在最前面且没有保护 —— 一旦抛错，整个处理器中断，界面零反馈，
+       * 玩家看到的就是「点了没反应」。这里宁可少存一个昵称，也要让玩家知道发生了什么。
+       */
+      try {
+        localStorage.setItem(LS.nickname, nickname);
+      } catch {
+        finishRequest();
+        setNotice('浏览器不允许写入本地存储 —— 请退出无痕/隐私模式后重试');
+        return;
+      }
       /*
        * 断线时不发请求，直接说清楚。
        *
@@ -539,53 +623,74 @@ export function useRoom(): RoomSession {
        * 玩家只能反复点。断线是我们能判断的状态，就不该把「没反应」丢给玩家。
        */
       if (!socket.connected) {
+        finishRequest();
         setNotice('服务端未连接，正在重连 —— 连上后再点一次');
         return;
       }
-      socket.emit(
-        SOCKET_EVENTS.roomCreate,
-        {
-          nickname: nickname || '玩家',
-          capacity,
-          format,
-          // D-242：人机房 —— 服务端会立刻坐入 AI 并把容量收到 2。
-          ...(solo ? { solo: true } : {}),
-          // H18：不传 = 服务端默认 60s（与老客户端同一路径）。
-          ...(turnTimeoutMs ? { turnTimeoutMs } : {}),
-          // D-141 / D-184：只有正好 30 张才会传；指挥官与它成对。
-          ...(deck && deck.length > 0 ? { deck } : {}),
-          ...(commander ? { commander } : {}),
-        },
-        (res: Ack) => {
-          if (acceptIdentity(res)) {
-            setNotice(solo ? '已开人机房，对手是电脑' : `已建房，房间码 ${res.room?.code ?? ''}`);
-          }
-        },
-      );
+      try {
+        socket.emit(
+          SOCKET_EVENTS.roomCreate,
+          {
+            nickname: nickname || '玩家',
+            capacity,
+            format,
+            // D-242：人机房 —— 服务端会立刻坐入 AI 并把容量收到 2。
+            ...(solo ? { solo: true } : {}),
+            // H18：不传 = 服务端默认 60s（与老客户端同一路径）。
+            ...(turnTimeoutMs ? { turnTimeoutMs } : {}),
+            // D-141 / D-184：只有正好 30 张才会传；指挥官与它成对。
+            ...(deck && deck.length > 0 ? { deck } : {}),
+            ...(commander ? { commander } : {}),
+          },
+          (res: Ack | undefined) => {
+            finishRequest();
+            if (acceptIdentity(res) && res) {
+              setNotice(solo ? '已开人机房，对手是电脑' : `已建房，房间码 ${res.room?.code ?? ''}`);
+            }
+          },
+        );
+      } catch {
+        finishRequest();
+        setNotice('发送失败 —— 请刷新页面后重试');
+      }
     },
     [],
   );
 
   const join = useCallback(
     (code: string, nickname: string, deck?: string[], commander?: string): void => {
-      localStorage.setItem(LS.nickname, nickname);
+      beginRequest('join', '正在加入房间…');
+      try {
+        localStorage.setItem(LS.nickname, nickname);
+      } catch {
+        finishRequest();
+        setNotice('浏览器不允许写入本地存储 —— 请退出无痕/隐私模式后重试');
+        return;
+      }
       // 断线守卫同上（D-255）：加入房间也不能静默排队。
       if (!socket.connected) {
+        finishRequest();
         setNotice('服务端未连接，正在重连 —— 连上后再点一次');
         return;
       }
-      socket.emit(
-        SOCKET_EVENTS.roomJoin,
-        {
-          code: code.trim(),
-          nickname: nickname || '玩家',
-          ...(deck && deck.length > 0 ? { deck } : {}),
-          ...(commander ? { commander } : {}),
-        },
-        (res: Ack) => {
-          if (acceptIdentity(res)) setNotice(`已加入房间 ${res.room?.code ?? ''}`);
-        },
-      );
+      try {
+        socket.emit(
+          SOCKET_EVENTS.roomJoin,
+          {
+            code: code.trim(),
+            nickname: nickname || '玩家',
+            ...(deck && deck.length > 0 ? { deck } : {}),
+            ...(commander ? { commander } : {}),
+          },
+          (res: Ack | undefined) => {
+            finishRequest();
+            if (acceptIdentity(res) && res) setNotice(`已加入房间 ${res.room?.code ?? ''}`);
+          },
+        );
+      } catch {
+        finishRequest();
+        setNotice('发送失败 —— 请刷新页面后重试');
+      }
     },
     [],
   );
@@ -672,6 +777,7 @@ export function useRoom(): RoomSession {
     fx,
     revealed,
     notice,
+    busy,
     create,
     join,
     setDeck,
