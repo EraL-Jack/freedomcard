@@ -1,39 +1,43 @@
-/**
- * 人机对战（D-242，Era 2026-10-21）—— 「不用开两个窗口」。
- *
- * 一条用例覆盖三件事：
- * 1. 建房即坐入「电脑」，房间直接满员（capacity 被服务端收到 2）；
- * 2. 玩家点准备就能开局（AI 永远就绪，不必等一个不会点按钮的对手）；
- * 3. 电脑会自己行动 —— 日志里出现它的动作，且不会卡住。
- *
- * 不断言「AI 打得聪明」，那是 `core/src/ai.test.ts` 的职责（纯函数、可精确摆局面）。
- * E2E 只证明整条链路是活的：服务端调度 → 系统 Intent → 事件广播 → 客户端渲染。
- */
-
 import { expect, test } from '@playwright/test';
 
-import { newClient } from './helpers.js';
+import { phaseText, startSoloGame, turnNo } from './helpers.js';
 
-test('人机对战：建房坐入电脑、准备即开局、电脑自己行动', async ({ browser }) => {
-  const page = await newClient(browser, 'Era');
+/**
+ * 人机对战（D-242）的开局路径。
+ *
+ * ## 为什么单独一个 spec
+ *
+ * 联机对局的 E2E 走 `startGame`（建房 + 加入 + 双方准备），而人机局是
+ * 「建房即坐入 AI、AI 恒为已准备」，**开局链路不同**（`room.ts` 的 `solo` 分支）。
+ * D-262 之前这条路径零覆盖，于是出现了一个联机永远测不出的 bug：
+ * 人机局没有换牌阶段，开局直接跳到「第 2 回合 · 充能」。
+ */
 
-  await page.getByTestId('create-solo').click();
+test('人机房开局停在换牌阶段，不是直接开打（D-262）', async ({ browser }) => {
+  const { page } = await startSoloGame(browser, { skipMulligan: false });
 
-  // ① 席位里立刻有「电脑」，且房间是 2 人（服务端强制，不受人数输入影响）
-  await expect(page.getByTestId('seats')).toContainText('电脑', { timeout: 20_000 });
-  await expect(page.getByText('2/2 人')).toBeVisible({ timeout: 20_000 });
+  // ① 回合数显示「开局」—— 换牌阶段不属于任何回合
+  await expect(page.getByTestId('turn')).toContainText('开局', { timeout: 15_000 });
+  // ② 阶段进度条要多一枚「换牌」，否则六个格全灰、玩家以为没开始
+  await expect(page.getByTestId('phase-track')).toContainText('换牌');
+  // ③ 玩家有「不换牌」入口（按钮可见即代表这个阶段真的开着）
+  await expect(page.getByTestId('mulligan-skip')).toBeVisible({ timeout: 15_000 });
+  // ④ AI 必须**自己**提交过 —— 否则玩家要干等 30 秒换牌超时兜底
+  await expect(page.getByTestId('log')).toContainText('完成换牌', { timeout: 15_000 });
+});
 
-  // ② 只点自己的准备就开局 —— AI 的 ready 是服务端代设的
-  await page.getByTestId('ready').click();
-  await expect(page.getByTestId('turn')).toBeVisible({ timeout: 20_000 });
+test('点「不换牌」后进第 1 回合，而不是第 2 回合（D-262 回归点）', async ({ browser }) => {
+  const { page } = await startSoloGame(browser, { skipMulligan: false });
+  await page.getByTestId('mulligan-skip').click({ timeout: 15_000 });
 
-  // ③ 电脑自己动过手：日志里出现它的名字（洗牌 / 抽牌 / 充能 / 出牌都会带玩家名）
-  await expect(page.getByTestId('log')).toContainText('电脑', { timeout: 40_000 });
-
-  // ④ 对局没有卡死：回合数会推进（AI 打完自己那一回合后交还给玩家）
-  await expect
-    .poll(async () => Number((await page.getByTestId('turn').textContent())?.replace(/\D/g, '') ?? 0), {
-      timeout: 60_000,
-    })
-    .toBeGreaterThan(1);
+  /*
+   * 这里断言的是 **1**，不是「比之前大」。
+   *
+   * 修之前的表现正是「点完（或根本没机会点）直接显示第 2 回合」：
+   * `advanceOnce` 用 `PHASE_ORDER.indexOf('mulligan')` = -1 落进了
+   * 「结束阶段之后 → 进入下一回合」分支，把第一回合整个吃掉了。
+   * 所以这条用例必须钉死具体回合号 —— 写成 `toBeGreaterThan(0)` 就抓不到。
+   */
+  await expect.poll(() => turnNo(page), { timeout: 15_000 }).toBe(1);
+  await expect.poll(() => phaseText(page), { timeout: 15_000 }).toContain('充能');
 });

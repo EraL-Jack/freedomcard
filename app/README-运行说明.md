@@ -81,6 +81,8 @@ pnpm dev          # 同时起 server(3000) 与 client(5173)
 - 不想换就直接点 **「不换牌」**（等价于提交空数组，没有「取消换牌」这条路）；
 - 各自确认一次即锁定，顶栏显示「你已确认 · 对手换牌中」；
 - **双方都确认**才进入第一回合充能阶段；30 秒没动作由服务端替你提交（`MULLIGAN_WINDOW_MS`）。
+- **人机房一样有这个阶段**（D-262）：AI 会自己提交「不换牌」，你先手时它也会提交，
+  不会让你干等 30 秒。换牌阶段是双方**同时**进行的，没有「轮到谁」。
 
 **出牌两段式**（ADR-0049）：主要阶段点手牌旁的「出牌」之后 ——
 
@@ -122,10 +124,10 @@ Windows 需放行 5173 / 3000 端口的入站规则（网络配置文件为 Publ
 | `pnpm dev` | 并行起服务端与客户端 |
 | `pnpm typecheck` | 全量 `tsc --noEmit` |
 | `pnpm lint` | ESLint（flat config） |
-| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层 + `client` 纯逻辑，2026-10-21 时点 **404 passed**（core 223 + server 143 + client 38） |
+| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层 + `client` 纯逻辑，2026-10-21 时点 **408 passed**（core 227 + server 143 + client 38） |
 | `pnpm --filter @app/client run test:coverage` | client 覆盖率（v8）。目前只覆盖 `selectors` / `labels` / `log` 三个纯逻辑模块；组件层由 E2E 兜 |
 | `pnpm build` | 构建客户端到 `packages/client/dist` |
-| `pnpm --filter @app/client test:e2e` | 端到端（Playwright）：**45 条** —— 房间流程 / 视口溢出 / 联机开局 / 回合操作 / 攻击与指挥官伤害 / 卡组编辑 / 人机对战 / 新手引导 / 390px 日志抽屉 / 断线与点击反馈 |
+| `pnpm --filter @app/client test:e2e` | 端到端（Playwright）：**46 条** —— 房间流程 / 视口溢出 / 联机开局 / 回合操作 / 攻击与指挥官伤害 / 卡组编辑 / 人机对战 / 人机房换牌阶段 / 新手引导 / 390px 日志抽屉 / 断线与点击反馈 |
 
 > 首次跑 E2E 需先下载浏览器：`pnpm --filter @app/client exec playwright install chromium`（约 197 MiB，慢）。
 > 截图落在 `packages/client/e2e/screenshots/`（已被 `.gitignore` 忽略）。

@@ -429,6 +429,13 @@ const aiTimers = new Map<string, ReturnType<typeof setTimeout>>();
 function aiToMove(state: GameState): boolean {
   if (!state.started || state.winner !== null || state.draw) return false;
   if (state.pendingChoice) return state.pendingChoice.playerId === AI_PLAYER_ID;
+  /*
+   * D-262：换牌阶段是**双方同时**的，`activeSeat` 还指着先攻方，不能拿它判断。
+   *
+   * 若这里仍按 `seats[activeSeat]` 判，玩家先手时 AI 永远不会提交，
+   * 玩家只能干等 30 秒换牌超时兜底（人机局第一分钟就卡住不动）。
+   */
+  if (state.phase === 'mulligan') return state.players[AI_PLAYER_ID]?.mulliganDone !== true;
   return state.seats[state.activeSeat] === AI_PLAYER_ID;
 }
 

@@ -261,9 +261,28 @@ describe('decideAiMove · 换牌', () => {
     });
   });
 
-  it('已经换过 → 不再发', () => {
+  it('已经确认过 → null（**不是**「推进阶段」）', () => {
+    /*
+     * D-262：此前这里返回的正是 `phase:advance` —— 那就是 Era 报的
+     * 「人机局没有换牌阶段」的根因。AI 提交后服务端会再调度一拍
+     * （`aiToMove` 当时只看 `activeSeat`），于是 `advanceOnce` 把
+     * `mulligan`（不在 `PHASE_ORDER` 里）当成「结束阶段之后」直接 `turn + 1`，
+     * 玩家的换牌阶段被瞬间推走、开局跳到「第 2 回合 · 充能」。
+     *
+     * 正确语义：换牌阶段已经确认完就「没我事」，什么都不发。
+     */
     const s = inMulligan(1000, true);
-    expect(decideAiMove(s, 'ai', CARDS, 2000)).toEqual({ type: 'phase:advance' });
+    expect(decideAiMove(s, 'ai', CARDS, 2000)).toBeNull();
+  });
+
+  it('玩家先手时 AI 同样要提交 —— 换牌阶段不看 activeSeat（D-262）', () => {
+    // 换牌是双方同时的：此时 `activeSeat` 还指着先攻方（玩家），
+    // 若这里不提交，玩家只能干等 30 秒换牌超时兜底。
+    const s = inMulligan(1000);
+    expect(decideAiMove({ ...s, activeSeat: 0 }, 'ai', CARDS, 2000)).toEqual({
+      type: 'mulligan',
+      payload: { returns: [] },
+    });
   });
 });
 
@@ -319,8 +338,13 @@ describe('AI 自对弈：一局能打完', () => {
     for (; steps < 3000; steps++) {
       if (s.winner !== null || s.draw) break;
 
-      // 待定选择可能挂给非行动方（受伤展示），所以先问「该谁动」
-      const actor = s.pendingChoice?.playerId ?? s.seats[s.activeSeat];
+      // 待定选择可能挂给非行动方（受伤展示），所以先问「该谁动」。
+      // D-262：换牌阶段没有「行动方」—— 双方同时进行，因此按「谁还没确认」挑人。
+      const actor =
+        s.pendingChoice?.playerId ??
+        (s.phase === 'mulligan'
+          ? s.seats.find((id) => s.players[id]?.mulliganDone !== true)
+          : s.seats[s.activeSeat]);
       if (!actor) break;
 
       const move = decideAiMove(s, actor, SELF_PLAY_CARDS, SELF_PLAY_CTX.now);
