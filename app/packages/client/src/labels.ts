@@ -103,3 +103,15 @@ export function endReasonText(reason: string | null, draw: boolean, iWon: boolea
   const row = END_REASON_TEXT[reason];
   return row ? (iWon ? row.win : row.lose) : null;
 }
+
+/**
+ * 断线横幅文案（D-255）。
+ *
+ * socket.io 在未连接时 `emit` 会静默排队 —— 界面上就是「点了没反应」。
+ * 只要不是 `online` 就一律说清楚，返回 `null` 表示不用挂横幅。
+ */
+export function linkBannerText(link: 'connecting' | 'online' | 'offline'): string | null {
+  if (link === 'online') return null;
+  if (link === 'connecting') return '正在连接服务器… —— 连上后可继续操作';
+  return '与服务器断开，操作已暂停 —— 正在自动重连';
+}

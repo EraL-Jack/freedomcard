@@ -531,6 +531,17 @@ export function useRoom(): RoomSession {
     }): void => {
       const { nickname, capacity, format = 'bo1', deck, commander, solo, turnTimeoutMs } = opts;
       localStorage.setItem(LS.nickname, nickname);
+      /*
+       * 断线时不发请求，直接说清楚。
+       *
+       * D-255（Era 2026-10-21「点击人机对战没反应」）：socket.io 在未连接时
+       * `emit` 会**静默进队列**，等连上才发；于是按钮点下去毫无反馈，
+       * 玩家只能反复点。断线是我们能判断的状态，就不该把「没反应」丢给玩家。
+       */
+      if (!socket.connected) {
+        setNotice('服务端未连接，正在重连 —— 连上后再点一次');
+        return;
+      }
       socket.emit(
         SOCKET_EVENTS.roomCreate,
         {
@@ -558,6 +569,11 @@ export function useRoom(): RoomSession {
   const join = useCallback(
     (code: string, nickname: string, deck?: string[], commander?: string): void => {
       localStorage.setItem(LS.nickname, nickname);
+      // 断线守卫同上（D-255）：加入房间也不能静默排队。
+      if (!socket.connected) {
+        setNotice('服务端未连接，正在重连 —— 连上后再点一次');
+        return;
+      }
       socket.emit(
         SOCKET_EVENTS.roomJoin,
         {
