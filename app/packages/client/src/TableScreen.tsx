@@ -16,7 +16,7 @@ import {
   selectionForPlay,
 } from './decks.js';
 import { REPLAY_VIEW_ENABLED } from './features.js';
-import { KEYWORD_NOTE, PHASE_LABEL, endReasonText, turnTimeoutLabel } from './labels.js';
+import { KEYWORD_NOTE, PHASE_LABEL, endReasonText, linkBannerText, turnTimeoutLabel } from './labels.js';
 import { actionability, type Actionability } from './selectors.js';
 import type { RoomView } from './types.js';
 import type { Fx, RoomSession } from './useRoom.js';
@@ -930,6 +930,9 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
    * early return 之后 state 与 me 都非空，`act` 必然算得出来 —— 这里断言一次，
    * 避免把「不可能为 null」这件事传染给下面十几个使用点。
    */
+  /** 断线横幅文案（D-255）：`null` = 不挂横幅。 */
+  const banner = linkBannerText(session.link);
+
   const a = act as Actionability;
   const myTurn = a.myTurn;
   const choiceOpen = a.choiceOpen;
@@ -1083,6 +1086,20 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   return (
     // D-118 桌面氛围：深色毛毡底 + 中线分隔 + 我方回合时我方半场微光（docs/11 R2）。
     <div className="flex h-dvh flex-col gap-1 bg-[#151b26] p-1 sm:p-2" onPointerDown={onTablePointerDown}>
+      {/*
+        断线横幅（D-255）—— 与主界面同一类问题：socket 断开后 `emit` 静默排队，
+        出牌、推进、攻击全都「点了没反应」，玩家只会以为游戏卡死。
+        对战桌上原本完全没有连接态提示，所以这一条必须常显在最上层。
+      */}
+      {banner !== null ? (
+        <p
+          className="fixed inset-x-0 top-0 z-[80] bg-amber-600 px-3 py-1 text-center text-xs text-black"
+          data-testid="conn-banner"
+          role="status"
+        >
+          {banner}
+        </p>
+      ) : null}
       {/* 阶段进度条常显（Era 2026-10-18：过阶段反馈差）—— 六阶段一排，当前阶段高亮。
           与横幅分工：进度条回答「我在哪」，横幅回答「刚发生了什么」。 */}
       <nav className="flex items-center justify-center gap-1" data-testid="phase-track">

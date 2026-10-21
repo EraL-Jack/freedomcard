@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { endReasonText, turnTimeoutLabel } from './labels.js';
+import { endReasonText, linkBannerText, turnTimeoutLabel } from './labels.js';
 
 /**
  * 结算成因与时限档位的文案（P-02 / H18）。
@@ -58,5 +58,28 @@ describe('回合时限档位文案（H18）', () => {
 
   it('未知档位回落成「N 秒」而不是崩溃（新增档位忘写文案时仍可用）', () => {
     expect(turnTimeoutLabel(120_000)).toBe('120 秒');
+  });
+});
+
+/**
+ * 断线横幅（D-255）。
+ *
+ * 起因是 Era 报「点击人机对战没反应」：socket 断开时 `emit` 静默排队，
+ * 按钮点下去没有任何反馈。横幅是玩家唯一能看到的解释，所以三种连接态都要钉住 ——
+ * 尤其 `online` 必须**返回 null**，否则正常对局里会常挂一条误导性的警告。
+ */
+describe('断线横幅文案（D-255）', () => {
+  it('连接正常时不挂横幅', () => {
+    expect(linkBannerText('online')).toBeNull();
+  });
+
+  it('正在连接与已断开要分开说', () => {
+    expect(linkBannerText('connecting')).toContain('正在连接');
+    expect(linkBannerText('offline')).toContain('断开');
+  });
+
+  it('两种异常态都要说明「操作暂停」或「连上后可继续」，不能只报状态', () => {
+    expect(linkBannerText('connecting')).toContain('继续操作');
+    expect(linkBannerText('offline')).toContain('暂停');
   });
 });

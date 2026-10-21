@@ -73,6 +73,15 @@ export default function HomeScreen(props: {
     saveActiveDeckId(value);
   };
 
+  /**
+   * 服务端连接态（D-255）。
+   *
+   * 断线时 socket.io 的 `emit` 会静默排队，按钮点下去一点反馈都没有 ——
+   * Era 2026-10-21 报的「点击人机对战没反应」就是这一类。
+   * 后果是玩家只会反复点。所以断线时**把按钮本身置灰**，并写清原因。
+   */
+  const online = session.link === 'online';
+
   /** 建房 / 加房前的**本地**校验 —— 不发请求就能拦住的错误，不要等服务器打回。 */
   const createOrJoin = (action: (name: string) => void): void => {
     const name = nickname.trim();
@@ -106,6 +115,12 @@ export default function HomeScreen(props: {
       </p>
 
       <p className="text-xs text-slate-500">当前不在房间内。</p>
+
+      {!online ? (
+        <p className="text-xs text-amber-300" data-testid="offline-hint">
+          服务端{session.link === 'connecting' ? '连接中' : '未连接'}，建房与加入暂不可用（会自动重连）
+        </p>
+      ) : null}
 
       <section className="space-y-3 rounded-lg border border-slate-800 bg-slate-900 p-4">
         <label className="block">
@@ -194,7 +209,8 @@ export default function HomeScreen(props: {
 
         <button
           type="button"
-          className="w-full rounded bg-emerald-700 px-4 py-3"
+          className="w-full rounded bg-emerald-700 px-4 py-3 disabled:opacity-50"
+          disabled={!online}
           onClick={() =>
             createOrJoin((name) => {
               const play = selectionForPlay();
@@ -221,7 +237,8 @@ export default function HomeScreen(props: {
         */}
         <button
           type="button"
-          className="w-full rounded border border-emerald-700 bg-emerald-900/40 px-4 py-3 text-emerald-100"
+          className="w-full rounded border border-emerald-700 bg-emerald-900/40 px-4 py-3 text-emerald-100 disabled:opacity-50"
+          disabled={!online}
           onClick={() =>
             createOrJoin((name) => {
               const play = selectionForPlay();
@@ -263,7 +280,7 @@ export default function HomeScreen(props: {
               session.join(code, name, play.deck, play.commander);
             })
           }
-          disabled={!code.trim()}
+          disabled={!code.trim() || !online}
           data-testid="join"
         >
           加入房间
