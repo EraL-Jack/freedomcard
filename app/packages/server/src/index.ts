@@ -38,6 +38,7 @@ import {
 } from './room/index.js';
 import type { Room } from './room/types.js';
 import { makeRoomCode } from './room/code.js';
+import { cacheControlFor, isSpaRoute } from './static-serve.js';
 import { normalizePlayerIntent } from './room/inbound.js';
 import { buildMulliganSkipIntent, mulliganWindowMs, pendingMulliganPlayers } from './room/mulligan-timeout.js';
 import { WindowRateLimit } from './room/rate-limit.js';
@@ -90,14 +91,34 @@ if (SERVE_STATIC) {
     import('@fastify/static'),
     import('node:fs/promises'),
   ]);
-  await fastify.register(fastifyStatic, { root: CLIENT_DIST, prefix: '/' });
-  // SPA 回退：未命中的 GET 一律返回 index.html，交给前端路由。
+  await fastify.register(fastifyStatic, {
+    root: CLIENT_DIST,
+    prefix: '/',
+    /*
+     * 缓存策略（issue #107 / D-273）：带哈希的产物长缓存，index.html 不缓存。
+     * 原来一律走默认的 `max-age=0`，于是每次打开都要重新校验 CSS 39 kB + JS 407 kB，
+     * 穿过公网隧道多一次失败机会 —— 而样式表失败**不会重试、也不会报错**，
+     * 页面静默变成白底黑字（Era 2026-10-21 手机端就是这样）。
+     */
+    setHeaders: (res, path) => {
+      const cacheControl = cacheControlFor(path);
+      if (cacheControl) res.header('cache-control', cacheControl);
+    },
+  });
+  /*
+   * SPA 回退：**只有像前端路由的路径**才回 index.html（issue #107）。
+   *
+   * 原来对「所有未命中的 GET」都回 index.html —— 缺一个 `index-*.css` 就变成
+   * 「HTML 冒充 CSS」：200 + `content-type: text/html`，浏览器按 MIME 拒绝解析，
+   * 页面无样式且控制台无报错。资源缺失就该 404。
+   */
   fastify.setNotFoundHandler(async (req, reply) => {
-    if (req.method !== 'GET') {
-      return reply.code(404).send({ error: 'NOT_FOUND' });
+    if (req.method !== 'GET' || !isSpaRoute(req.url)) {
+      return reply.code(404).type('application/json').send({ error: 'NOT_FOUND' });
     }
     const html = await readFile(`${CLIENT_DIST}/index.html`);
-    return reply.type('text/html').send(html);
+    // index.html 决定加载哪个哈希包 —— 被缓存住等于发版后还跑旧包
+    return reply.type('text/html').header('cache-control', 'no-cache').send(html);
   });
 }
 

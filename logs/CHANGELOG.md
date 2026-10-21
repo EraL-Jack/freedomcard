@@ -4499,3 +4499,60 @@ Era 报 issue #108：「拖动释放法术卡时，应该可以放到法术区�
 - **红绿验证（两层都做了）**：
   ① 单测：函数还没写时 7 条全红；
   ② E2E：临时注释掉 `dropKey="spell"` → 该用例红在「手牌数没减 1」；还原即绿。
+
+---
+
+## D-273 · 偶现整页无样式：缺失资源被 SPA 回退成 index.html（issue #107，2026-10-21）
+
+Era 报 issue #107：「样式没了」—— 手机浏览器打开公网地址，白底黑字、无布局，
+但页面文字都在（React 渲染出来的），刷新后恢复。
+
+### 根因：缺资源时服务端回了 `200 + index.html`
+
+```
+GET /assets/index-OLDHASH.css
+HTTP/1.1 200 OK
+content-type: text/html
+content-length: 446     ← 内容其实是 index.html
+```
+
+`setNotFoundHandler` 对**所有未命中的 GET** 一律回 `index.html`（SPA 回退）。
+于是缺一个样式表就变成「HTML 冒充 CSS」：浏览器按 MIME 拒绝解析、**不重试也不报错**，
+页面静默降级。Era 手机上的现场就是这条路径（隧道丢包 + 重建空窗都会命中）。
+
+顺带两个放大器：
+
+- `@fastify/static` 默认 `max-age=0` —— 带哈希的产物每次都重新校验 39 kB CSS + 407 kB JS，
+  穿过公网隧道就多一次失败机会；
+- `vite build` **先清空 `dist/` 再写入**，重建那几秒里的所有请求都拿不到资源。
+
+### 改动
+
+| # | 改动 | 文件 |
+| --- | --- | --- |
+| 1 | SPA 回退收窄：只有「像前端路由」的路径（不带扩展名、不在 `/assets/`、不是 `/socket.io`、不是 `/health`）才回 `index.html`；其余 **404 + `application/json`** | `server/src/static-serve.ts`（新）/ `index.ts` |
+| 2 | 缓存策略：`/assets/*` → `immutable, max-age=31536000`；`index.html`（含回退那条）→ `no-cache` | 同上 |
+| 3 | 原子构建：`build:atomic` 先构建到 `dist.new`，**增量复制**进 `dist`，最后才换 `index.html`，并保留上一代资源 | `app/scripts/build-atomic.mjs`（新）/ `client/package.json` / `serve-public.cmd` |
+| 4 | 客户端兜底：`link` / `script` 加载失败时顶部红条「页面资源加载失败…请刷新重试」（全内联样式，因为坏的可能就是样式表） | `client/index.html` |
+
+### 踩坑：目录 rename 在本机不可用
+
+第一版原子构建按 POSIX 习惯写「`dist` → `dist.old` → `dist.new` → `dist`」两次改名。
+**实测 `EPERM: operation not permitted`**：Windows 上对**有内容的目录**改名被拒
+（新建空目录改名可以，装满文件后就不行；连 `dist.old → distA` 这种无冲突改名也一样）。
+第一次试跑把 `dist/` 弄丢了约 3 分钟（3100 一度 404）。
+改成「增量复制 + 最后换 index.html」后不需要任何改名，且**任何时刻打开页面都能拿到完整的一套**。
+
+### 测试（单测 447 → **454**，server 153→160；E2E 52 → **53**）
+
+- `static-serve.test.ts` 新增 7 条：SPA 回退范围（路由 true / 资源与带扩展名 false /
+  socket.io 与 health false）、缓存头（assets immutable、html no-cache、其它 undefined、
+  Windows 反斜杠路径也认）。
+- `offline.spec.ts` 新增 E2E：插一个真的会失败的样式表请求 → 页面出现「刷新重试」红条。
+  **坑**：不能靠「指向不存在的 .css」制造失败 —— Vite dev 的 SPA 回退会回 `200 text/html`，
+  浏览器当作**加载成功**（`onload`，0 条规则），`onerror` 根本不触发（实测确认）。
+  改用 `route.abort()` 模拟请求失败，与线上「隧道丢包」同一条路径。
+- **红绿验证**：① 函数未实现时 7 条单测全红；② E2E 临时去掉 `data-testid` → 红，还原即绿。
+- **生产实测（3100 + 公网）**：`/assets/index-NOPE.css` → 404 + `application/json`；
+  真实 CSS → `cache-control: public, max-age=31536000, immutable`；`/` → `no-cache`；
+  `/room/ABCDEF` → 200 html + `no-cache`；`/health` → 200 JSON。

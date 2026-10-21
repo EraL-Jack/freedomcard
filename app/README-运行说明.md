@@ -158,7 +158,7 @@ Windows 需放行 5173 / 3000 端口的入站规则（网络配置文件为 Publ
 | `pnpm dev` | 并行起服务端与客户端 |
 | `pnpm typecheck` | 全量 `tsc --noEmit` |
 | `pnpm lint` | ESLint（flat config） |
-| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层 + `client` 纯逻辑，2026-10-21 时点 **447 passed**（core 237 + server 153 + client 57） |
+| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层 + `client` 纯逻辑，2026-10-21 时点 **454 passed**（core 237 + server 160 + client 57） |
 | `pnpm --filter @app/client run test:coverage` | client 覆盖率（v8）。目前只覆盖 `selectors` / `labels` / `log` 三个纯逻辑模块；组件层由 E2E 兜 |
 | `pnpm build` | 构建客户端到 `packages/client/dist` |
 | `pnpm --filter @app/client test:e2e` | 端到端（Playwright）：**50 条** —— 房间流程 / 视口溢出 / 联机开局 / 回合操作 / 攻击与指挥官伤害 / 卡组编辑 / 人机对战 / 人机房换牌阶段与倒计时 / 回合边界的指引不变量 / 堆叠区浮窗 / 新手引导 / 390px 日志抽屉 / 断线与点击反馈 |
@@ -195,8 +195,21 @@ pnpm build
 cd packages/server && SERVE_STATIC=1 pnpm start
 ```
 
-`SERVE_STATIC=1` 时服务端托管 `client/dist`，并对未命中的 GET 回退到 `index.html`（SPA 路由）。
+`SERVE_STATIC=1` 时服务端托管 `client/dist`。**只有像前端路由的路径**（`/`、`/room/ABC` 这类
+不带扩展名、也不在 `/assets/` 下的）才回退到 `index.html`；缺失的哈希资源一律 **404 JSON** ——
+以前一律回 `index.html`，缺一个 CSS 就变成「HTML 冒充 CSS」，浏览器按 MIME 拒绝解析，
+页面静默无样式（issue #107 / D-273）。
 缺省不启用，开发态由 Vite 提供页面。
+
+缓存策略（同样来自 issue #107）：
+
+| 路径 | `cache-control` | 理由 |
+| --- | --- | --- |
+| `/assets/*`（Vite 内容哈希产物） | `public, max-age=31536000, immutable` | 内容变则文件名变，可永久缓存；不设的话每次打开都要重新校验 39 kB CSS + 407 kB JS，穿过隧道多一次失败机会 |
+| `index.html` | `no-cache` | 它决定加载哪个哈希包，缓存住等于发版后还跑旧包 |
+
+客户端另有一道兜底：样式表 / 脚本加载失败时页面顶部出现红条「页面资源加载失败…请刷新重试」
+（`data-testid="asset-error"`），不再静默变成白纸。
 
 ## 7. Docker 部署
 
@@ -212,7 +225,7 @@ docker compose up -d --build
 ### 7.1 本机常驻 + 穿透发布（Windows）
 
 双击 `scripts\serve-public.cmd`（默认 3100，可传参 `serve-public.cmd 3200`）。
-它做两件事：先 `pnpm --filter @app/client run build`，再以 `SERVE_STATIC=1` 起服务，
+它做两件事：先 `pnpm --filter @app/client run build:atomic`，再以 `SERVE_STATIC=1` 起服务，
 **同一个端口**同时提供页面与 `/socket.io` —— 所以一条隧道就够，不必开两个口。
 
 ```cmd
@@ -411,6 +424,12 @@ app/
     这是刻意的 —— 事件逐条播放期间，「阶段已充能、席位还没换」的中间帧不是真局面，
     照着它给指引会误导（issue #101）。代价是交棒动画期间桌面「安静」一点。
     `turnPending` 有兜底：队列播空仍未复位就强制清除，不会卡在「切换中」。
+
+25. **开发态（Vite dev server）仍会把缺失的 `.css` 回成 `200 + index.html`**（issue #107 的邻项）：
+    生产形态已经改成 404（D-273），但 Vite 自己的 SPA 回退没变 ——
+    所以本地「指向一个不存在的样式表」不会触发 `onerror`（浏览器把它当加载成功、解析出 0 条规则）。
+    写这类用例要模拟**请求失败**（`route.abort()`），不要靠不存在的路径。
+    只影响开发态，公网/生产不受影响。
 
 ## 11. 本轮验收清单（D-137 ~ D-149）
 

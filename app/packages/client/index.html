@@ -7,6 +7,41 @@
   </head>
   <body>
     <div id="root"></div>
+    <!--
+      issue #107（D-273）：样式表 / 脚本加载失败时浏览器**不会重试、也不会报错** ——
+      页面静默变成无样式白纸，玩家只能得出「游戏坏了」。这里兜一句人话。
+      资源 error 事件不冒泡，但 capture 阶段能在 window 上收到，故用 true。
+      样式全部内联：样式表本身可能就是加载失败的那一个。
+    -->
+    <script>
+      (function () {
+        window.addEventListener(
+          'error',
+          function (e) {
+            var el = e.target;
+            if (!el || !el.tagName) return;
+            var tag = el.tagName.toLowerCase();
+            if (tag !== 'link' && tag !== 'script') return;
+            if (document.getElementById('asset-error')) return;
+            var show = function () {
+              if (document.getElementById('asset-error')) return;
+              var box = document.createElement('div');
+              box.id = 'asset-error';
+              box.setAttribute('data-testid', 'asset-error');
+              box.style.cssText =
+                'position:fixed;left:0;right:0;top:0;z-index:99999;padding:10px 12px;' +
+                'background:#7f1d1d;color:#fff;font:14px/1.5 system-ui,-apple-system,sans-serif;' +
+                'text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.5)';
+              box.textContent = '页面资源加载失败，样式或功能可能不正常 —— 请刷新重试。';
+              document.body.appendChild(box);
+            };
+            if (document.body) show();
+            else document.addEventListener('DOMContentLoaded', show, { once: true });
+          },
+          true,
+        );
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
