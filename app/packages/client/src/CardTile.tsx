@@ -74,8 +74,6 @@ export interface CardTileProps {
    * 手牌等横向滚动行不用它 —— 那里宽度驱动即可。
    */
   fitHeight?: boolean;
-  /** 查看详情入口（Era 2026-10-18：卡牌携带效果必须可查看）—— 存在时右上角挂「?」按钮。 */
-  onDetail?: () => void;
   onSelect?: () => void;
 }
 
@@ -161,20 +159,6 @@ export default function CardTile(props: CardTileProps): React.JSX.Element {
           </span>
         ) : null}
       </button>
-      {props.onDetail ? (
-        <button
-          type="button"
-          aria-label="查看卡牌详情"
-          className="absolute -right-1 -top-1 z-10 flex h-4 w-4 items-center justify-center rounded-full border border-slate-500 bg-slate-800 text-[9px] leading-none text-slate-300"
-          onClick={(e) => {
-            e.stopPropagation();
-            props.onDetail?.();
-          }}
-          data-testid="card-detail"
-        >
-          ?
-        </button>
-      ) : null}
     </div>
   );
 }

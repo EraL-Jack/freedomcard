@@ -10,7 +10,7 @@ import type { GameEvent, GameState, Intent, Result, Rejection, RuleContext } fro
 
 import { baseGuard, ev, locate, reject, strArg } from '../ops.js';
 
-import { EFFECTS, EFFECTS_BY_KIND, choicePending } from '../effects/index.js';
+import { EFFECTS, EFFECTS_BY_KIND, choiceCleared, choicePending } from '../effects/index.js';
 
 /**
  * 选择链收尾 —— 若本次结算**没有**再挂新选择（链已结束），且队列非空，则出队重新挂起。
@@ -28,6 +28,32 @@ function promoteQueuedChoice(
   const head = state.pendingChoiceQueue[0];
   if (!head) return events;
   return [...events, ev(ctx.now, 'choice:dequeued'), choicePending(ctx.now, head)];
+}
+
+/**
+ * 选择链收尾（D-260）—— 本次回答若**既没有挂新选择、也没有自己收尾**，就由这里补一条
+ * `choice:cleared`。
+ *
+ * ## 为什么收尾要放在唯一入口
+ *
+ * 各效果模块的 `choose` 都要在返回值末尾自己 `choiceCleared(at)`，漏一次就是灾难：
+ * issue #88（炎刃骑士）漏了这一步，攻击结算完 `pendingChoice` 一直挂着 ——
+ * 选择面板关不掉，玩家点任何别的操作都被「请先回答选择」挡住，整局卡死；
+ * 而面板里残留的选项还能再点，每点一次加一次力量。
+ *
+ * 这类「漏一行就死锁」的契约不该靠每个模块自觉。放在规则层兜底后：
+ *  - 主动写了 `choiceCleared` 的模块行为完全不变（不重复补）；
+ *  - 漏写的模块只是少了一次显式收尾，不会把对局卡进死状态。
+ */
+function settleChoice(
+  state: GameState,
+  events: GameEvent[],
+  ctx: RuleContext,
+): GameEvent[] {
+  const handled = events.some(
+    (e) => e.type === 'choice:pending' || e.type === 'choice:cleared' || e.type === 'game:ended',
+  );
+  return promoteQueuedChoice(state, handled ? events : [...events, choiceCleared(ctx.now)], ctx);
 }
 
 /** 发动卡面效果。 */
@@ -74,5 +100,5 @@ export const effectChooseRule = (
   }
   const res = module.choose(state, intent, ctx, pending);
   if (!res.ok) return res;
-  return { ok: true, value: promoteQueuedChoice(state, res.value, ctx) };
+  return { ok: true, value: settleChoice(state, res.value, ctx) };
 };

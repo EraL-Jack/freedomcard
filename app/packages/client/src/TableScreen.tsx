@@ -159,6 +159,37 @@ const KIND_TAG_FOR_DETAIL: Readonly<Record<string, string>> = {
   spell: '法术',
   continuous: '设置',
 };
+/** 全部区域 —— 找卡时要挨个翻（D-261）。 */
+const ALL_ZONES = [
+  'deck',
+  'hand',
+  'commander',
+  'board',
+  'spell',
+  'cost',
+  'graveyard',
+  'exile',
+  'reveal',
+] as const;
+
+/**
+ * 按 uid 在**所有区域**里找卡（D-261 / issue #87）。
+ *
+ * 长按看详情是「看到什么就能查什么」：对手的随从、五区缩略里的弃牌、展示区的卡
+ * 都要能查，所以不能只在手牌/随从区里找。
+ */
+function findAnyCard(state: GameState, uid: string): CardInstance | undefined {
+  for (const pid of state.seats) {
+    const p = state.players[pid];
+    if (!p) continue;
+    for (const z of ALL_ZONES) {
+      const hit = p.zones[z].find((c) => c.uid === uid);
+      if (hit) return hit;
+    }
+  }
+  return undefined;
+}
+
 function CardOf(props: {
   card: CardInstance;
   state: GameState;
@@ -168,8 +199,6 @@ function CardOf(props: {
   disabled?: boolean;
   /** 当前可操作（Era 2026-10-18：可操作的对象边框发光）。 */
   glow?: boolean;
-  /** 查看卡牌详情（Era 2026-10-18：卡牌携带效果必须可查看）。 */
-  onDetail?: () => void;
   /** 战斗呈现类名（攻击冲撞 / 受击抖动）—— 由调用方按播放中的裁决事件注入。 */
   fxClass?: string;
   /** 区域内紧凑尺寸（格子内卡片比手牌小一号，避免压排 —— D-118 截图实测）。 */
@@ -192,6 +221,13 @@ function CardOf(props: {
       className={
         props.compact ? 'flex h-full min-h-0 items-center justify-center' : 'w-16 shrink-0 sm:w-20'
       }
+      /*
+       * D-261（issue #87）：长按看详情的**命中标记**。
+       *
+       * 挂在包装层而不是卡片按钮上 —— 这样「不能点的卡」（对手的卡、置灰的手牌、
+       * 五区缩略）同样能长按；也不受卡片自身的 `disabled` 影响。
+       */
+      data-card-uid={props.card.uid}
     >
       <CardTile
         name={def?.name ?? props.card.defId}
@@ -207,7 +243,6 @@ function CardOf(props: {
         glow={props.glow}
         fxClass={props.fxClass}
         fitHeight={props.compact}
-        onDetail={props.onDetail}
         onSelect={props.onClick}
       />
     </div>
@@ -238,8 +273,6 @@ function ZoneBox(props: {
   dropUid?: string;
   /** 拖拽悬停提示：当前拖拽可以落到这里时点亮边框。 */
   highlight?: boolean;
-  /** 区域内卡的详情查看入口。 */
-  onCardDetail?: (card: CardInstance) => void;
   /** 区域内卡的战斗呈现（裁决播放中给目标卡注入抖动类名）。 */
   fxFor?: (uid: string) => string | undefined;
   /**
@@ -322,7 +355,6 @@ function ZoneBox(props: {
               selected={props.selected}
               glow={props.glow}
               compact
-              onDetail={props.onCardDetail ? () => props.onCardDetail?.(c) : undefined}
               fxClass={props.fxFor?.(c.uid)}
               onClick={props.onCardClick ? () => props.onCardClick?.(c.uid) : undefined}
             />
@@ -358,8 +390,6 @@ function BoardSlot(props: {
   fxClass?: string;
   /** 破坏幽灵卡（D-119）：格子已空但破坏动画还在播 —— 渲染淡出中的残影。 */
   ghost?: CardInstance;
-  /** 查看卡详情。 */
-  onDetail?: (card: CardInstance) => void;
   onClick?: () => void;
   /**
    * 整格点击（D-257）。
@@ -390,7 +420,6 @@ function BoardSlot(props: {
           disabled={props.disabled}
           glow={props.glow}
           compact
-          onDetail={props.onDetail ? () => props.onDetail?.(props.card!) : undefined}
           fxClass={props.fxClass}
           onClick={props.onClick}
         />
@@ -577,6 +606,24 @@ function ChoiceOverlay(props: {
   /** 多选类选择用「完成选择」，其余用「放弃」。 */
   const MULTI_SELECT = new Set(['blade-cremation', 'frost-nightwatch-freeze', 'frost-coldsnap-freeze']);
 
+  /**
+   * 防连点（D-260 / issue #88）—— 一次回答只发一次 `effect:choose`。
+   *
+   * 面板要等服务端回包才消失；公网隧道 RTT 是秒级，这期间连点会补发第二个 Intent。
+   * 那时服务端已经没有待回答的选择了，只能回 `INVALID_CHOICE`（Era 现场就是反复点同一张卡）。
+   * 用时间窗而不是 `disabled`：服务端真拒绝时（选择还在）按钮不能永久卡死。
+   */
+  const answeredAtRef = useRef<{ opt: string; at: number }>({ opt: '', at: 0 });
+  const answer = (opt: string): void => {
+    const now = Date.now();
+    // ⚠️ 只拦「同一个选项」的连点：多选类（焚典 / 守夜人）需要连续点**不同**的卡，
+    // 一并限流会把正常的多选吃掉。
+    const last = answeredAtRef.current;
+    if (opt === last.opt && now - last.at < 800) return;
+    answeredAtRef.current = { opt, at: now };
+    props.onChoose(opt);
+  };
+
   // uid 选项 → 反查卡定义渲染小卡；子效果选项 → 文案按钮
   const findCard = (uid: string): CardInstance | undefined =>
     Object.values(props.state.players)
@@ -602,7 +649,7 @@ function ChoiceOverlay(props: {
                   key={opt}
                   type="button"
                   className="w-full rounded bg-cyan-800 px-3 py-2 text-left text-xs text-cyan-50"
-                  onClick={() => props.onChoose(opt)}
+                  onClick={() => answer(opt)}
                   data-testid={`choice-${opt}`}
                 >
                   {SUB_LABEL[opt]}
@@ -616,7 +663,7 @@ function ChoiceOverlay(props: {
                 key={opt}
                 type="button"
                 className="w-16 rounded border border-slate-600 bg-slate-800 p-1 text-center hover:border-emerald-400"
-                onClick={() => props.onChoose(opt)}
+                onClick={() => answer(opt)}
                 data-testid={`choice-card`}
               >
                 <span className="block truncate text-[11px] text-slate-100">{def?.name ?? opt}</span>
@@ -630,7 +677,7 @@ function ChoiceOverlay(props: {
         <button
           type="button"
           className="mt-3 w-full rounded bg-slate-700 py-2 text-xs"
-          onClick={() => props.onChoose('pass')}
+          onClick={() => answer('pass')}
           data-testid="choice-pass"
         >
           {MULTI_SELECT.has(choice.kind) ? '完成选择（其余按卡面处理）' : '放弃'}
@@ -662,7 +709,6 @@ function revealCards(
 function RevealBox(props: {
   cards: readonly { uid: string; defId: string }[];
   state: GameState;
-  onCardDetail?: (card: CardInstance) => void;
 }): React.JSX.Element {
   return (
     <div
@@ -679,7 +725,6 @@ function RevealBox(props: {
               card={inst}
               state={props.state}
               compact
-              onDetail={props.onCardDetail ? () => props.onCardDetail?.(inst) : undefined}
             />
           );
         })}
@@ -891,6 +936,13 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
    */
   const dragRef = useRef<{ uid: string; kind: 'hand' | 'minion'; startX: number; startY: number; active: boolean } | null>(null);
   const suppressClickRef = useRef(false);
+  /**
+   * 长按看详情（D-261 / issue #87）的计时器 —— 手指按住不动 400ms 即打开详情浮层。
+   *
+   * ⚠️ 与拖拽共用同一次 pointerdown：移动超过阈值就取消长按（那是拖拽），
+   * 长按触发后要反过来压掉随后的 click，否则「长按看卡」会顺带把手牌选中/出牌。
+   */
+  const longPressRef = useRef<{ uid: string; timer: number; x: number; y: number } | null>(null);
   const [dragging, setDragging] = useState<{ uid: string; kind: 'hand' | 'minion' } | null>(null);
   const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
   /** 日志框引用 —— 新日志到达时自动滚到底（战斗截图实测：新日志沉底看不见）。 */
@@ -1161,6 +1213,8 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
     if (!d) return;
     if (!d.active && Math.hypot(e.clientX - d.startX, e.clientY - d.startY) > DRAG_THRESHOLD) {
       d.active = true;
+      // 手指动了就是拖拽，不是长按（D-261）—— 两个手势共用同一次 pointerdown。
+      cancelLongPress();
       setDragging({ uid: d.uid, kind: d.kind });
     }
     if (d.active) setDragPos({ x: e.clientX, y: e.clientY });
@@ -1205,8 +1259,81 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
     }
   };
 
+  /* ---------------- 长按看详情（D-261 / issue #87） ----------------
+   * Era：「卡片详情的问号按钮太难点了，需要修改方案」。
+   *
+   * 取代原来右上角那个 16px 的「?」：整张卡都是命中区（手指友好），按住 400ms 打开详情。
+   * 与拖拽共用同一次 pointerdown —— 手指移动超过阈值就取消长按、转为拖拽；
+   * 长按真的触发了就压掉随后补发的 click（否则看详情会顺带选中手牌）。
+   * 桌面另有右键（onContextMenu）与「选中后操作条上的详情按钮」两条入口。
+   */
+  const LONG_PRESS_MS = 400;
+  /** 按住时容许的抖动 —— 超过就当作拖拽（比拖拽阈值略大，避免边界上互相打架）。 */
+  const LONG_PRESS_SLOP = 10;
+
+  const onLongPressMove = (e: PointerEvent): void => {
+    const lp = longPressRef.current;
+    if (!lp) return;
+    if (Math.hypot(e.clientX - lp.x, e.clientY - lp.y) > LONG_PRESS_SLOP) cancelLongPress();
+  };
+
+  const cancelLongPress = (): void => {
+    const lp = longPressRef.current;
+    if (!lp) return;
+    clearTimeout(lp.timer);
+    longPressRef.current = null;
+    window.removeEventListener('pointermove', onLongPressMove);
+    window.removeEventListener('pointerup', cancelLongPress);
+    window.removeEventListener('pointercancel', cancelLongPress);
+  };
+
+  const beginLongPress = (uid: string, x: number, y: number): void => {
+    cancelLongPress();
+    const timer = window.setTimeout(() => {
+      longPressRef.current = null;
+      window.removeEventListener('pointermove', onLongPressMove);
+      window.removeEventListener('pointerup', cancelLongPress);
+      window.removeEventListener('pointercancel', cancelLongPress);
+      const card = findAnyCard(state, uid);
+      if (!card) return;
+      // 长按已经消费掉这次按压 —— 压掉随后补发的 click。
+      // 不定时清零会吃掉下一次真实点击（拖拽那段踩过同样的坑）。
+      suppressClickRef.current = true;
+      window.setTimeout(() => {
+        suppressClickRef.current = false;
+      }, 800);
+      dragRef.current = null;
+      setDragging(null);
+      setDragPos(null);
+      openDetail(card);
+    }, LONG_PRESS_MS);
+    longPressRef.current = { uid, timer, x, y };
+    window.addEventListener('pointermove', onLongPressMove);
+    window.addEventListener('pointerup', cancelLongPress);
+    window.addEventListener('pointercancel', cancelLongPress);
+  };
+
+  /** 右键 = 看详情（桌面主入口；长按在鼠标上按 400ms 太反直觉）。 */
+  const onTableContextMenu = (e: React.MouseEvent): void => {
+    const el = (e.target as HTMLElement).closest<HTMLElement>('[data-card-uid]');
+    const uid = el?.dataset['cardUid'];
+    if (!uid) return;
+    const card = findAnyCard(state, uid);
+    if (!card) return;
+    e.preventDefault();
+    cancelLongPress();
+    openDetail(card);
+  };
+
   /** 事件委托：拖拽源以 data-drag-* 标记挂在卡容器上（仅可操作时才挂）。 */
   const onTablePointerDown = (e: React.PointerEvent): void => {
+    // 只认主键（左键 / 单指）：右键交给 onContextMenu，避免右键也起一个长按计时器。
+    if (e.button !== 0) return;
+    // 长按看详情挂在**所有**卡上（含对手的卡与五区缩略），与能不能操作无关。
+    const cardEl = (e.target as HTMLElement).closest<HTMLElement>('[data-card-uid]');
+    const cardUid = cardEl?.dataset['cardUid'];
+    if (cardUid) beginLongPress(cardUid, e.clientX, e.clientY);
+
     const el = (e.target as HTMLElement).closest<HTMLElement>('[data-drag-uid]');
     if (!el) return;
     dragRef.current = {
@@ -1231,7 +1358,11 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
 
   return (
     // D-118 桌面氛围：深色毛毡底 + 中线分隔 + 我方回合时我方半场微光（docs/11 R2）。
-    <div className="flex h-dvh flex-col gap-1 bg-[#151b26] p-1 sm:p-2" onPointerDown={onTablePointerDown}>
+    <div
+      className="flex h-dvh flex-col gap-1 bg-[#151b26] p-1 sm:p-2"
+      onPointerDown={onTablePointerDown}
+      onContextMenu={onTableContextMenu}
+    >
       {/*
         断线横幅（D-255）—— 与主界面同一类问题：socket 断开后 `emit` 静默排队，
         出牌、推进、攻击全都「点了没反应」，玩家只会以为游戏卡死。
@@ -1500,8 +1631,8 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
 
           {/* ② 对方五区 —— flex-1 平分桌高；auto-rows-fr 让行撑满排高（格子因此铺满） */}
           <section className="grid min-h-0 flex-1 auto-rows-fr grid-cols-5 gap-1">
-            <ZoneBox label="卡组区" zone="deck" cards={theirs.zones.deck} expandable state={state} onCardDetail={openDetail} />
-            <ZoneBox label="法术区" zone="spell" cards={theirs.zones.spell} expandable state={state} onCardDetail={openDetail} />
+            <ZoneBox label="卡组区" zone="deck" cards={theirs.zones.deck} expandable state={state} />
+            <ZoneBox label="法术区" zone="spell" cards={theirs.zones.spell} expandable state={state} />
             {/* ADR-0022：指挥官也是合法攻击目标 —— 否则只能互砍随从，永远分不出胜负。
                 嘲讽优先由引擎裁决（A7），界面不预判，被拒就显示服务端原因。 */}
             <ZoneBox
@@ -1514,7 +1645,6 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
               glow={attacker !== null}
               dropUid={theirs.zones.commander[0]?.uid}
               highlight={dragging?.kind === 'minion'}
-              onCardDetail={openDetail}
               fxFor={(uid) => combatClass(uid, 'foe')}
               onCardClick={
                 attacker && myTurn
@@ -1527,15 +1657,15 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
                   : undefined
               }
             />
-            <ZoneBox label="弃牌区" zone="graveyard" cards={theirs.zones.graveyard} expandable state={state} onCardDetail={openDetail} />
-            <ZoneBox label="除外区" zone="exile" cards={theirs.zones.exile} expandable state={state} onCardDetail={openDetail} />
+            <ZoneBox label="弃牌区" zone="graveyard" cards={theirs.zones.graveyard} expandable state={state} />
+            <ZoneBox label="除外区" zone="exile" cards={theirs.zones.exile} expandable state={state} />
           </section>
 
           {/* ③ 对方费用区 + 随从区 1·2·3 + 展示区 —— D-123（Era 2026-10-18）：
               费用区居左、展示区居右，随从 1·2·3 与第 ④ 排**逐格对齐**。
               选中攻击方后对方随从发光提示可攻击（嘲讽过滤由引擎裁决，界面不预判）。 */}
           <section className="grid min-h-0 flex-1 auto-rows-fr grid-cols-5 gap-1">
-            <ZoneBox label="费用区" zone="cost" cards={theirs.zones.cost} expandable state={state} onCardDetail={openDetail} />
+            <ZoneBox label="费用区" zone="cost" cards={theirs.zones.cost} expandable state={state} />
             {slots.map((i) => {
               const fc = atSlot(theirs.zones.board, i);
               return (
@@ -1553,7 +1683,6 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
                       ? destroyGhost.card
                       : undefined
                   }
-                  onDetail={openDetail}
                   onClick={
                     // 指挥官只能打指挥官（docs/16 §6.2）—— 指挥官攻击时不把随从格子做成落点。
                     attacker && myTurn && !commanderAttacking
@@ -1569,7 +1698,6 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
             <RevealBox
               cards={revealCards(state, foe, foe ? (revealed[foe] ?? []) : [])}
               state={state}
-              onCardDetail={openDetail}
             />
           </section>
 
@@ -1596,7 +1724,6 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
               badgeTestId="cost-usage"
               dropKey="cost"
               highlight={dragging?.kind === 'hand' && state.phase === 'charge'}
-              onCardDetail={openDetail}
             />
             {slots.map((i) => {
               const mc = atSlot(mine.zones.board, i);
@@ -1613,7 +1740,6 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
                   state={state}
                   card={mc}
                   selected={!placingHere && attacker === mc?.uid}
-                  onDetail={openDetail}
                   disabled={!canBattle || (mc?.sleeping ?? false)}
                   glow={
                     placingHere ? true : canBattle && !(mc?.sleeping ?? false) && attacker !== mc?.uid && !!mc
@@ -1655,7 +1781,6 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
             <RevealBox
               cards={revealCards(state, me, revealed[me] ?? [])}
               state={state}
-              onCardDetail={openDetail}
             />
           </section>
 
@@ -1665,8 +1790,8 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
               费用区在第 ④ 排已有一格，故此处换成弃牌区不丢信息。
               flex-1 平分桌高。 */}
           <section className="grid min-h-0 flex-1 auto-rows-fr grid-cols-5 gap-1">
-            <ZoneBox label="除外区" zone="exile" cards={mine.zones.exile} expandable state={state} onCardDetail={openDetail} />
-            <ZoneBox label="弃牌区" zone="graveyard" cards={mine.zones.graveyard} expandable state={state} onCardDetail={openDetail} />
+            <ZoneBox label="除外区" zone="exile" cards={mine.zones.exile} expandable state={state} />
+            <ZoneBox label="弃牌区" zone="graveyard" cards={mine.zones.graveyard} expandable state={state} />
             <ZoneBox
               label="指挥官"
               zone="commander"
@@ -1674,7 +1799,6 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
               state={state}
               badge={`血 ${mine.health}`}
               badgeTestId="hp-me"
-              onCardDetail={openDetail}
               fxFor={(uid) => combatClass(uid, 'me')}
               /* D-258：点自己的指挥官 = 选中它作为攻击方（与随从同一套操作）。 */
               selected={commanderAttacking}
@@ -1685,7 +1809,7 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
                   : undefined
               }
             />
-            <ZoneBox label="法术区" zone="spell" cards={mine.zones.spell} expandable state={state} onCardDetail={openDetail} />
+            <ZoneBox label="法术区" zone="spell" cards={mine.zones.spell} expandable state={state} />
             {/* 抽牌阶段未抽时，卡组区变为发光动作「点击抽牌」（Era 2026-10-18 手动抽牌） */}
             <ZoneBox
               label="卡组区"
@@ -1738,6 +1862,17 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
                           充能
                         </button>
                       ) : null}
+                      {/* D-261（issue #87）：详情按钮挂在选中后浮出的操作组里 ——
+                          比原来角落那个 16px 的「?」好点得多，也不用学「长按」。
+                          任何阶段都可用：看卡是信息行为，不是操作。 */}
+                      <button
+                        type="button"
+                        className="rounded bg-slate-700 px-2 py-1 text-[11px] whitespace-nowrap"
+                        onClick={() => openDetail(c)}
+                        data-testid="card-detail-open"
+                      >
+                        详情
+                      </button>
                     </div>
                   ) : null}
                   <CardOf
@@ -1746,7 +1881,6 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
                     selected={mulliganOpen ? mulliganPicks.includes(c.uid) : picked === c.uid}
                     disabled={!canPickHand}
                     glow={mulliganOpen || (canPickHand && picked !== c.uid)}
-                    onDetail={() => openDetail(c)}
                     onClick={() => (mulliganOpen ? toggleMulliganPick(c.uid) : togglePick(c.uid))}
                   />
                 </div>
@@ -1949,6 +2083,10 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
         >
           音效：{sfxOn ? '开' : '关'}
         </button>
+        {/* 详情入口提示（D-261）—— 长按没有视觉提示，这里常显一句，否则发现不了。 */}
+        <span className="ml-auto text-[10px] text-slate-500" data-testid="detail-hint">
+          长按卡牌看详情
+        </span>
       </footer>
 
       {/* 拖拽预览 —— 跟随指针的浮动卡（B3-1 拖拽手感）。pointer-events-none 不挡落点判定。

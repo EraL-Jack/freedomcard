@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-import { skipMulligan, startGame, newClient } from './helpers.js';
+import { activePage, longPressCard, skipMulligan, startGame, newClient } from './helpers.js';
 
 /**
  * 联机开局端到端验证（真界面）。
@@ -38,7 +38,7 @@ test('双方准备后开局，对战桌按 B2 布局渲染', async ({ browser })
   await expect(host.getByTestId('zone-cost').first()).toBeVisible({ timeout: 10_000 });
 });
 
-test('卡牌详情：点「?」按钮可查看完整效果文本（Era 2026-10-18）', async ({ browser }) => {
+test('卡牌详情：长按卡面可查看完整效果文本（D-261 / issue #87）', async ({ browser }) => {
   const { host } = await startGame(browser);
 
   // 指挥官区固定是炎刃军统领（卡面文本长、含多段效果），用它验证详情浮层。
@@ -46,7 +46,8 @@ test('卡牌详情：点「?」按钮可查看完整效果文本（Era 2026-10-1
   const commander = host.getByTestId('zone-commander').nth(1); // 镜像布局，nth(1) = 我方
   await expect(commander).toContainText('炎刃军统领', { timeout: 15_000 });
 
-  await commander.locator('[data-testid="card-detail"]').click();
+  // D-261：角落那个 16px 的「?」已删除（Era：太难点），改成长按卡面。
+  await longPressCard(host, commander.locator('[data-testid="card"]').first());
   const overlay = host.getByTestId('card-detail-overlay');
   await expect(overlay).toBeVisible();
   // 完整效果文本必须可见（不只是卡面摘要）—— 取统领效果 Ⅱ 的规范写法片段（docs/18）
@@ -57,6 +58,28 @@ test('卡牌详情：点「?」按钮可查看完整效果文本（Era 2026-10-1
 
   await host.getByTestId('card-detail-close').click();
   await expect(overlay).toHaveCount(0);
+});
+
+test('卡牌详情：右键与选中后的「详情」按钮同样能打开（D-261 / issue #87）', async ({ browser }) => {
+  const { host, guest } = await startGame(browser);
+  // 手牌只有在**自己的**充能/主要阶段可点选，所以取当前行动方那一页。
+  const p = await activePage([host, guest]);
+
+  // ① 右键（桌面路径）—— 长按 400ms 对鼠标太反直觉，右键是等价的快捷入口
+  const commander = p.getByTestId('zone-commander').nth(1);
+  await expect(commander).toContainText('炎刃军统领', { timeout: 15_000 });
+  await commander.locator('[data-testid="card"]').first().click({ button: 'right' });
+  const overlay = p.getByTestId('card-detail-overlay');
+  await expect(overlay).toBeVisible({ timeout: 5_000 });
+  await p.getByTestId('card-detail-close').click();
+  await expect(overlay).toHaveCount(0);
+
+  // ② 选中手牌 → 卡上方浮出的操作组里有「详情」（44px 级别的按钮，好点）
+  const handCard = p.getByTestId('hand').locator('[data-testid="card"]').first();
+  await handCard.click();
+  await expect(p.getByTestId('card-detail-open')).toBeVisible({ timeout: 5_000 });
+  await p.getByTestId('card-detail-open').click();
+  await expect(overlay).toBeVisible({ timeout: 5_000 });
 });
 
 test('统领效果Ⅱ：发动 → 选择手牌 → 除外（ADR-0023 / X-16）', async ({ browser }) => {
@@ -74,7 +97,7 @@ test('统领效果Ⅱ：发动 → 选择手牌 → 除外（ADR-0023 / X-16）'
   // 打开我方指挥官详情 → 发动效果Ⅱ
   const commander = p.getByTestId('zone-commander').nth(1);
   await expect(commander).toContainText('炎刃军统领', { timeout: 15_000 });
-  await commander.locator('[data-testid="card-detail"]').click();
+  await longPressCard(p, commander.locator('[data-testid="card"]').first());
   await p.getByTestId('effect-2').click();
 
   // 待定选择浮层：列出全部手牌供选择

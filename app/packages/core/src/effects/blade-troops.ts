@@ -105,11 +105,25 @@ export const bladeKnightEffect: EffectModule = {
     if (choice === 'pass') {
       return {
         ok: true,
-        value: resolveAttackEvents(state, ctx, { me, foe: state.seats.find((x) => x !== me) ?? '', attackerUid, targetUid }),
+        value: [
+          ...resolveAttackEvents(state, ctx, { me, foe: state.seats.find((x) => x !== me) ?? '', attackerUid, targetUid }),
+          // D-260：必须收尾，否则选择面板永远不消失（见下方长注释）。
+          choiceCleared(at),
+        ],
       };
     }
     if (!pending.options.includes(choice)) {
       return reject('INVALID_CHOICE', '不在可选范围');
+    }
+    /*
+     * D-260：选项是**挂起那一刻**的快照，回答时那张卡可能已经不在弃牌区了
+     * （面板没关时的重复点击、或链中先被别的效果除外）。此时必须拒绝 ——
+     * 原来 `exileCard` 对已除外的卡会产出「exile→exile」的空移动，
+     * 调用方仍照算 +1，于是同一个选择能无限叠加力量（Era 报的死锁就是这个）。
+     */
+
+    if (!state.players[me]?.zones.graveyard.some((c) => c.uid === choice)) {
+      return reject('INVALID_CHOICE', '该卡已不在弃牌区');
     }
 
     const exiled = exileCard(at, state, me, choice, ctx.cards);
@@ -122,7 +136,13 @@ export const bladeKnightEffect: EffectModule = {
       attackerUid,
       targetUid,
     });
-    return { ok: true, value: [...exiled.events, mod, ...hit] };
+    /*
+     * D-260（Era issue #88）：`choiceCleared` 原来漏了 —— 攻击结算完 `pendingChoice`
+     * 一直是这条 blade-knight-attack，界面上的选择面板关不掉，玩家被卡死；
+     * 而且面板里的残留选项还能继续点，每点一次走一遍「除外 + 力量 +1」。
+     * 现在两处都补上，且 `effectChooseRule` 另加了一层兜底（见 rules/effect.ts）。
+     */
+    return { ok: true, value: [...exiled.events, mod, ...hit, choiceCleared(at)] };
   },
 };
 

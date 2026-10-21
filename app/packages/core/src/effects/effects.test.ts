@@ -12,7 +12,7 @@ import type { CardInstance, GameState, Intent, Phase, RuleContext, Zone } from '
 import { CARD_POOL } from '@app/shared/cards';
 
 import { applyIntent, createInitialState, reduce, replay, stateHash, INTENTS } from '../index.js';
-import { summonEntryEvents } from '../effects/index.js';
+import { EFFECTS_BY_KIND, summonEntryEvents, type EffectModule } from '../effects/index.js';
 import { unitPower } from '../ops.js';
 
 const CTX: RuleContext = { now: 1000, cards: CARD_POOL };
@@ -429,5 +429,61 @@ describe('回放：H28 排队序列', () => {
     // 链条走完：没有悬挂选择，队列也已清空
     expect(a.state.pendingChoice).toBeNull();
     expect(a.state.pendingChoiceQueue).toEqual([]);
+  });
+});
+
+/**
+ * 选择链收尾的**结构兜底**（D-260 / issue #88）。
+ *
+ * 每个效果模块的 `choose` 都要自己发 `choice:cleared`，漏一次就是「面板关不掉、
+ * 对局卡死」（炎刃骑士就是这么坏的）。这条兜底放在 `effectChooseRule`，
+ * 这里用一个**故意漏写**的假模块证明它真的生效 —— 否则将来又有人漏写时，
+ * 单测全绿、线上死锁。
+ */
+describe('选择链收尾兜底（D-260）', () => {
+  const KIND = '__test-no-clear';
+
+  function stateWithPending(kind: string, options: string[]): GameState {
+    const s = craft({ zones: { graveyard: [c('g1', 'bladeVanguard')] } });
+    return {
+      ...s,
+      pendingChoice: { playerId: 'p1', kind, sourceUid: 'g1', options },
+    };
+  }
+
+  it('模块漏写 choice:cleared 时，规则层补一条 —— 选择不会永远挂着', () => {
+    const registry = EFFECTS_BY_KIND as Record<string, EffectModule>;
+    registry[KIND] = { choose: () => ({ ok: true, value: [] }) };
+    try {
+      const s = stateWithPending(KIND, ['g1']);
+      const r = applyIntent(s, intent('p1', INTENTS.effectChoose, { choice: 'g1' }), CTX);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value.filter((e) => e.type === 'choice:cleared')).toHaveLength(1);
+      // 落地后不再有悬挂选择
+      const after = r.value.reduce((acc, e) => reduce(acc, e), s);
+      expect(after.pendingChoice).toBeNull();
+    } finally {
+      delete registry[KIND];
+    }
+  });
+
+  it('模块自己收尾时不重复补 —— 事件流保持干净', () => {
+    const registry = EFFECTS_BY_KIND as Record<string, EffectModule>;
+    registry[KIND] = {
+      choose: (state, it_, ctx) => ({
+        ok: true,
+        value: [{ type: 'choice:cleared', at: ctx.now, payload: {} } as never],
+      }),
+    };
+    try {
+      const s = stateWithPending(KIND, ['g1']);
+      const r = applyIntent(s, intent('p1', INTENTS.effectChoose, { choice: 'g1' }), CTX);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value.filter((e) => e.type === 'choice:cleared')).toHaveLength(1);
+    } finally {
+      delete registry[KIND];
+    }
   });
 });
