@@ -619,6 +619,28 @@ describe('充能 chargeRule（X-2，充能区即费用区）', () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.CARD_NOT_IN_ZONE);
   });
+
+  it('被拒的提示是人话 —— 不回显内部 uid、不暴露内部类型名（D-265）', () => {
+    // ① 陈旧 uid：连点充能最容易走到（第一下已充能成功、第二下用的是同一 uid）。
+    //    原文案是 `${uid} 不在你的手牌或场上`，玩家看到的是 40 位十六进制。
+    const s = craft({ phase: 'charge', zones: { hand: [c('h1', 'm1')] } });
+    const r = applyIntent(s, intent('p1', INTENTS.charge, { uids: ['p1#99'] }), CTX);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error.code).toBe(RULE_ERRORS.CARD_NOT_IN_ZONE);
+      expect(r.error.message).not.toContain('p1#99');
+      expect(r.error.message).toContain('已经不在');
+    }
+
+    // ② 非随从：`def.type` 是内部枚举，写进提示等于让玩家读英文类型名。
+    const s2 = craft({ phase: 'charge', zones: { hand: [c('h2', 's1')] } });
+    const r2 = applyIntent(s2, intent('p1', INTENTS.charge, { uids: ['h2'] }), CTX);
+    expect(r2.ok).toBe(false);
+    if (!r2.ok) {
+      expect(r2.error.message).not.toContain('spell');
+      expect(r2.error.message).toContain('只有随从');
+    }
+  });
 });
 
 /* ------------------------------ 出牌与支付 ------------------------------ */

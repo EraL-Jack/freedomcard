@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import * as core from '@app/core';
 import { MAIN_DECK_SIZE } from '@app/shared/constants';
@@ -92,7 +93,9 @@ function CardDetail(props: {
     .filter((x): x is string => typeof x === 'string');
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4"
+      /* D-265：z 值要比堆叠区浮窗（z-50）高 —— 从浮窗里长按一张卡看详情，
+         详情必须压在浮窗上面，否则「点了没反应」（其实是开在下面了）。 */
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4"
       onClick={props.onClose}
       data-testid="card-detail-overlay"
     >
@@ -159,6 +162,80 @@ const KIND_TAG_FOR_DETAIL: Readonly<Record<string, string>> = {
   spell: '法术',
   continuous: '设置',
 };
+
+/**
+ * 堆叠区浮窗（D-265，Era 2026-10-21）。
+ *
+ * > 用浮窗显示堆叠区内容，而不是直接在牌桌上显示，你牌桌怎么都塞不下这么多卡吧
+ *
+ * 原来点区域标题是**在区域框里**把卡 flex-wrap 铺开：弃牌区到 15 张、费用区到 10 张时
+ * 那一格根本放不下，只会被 `overflow-hidden` 裁掉 —— 玩家既看不全，区域也被挤变形。
+ * 牌桌的可视面积是固定的，**堆叠区的上限却随对局增长**，所以这件事不能靠「排得更紧」解决，
+ * 只能把内容移出牌桌。
+ *
+ * 浮窗是纯展示层：卡面 + 长按详情（长按委托挂在桌子根节点上，`data-card-uid` 照样命中）。
+ * 不改任何状态，关掉即回到牌桌。
+ */
+function ZoneFloat(props: {
+  label: string;
+  cards: readonly CardInstance[];
+  state: GameState;
+  onClose: () => void;
+}): React.JSX.Element {
+  /*
+   * 挂到 `document.body`（portal）而不是区域容器内部，有两个实打实的理由：
+   *  1. 语义 —— 浮窗不是「区域里的一堆卡」，区域里就该只有区名与张数；
+   *     留在区域内的话，`zone-cost` 里数得到浮窗的卡，测试与后续逻辑都会被带偏。
+   *  2. `fixed` 的可靠性 —— 祖先一旦有 transform / filter / contain，
+   *     `fixed` 就退化成相对祖先定位。挂到 body 上永远不受影响。
+   */
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-3"
+      onClick={props.onClose}
+      data-testid="zone-float"
+    >
+      <div
+        className="flex max-h-[84vh] w-full max-w-3xl flex-col rounded-xl border border-slate-600 bg-slate-900 p-3"
+        // 点面板本体不该关窗（只有遮罩与「关闭」关）
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-sm font-medium text-slate-100">
+            {props.label}
+            <span className="ml-2 text-xs font-normal text-slate-400">{props.cards.length} 张</span>
+          </p>
+          <button
+            type="button"
+            className="rounded bg-slate-700 px-3 py-1 text-xs"
+            onClick={props.onClose}
+            data-testid="zone-float-close"
+          >
+            关闭
+          </button>
+        </div>
+        {props.cards.length > 0 ? (
+          /*
+           * 卡片宽度交给网格（`CardOf fluid`），高度由 `aspect-[5/7]` 自己算 ——
+           * 不再依赖父级高度，所以换行、滚动都不会把卡压成窄条。
+           * 390px 三列、宽屏五列：窄屏一屏能看到 6 张，够翻一个弃牌区。
+           */
+          <div
+            className="mt-2 grid min-h-0 flex-1 auto-rows-min grid-cols-3 gap-1 overflow-y-auto sm:grid-cols-5"
+            data-testid="zone-float-cards"
+          >
+            {props.cards.map((c) => (
+              <CardOf key={c.uid} card={c} state={props.state} fluid />
+            ))}
+          </div>
+        ) : (
+          <p className="mt-6 mb-6 text-center text-xs text-slate-500">这个区域还没有牌。</p>
+        )}
+      </div>
+    </div>,
+    document.body,
+  );
+}
 /** 全部区域 —— 找卡时要挨个翻（D-261）。 */
 const ALL_ZONES = [
   'deck',
@@ -203,6 +280,14 @@ function CardOf(props: {
   fxClass?: string;
   /** 区域内紧凑尺寸（格子内卡片比手牌小一号，避免压排 —— D-118 截图实测）。 */
   compact?: boolean;
+  /**
+   * 宽度由容器决定（D-265）—— 只给**堆叠区浮窗的网格**用。
+   *
+   * 手牌是固定宽（`w-16 sm:w-20` 横向排），compact 是高度驱动（要父级有确定高度）；
+   * 浮窗里的网格两者都不满足：列宽由 `grid-cols-N` 决定、高度由 `aspect-[5/7]` 自己算。
+   * 所以这里只做一件事 —— `w-full min-w-0`，尺寸交给网格。
+   */
+  fluid?: boolean;
   onClick?: () => void;
 }): React.JSX.Element {
   const def = CARD_POOL[props.card.defId];
@@ -229,7 +314,9 @@ function CardOf(props: {
          */
         props.compact
           ? 'flex h-full min-h-0 w-full min-w-0 items-center justify-center'
-          : 'w-16 shrink-0 sm:w-20'
+          : props.fluid
+            ? 'w-full min-w-0'
+            : 'w-16 shrink-0 sm:w-20'
       }
       /*
        * D-261（issue #87）：长按看详情的**命中标记**。
@@ -260,8 +347,15 @@ function CardOf(props: {
 }
 
 /**
- * 区域块 —— B2-3：弃牌 / 除外 / 费用区默认**缩略**（只显示数量），点击展开全貌。
- * 费用区按 B2-3 的要求**直接显示数量**。
+ * 区域块 —— B2-3：弃牌 / 除外 / 费用 / 法术区恒只显示「区名 + 张数」，
+ * 内容点开看**浮窗**（D-265）。费用区按 B2-3 的要求**直接显示数量**。
+ *
+ * 为什么不是「点开在框里铺开」：区域格子的面积是全桌均分的固定值，而堆叠区的张数
+ * 随对局单向增长（弃牌区到 15 张很常见）。把内容放回框里，要么被裁掉、要么把框撑变形——
+ * 两种都让玩家读不到信息。所以区域只当「计数 + 入口」，内容一律走浮窗。
+ *
+ * `content` 决定这个区域**框里放什么**（三态见下）。卡组区刻意是 `count` ——
+ * 卡组顺序是隐藏信息，能翻看就等于提前知道下一张抽什么（D-265 顺带修掉的一处泄露）。
  *
  * `onCardClick` 是为了让**指挥官区也能当攻击目标**（ADR-0022）——
  * 此前只有随从区可点，导致「打指挥官 → 扣血 → 血空结束」这条已确认的规则
@@ -272,7 +366,19 @@ function ZoneBox(props: {
   zone: Zone;
   cards: readonly CardInstance[];
   state: GameState;
-  expandable?: boolean;
+  /**
+   * 框内怎么呈现内容 —— 三态**互斥**（D-265）。
+   *
+   * - `'cards'`（默认）：直接把卡铺在框里。只给**指挥官区** —— 它是攻击目标，
+   *   必须一直看得见，否则「打指挥官 → 扣血 → 血空结束」在界面上没有入口（ADR-0022）。
+   * - `'float'`：框里只留区名与张数，内容点开看浮窗。弃牌 / 除外 / 费用 / 法术区。
+   * - `'count'`：框里只留张数，**不给看**。只给卡组区 —— 卡组顺序是隐藏信息，
+   *   能翻看就等于提前知道下一张抽什么。
+   *
+   * 用一个枚举而不是两个布尔（`hideCards` + `inspectable`），是因为后者允许
+   * 「藏起来又看不见」这种无意义组合，写出第三种区域时很容易配错。
+   */
+  content?: 'cards' | 'float' | 'count';
   /** 点击区域内某张卡的回调 —— 不传则该区域不可点（默认）。 */
   onCardClick?: (uid: string) => void;
   selected?: boolean;
@@ -297,11 +403,19 @@ function ZoneBox(props: {
   badge?: string;
   badgeTestId?: string;
 }): React.JSX.Element {
+  // 浮窗开关（D-265）—— 只有 `content='float'` 的区域能打开。
   const [open, setOpen] = useState(false);
-  const shown = props.expandable && !open ? [] : props.cards;
+  /** 只有 `content='cards'` 才在框里铺卡；其余两种都只显示张数。 */
+  const showCards = (props.content ?? 'cards') === 'cards';
+  /**
+   * 空区域不给查看 —— 五区大部分时间都是 0 张（法术区、除外区常常整局空着），
+   * 让它们也可点只会制造「点出一片空浮窗」的噪音。0 张时退化成纯信息块。
+   */
+  const inspectable = props.content === 'float' && props.cards.length > 0;
+  const shown = showCards ? props.cards : [];
 
   return (
-    // testid 挂在**容器**上而非按钮：这样断言能看到展开的卡片内容，
+    // testid 挂在**容器**上而非按钮：这样断言能看到区域本身，
     // 断言的是「这个区域有什么」而不是「这个按钮写了什么」。
     <div
       className={`flex h-full min-h-0 flex-col rounded border p-1 ${
@@ -310,41 +424,44 @@ function ZoneBox(props: {
           : props.highlight
             ? 'border-cyan-400 bg-cyan-950/30 ring-2 ring-cyan-400/70'
             : 'border-slate-700 bg-slate-900/60'
-      }`}
+      } ${inspectable ? 'cursor-pointer hover:border-slate-500' : ''}`}
       data-testid={`zone-${props.zone}`}
       {...(props.dropKey ? { 'data-drop': props.dropKey } : {})}
       {...(props.dropUid ? { 'data-drop-uid': props.dropUid } : {})}
+      // 整块可点（不只标题行）：390px 下标题只有一行高，手点很容易落到框内空白处。
+      {...(inspectable
+        ? {
+            onClick: () => setOpen(true),
+            role: 'button',
+            tabIndex: 0,
+            onKeyDown: (e: React.KeyboardEvent) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setOpen(true);
+              }
+            },
+          }
+        : {})}
     >
-      {/* 标题行：可展开时是按钮，不可展开时是纯文本（不可操作的按钮不展示，Era 2026-10-19） */}
-      {props.expandable ? (
-        <button
-          type="button"
-          className="flex w-full items-center justify-between gap-1 text-[10px] text-slate-400"
-          onClick={() => setOpen((v) => !v)}
-        >
-          <span className="truncate">{props.label}</span>
-          {props.badge ? (
-            <span className="shrink-0 font-mono text-rose-300" data-testid={props.badgeTestId}>
-              {props.badge}
-            </span>
-          ) : null}
-          <span className="shrink-0 text-slate-200" data-testid="zone-count">
-            {props.cards.length}
+      {/* 标题行恒为纯文本（D-265）：点击由**容器**承担，整块区域都是查看入口。
+          可查看时右侧多一个 `›`，告诉玩家「这里有内容、点得开」——
+          五区格子只有 60 来像素宽，塞不下「查看」两个字。 */}
+      <div className="flex w-full items-center justify-between gap-1 text-[10px] text-slate-400">
+        <span className="truncate">{props.label}</span>
+        {props.badge ? (
+          <span className="shrink-0 font-mono text-rose-300" data-testid={props.badgeTestId}>
+            {props.badge}
           </span>
-        </button>
-      ) : (
-        <div className="flex w-full items-center justify-between gap-1 text-[10px] text-slate-400">
-          <span className="truncate">{props.label}</span>
-          {props.badge ? (
-            <span className="shrink-0 font-mono text-rose-300" data-testid={props.badgeTestId}>
-              {props.badge}
-            </span>
-          ) : null}
-          <span className="shrink-0 text-slate-200" data-testid="zone-count">
-            {props.cards.length}
+        ) : null}
+        <span className="shrink-0 text-slate-200" data-testid="zone-count">
+          {props.cards.length}
+        </span>
+        {inspectable ? (
+          <span className="shrink-0 text-slate-500" aria-hidden="true">
+            ›
           </span>
-        </div>
-      )}
+        ) : null}
+      </div>
       {props.action ? (
         <button
           type="button"
@@ -377,6 +494,20 @@ function ZoneBox(props: {
             />
           ))}
         </div>
+      ) : null}
+      {/*
+        浮窗（D-265）：`fixed` 定位、不参与这一格的布局，所以开合时区域边框不跳。
+        放在 ZoneBox 内部而不是提到顶层，是为了「谁的区域、看谁的牌」在代码里就是同一处，
+        省掉一个 `{ side, zone }` 的全局状态（那玩意儿一旦与实时 state 不同步，
+        打开浮窗看到的就是旧牌）。
+      */}
+      {open && inspectable ? (
+        <ZoneFloat
+          label={props.label}
+          cards={props.cards}
+          state={props.state}
+          onClose={() => setOpen(false)}
+        />
       ) : null}
     </div>
   );
@@ -1648,8 +1779,8 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
 
           {/* ② 对方五区 —— flex-1 平分桌高；auto-rows-fr 让行撑满排高（格子因此铺满） */}
           <section className="grid min-h-0 flex-1 auto-rows-fr grid-cols-5 gap-1">
-            <ZoneBox label="卡组区" zone="deck" cards={theirs.zones.deck} expandable state={state} />
-            <ZoneBox label="法术区" zone="spell" cards={theirs.zones.spell} expandable state={state} />
+            <ZoneBox label="卡组区" zone="deck" cards={theirs.zones.deck} content="count" state={state} />
+            <ZoneBox label="法术区" zone="spell" cards={theirs.zones.spell} content="float" state={state} />
             {/* ADR-0022：指挥官也是合法攻击目标 —— 否则只能互砍随从，永远分不出胜负。
                 嘲讽优先由引擎裁决（A7），界面不预判，被拒就显示服务端原因。 */}
             <ZoneBox
@@ -1674,15 +1805,15 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
                   : undefined
               }
             />
-            <ZoneBox label="弃牌区" zone="graveyard" cards={theirs.zones.graveyard} expandable state={state} />
-            <ZoneBox label="除外区" zone="exile" cards={theirs.zones.exile} expandable state={state} />
+            <ZoneBox label="弃牌区" zone="graveyard" cards={theirs.zones.graveyard} content="float" state={state} />
+            <ZoneBox label="除外区" zone="exile" cards={theirs.zones.exile} content="float" state={state} />
           </section>
 
           {/* ③ 对方费用区 + 随从区 1·2·3 + 展示区 —— D-123（Era 2026-10-18）：
               费用区居左、展示区居右，随从 1·2·3 与第 ④ 排**逐格对齐**。
               选中攻击方后对方随从发光提示可攻击（嘲讽过滤由引擎裁决，界面不预判）。 */}
           <section className="grid min-h-0 flex-1 auto-rows-fr grid-cols-5 gap-1">
-            <ZoneBox label="费用区" zone="cost" cards={theirs.zones.cost} expandable state={state} />
+            <ZoneBox label="费用区" zone="cost" cards={theirs.zones.cost} content="float" state={state} />
             {slots.map((i) => {
               const fc = atSlot(theirs.zones.board, i);
               return (
@@ -1735,7 +1866,7 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
               label="费用区"
               zone="cost"
               cards={mine.zones.cost}
-              expandable
+              content="float"
               state={state}
               badge={`本回合 ${costText}`}
               badgeTestId="cost-usage"
@@ -1807,8 +1938,8 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
               费用区在第 ④ 排已有一格，故此处换成弃牌区不丢信息。
               flex-1 平分桌高。 */}
           <section className="grid min-h-0 flex-1 auto-rows-fr grid-cols-5 gap-1">
-            <ZoneBox label="除外区" zone="exile" cards={mine.zones.exile} expandable state={state} />
-            <ZoneBox label="弃牌区" zone="graveyard" cards={mine.zones.graveyard} expandable state={state} />
+            <ZoneBox label="除外区" zone="exile" cards={mine.zones.exile} content="float" state={state} />
+            <ZoneBox label="弃牌区" zone="graveyard" cards={mine.zones.graveyard} content="float" state={state} />
             <ZoneBox
               label="指挥官"
               zone="commander"
@@ -1826,13 +1957,16 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
                   : undefined
               }
             />
-            <ZoneBox label="法术区" zone="spell" cards={mine.zones.spell} expandable state={state} />
-            {/* 抽牌阶段未抽时，卡组区变为发光动作「点击抽牌」（Era 2026-10-18 手动抽牌） */}
+            <ZoneBox label="法术区" zone="spell" cards={mine.zones.spell} content="float" state={state} />
+            {/* 抽牌阶段未抽时，卡组区变为发光动作「点击抽牌」（Era 2026-10-18 手动抽牌）。
+                卡组区**不给 inspectable**（D-265）：卡组顺序是隐藏信息 ——
+                能翻看就等于提前知道下一张抽什么，本来那一版点标题能看到 25 张。
+                抽牌动作走下方按钮，与「查看内容」不冲突。 */}
             <ZoneBox
               label="卡组区"
               zone="deck"
               cards={mine.zones.deck}
-              expandable
+              content="count"
               state={state}
               action={
                 canDraw ? { label: '点击抽牌', testId: 'draw-deck', onClick: () => session.draw() } : undefined

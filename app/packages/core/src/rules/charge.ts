@@ -33,9 +33,18 @@ export const chargeRule = (
   for (const uid of uids) {
     const loc = locate(state, uid);
     if (!loc || loc.playerId !== intent.playerId || (loc.zone !== 'hand' && loc.zone !== 'board')) {
+      /*
+       * D-265（顺带修，Era 2026-10-21 实机截图发现）：消息原本是 `${uid} 不在你的手牌或场上`，
+       * `uid` 形如 `9932ebea-782a-4ad8-a6c7-dd93c88a2e40#26` —— 玩家看到的是 40 个十六进制字符，
+       * 完全不知道该干什么。这条最容易在**连点充能**时触发（第一下已经充能成功、第二下被拒），
+       * 所以文案要直接解释「为什么会这样」。
+       */
       return {
         ok: false,
-        error: { code: RULE_ERRORS.CARD_NOT_IN_ZONE, message: `${uid} 不在你的手牌或场上` },
+        error: {
+          code: RULE_ERRORS.CARD_NOT_IN_ZONE,
+          message: '这张牌已经不在你的手牌或场上了（可能刚被充能或打出）',
+        },
       };
     }
     const def: CardDef | undefined = ctx.cards[loc.card.defId];
@@ -44,9 +53,10 @@ export const chargeRule = (
     }
     // X-2 原文限定「随从」
     if (def.type !== 'minion') {
+      // 同样不把内部的类型枚举（minion/spell/continuous）甩给玩家
       return {
         ok: false,
-        error: { code: RULE_ERRORS.CARD_NOT_IN_ZONE, message: `只有随从可以充能: ${def.type}` },
+        error: { code: RULE_ERRORS.CARD_NOT_IN_ZONE, message: '只有随从可以充能' },
       };
     }
     events.push(moved(at, intent.playerId, uid, loc.zone, 'cost'));
