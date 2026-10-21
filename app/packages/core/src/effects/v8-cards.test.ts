@@ -208,6 +208,70 @@ describe('炎刃随从效果（docs/12 §2）', () => {
     expect(unitPower(after, CARD_POOL, 'a1')).toBe(5); // 4 + 1（本回合）
   });
 
+  /*
+   * D-260 / issue #88：「炎刃骑士攻击时存在死锁，会一直加攻击力停不下来」。
+   *
+   * 修之前 `choose` 从不发 `choice:cleared`，攻击结算完 `pendingChoice` 一直挂着
+   * → 界面上选择面板关不掉，玩家被卡死；面板里残留的选项还能继续点，
+   * 每点一次走一遍「除外 + 力量 +1」（`exileCard` 对已除外的卡产出 exile→exile 空移动，
+   * 调用方仍当成功）。下面三条分别钉住「关得掉」「点不动」「加不了」。
+   */
+  it('骑士：选择结算后选择链必须关闭（issue #88 的死锁点）', () => {
+    const s = craft({
+      phase: 'battle',
+      zones: { board: [c('a1', 'bladeKnight')], graveyard: [c('g1', 'bladeVanguard')] },
+      foeZones: { board: [c('f1', 'bladeGuard')] },
+    });
+    let after = run(s, intent('p1', INTENTS.attack, { attackerUid: 'a1', targetUid: 'f1' }));
+    expect(after.pendingChoice).not.toBeNull();
+    after = run(after, intent('p1', INTENTS.effectChoose, { choice: 'g1' }));
+    // ⚠️ 修之前这里是 blade-knight-attack —— 面板永远关不掉
+    expect(after.pendingChoice).toBeNull();
+  });
+
+  it('骑士：选「跳过」同样关闭选择链，且攻击照常结算', () => {
+    const s = craft({
+      phase: 'battle',
+      zones: { board: [c('a1', 'bladeKnight')], graveyard: [c('g1', 'bladeVanguard')] },
+      foeZones: { board: [c('f1', 'bladeGuard')] },
+    });
+    let after = run(s, intent('p1', INTENTS.attack, { attackerUid: 'a1', targetUid: 'f1' }));
+    after = run(after, intent('p1', INTENTS.effectChoose, { choice: 'pass' }));
+    expect(after.pendingChoice).toBeNull();
+    expect(after.players['p2']!.zones.board).toHaveLength(0); // 力 4 > 2，防守方破坏
+    expect(unitPower(after, CARD_POOL, 'a1')).toBe(4); // 跳过不加力量
+    expect(after.players['p1']!.zones.graveyard.map((x) => x.uid)).toEqual(['g1']);
+  });
+
+  it('骑士：选项已不在弃牌区时拒绝，不再叠加力量（陈旧选项）', () => {
+    const s = craft({
+      phase: 'battle',
+      zones: {
+        board: [c('a1', 'bladeKnight')],
+        graveyard: [c('g1', 'bladeVanguard')],
+        exile: [c('x1', 'bladeScout')],
+      },
+      foeZones: { board: [c('f1', 'bladeGuard')] },
+    });
+    const before = run(s, intent('p1', INTENTS.attack, { attackerUid: 'a1', targetUid: 'f1' }));
+    // 模拟「面板没关时那张卡已被除外」：选项里塞一张已在除外区的卡
+    const stale: GameState = {
+      ...before,
+      pendingChoice: {
+        playerId: 'p1',
+        kind: 'blade-knight-attack',
+        sourceUid: 'a1',
+        options: ['x1'],
+        meta: { attackerUid: 'a1', targetUid: 'f1' },
+      },
+    };
+    const r = applyIntent(stale, intent('p1', INTENTS.effectChoose, { choice: 'x1' }), CTX);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.INVALID_CHOICE);
+    // 力量没有被偷偷 +1（修之前这条会变成 5）
+    expect(unitPower(stale, CARD_POOL, 'a1')).toBe(4);
+  });
+
   it('老兵：登场可除外弃牌区炎刃换抽 1', () => {
     const s = craft({
       zones: {

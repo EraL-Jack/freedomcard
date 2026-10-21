@@ -1,4 +1,4 @@
-import { expect, type Browser, type Page } from '@playwright/test';
+import { expect, type Browser, type Locator, type Page } from '@playwright/test';
 
 /**
  * E2E 公共辅助。
@@ -261,6 +261,23 @@ export async function handCount(page: Page): Promise<number> {
 /** 当前回合数（从「第 N 回合」解析）。 */export async function turnNo(page: Page): Promise<number> {
   const text = (await page.getByTestId('turn').innerText()) ?? '';
   return Number(/(\d+)/.exec(text)?.[1] ?? NaN);
+}
+
+/**
+ * 长按一张卡打开详情浮层（D-261 / issue #87）。
+ *
+ * 原来右上角那个 16px 的「?」按钮已删除 —— Era 反馈「太难点了」。
+ * 现在的入口是：长按卡面（触屏/鼠标都行）、右键、选中手牌后的「详情」按钮。
+ * 阈值 400ms，这里按 500ms 保证计时器真的触发。
+ *
+ * ⚠️ 长按触发后组件会压掉随后的 click，所以 `mouse.up()` 之后**不能**再期待选中状态变化。
+ */
+export async function longPressCard(page: Page, target: Locator): Promise<void> {
+  await target.hover();
+  await page.mouse.down();
+  await page.waitForTimeout(500);
+  await page.mouse.up();
+  await expect(page.getByTestId('card-detail-overlay')).toBeVisible({ timeout: 5_000 });
 }
 
 /** 当前阶段名（从 header 的「阶段 X」解析）。 */

@@ -184,6 +184,14 @@ export function exileCard(
 ): { events: GameEvent[]; state: GameState } {
   const loc = locate(state, uid);
   if (!loc || loc.playerId !== playerId) return { events: [], state };
+  /*
+   * D-260：已经在除外区就**什么都不做**。
+   *
+   * 原来会产出「exile → exile」的空移动事件，调用方却当成「除外成功」继续结算
+   * （炎刃骑士因此能对同一张卡反复 +1，issue #88 的另一半）。这里的返回形状不变，
+   * 但调用方仍需自己判断 —— 空事件就是「没做成」。
+   */
+  if (loc.zone === 'exile') return { events: [], state };
   const e = emitter(state);
   e.push(ev(at, 'card:moved', { playerId, uid, from: loc.zone, to: 'exile' }) as GameEvent);
 

@@ -93,6 +93,19 @@ pnpm dev          # 同时起 server(3000) 与 client(5173)
 行动条上方常显一句「现在该做什么」的提示（`data-testid="phase-hint"`）：
 充能阶段是**琥珀底色**、换牌阶段是紫色 —— 这两个阶段最容易迷路。
 
+### 3.5 查看卡牌详情（D-261）
+
+原来卡面右上角那个 16×16 的小「?」已经删掉（Era 反馈「太难点了」）。现在三条入口：
+
+| 入口 | 场景 |
+| --- | --- |
+| **长按卡面 400ms** | 手机主路径；整张卡都是命中区，敌我双方、五区缩略里的卡都能长按 |
+| **右键** | 电脑上快捷入口 |
+| **选中手牌 → 卡上方「详情」** | 想看清楚再决定时用这个（正常按钮大小） |
+
+详情里显示完整效果文本、关键词注释与当前实际数值；可发动的效果按钮也长在里面。
+长按与拖拽不冲突：手指移动超过 10px 就转成拖拽。
+
 ## 4. 局域网联机测（手机同 WiFi）
 
 ```bash
@@ -109,10 +122,10 @@ Windows 需放行 5173 / 3000 端口的入站规则（网络配置文件为 Publ
 | `pnpm dev` | 并行起服务端与客户端 |
 | `pnpm typecheck` | 全量 `tsc --noEmit` |
 | `pnpm lint` | ESLint（flat config） |
-| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层 + `client` 纯逻辑，2026-10-21 时点 **399 passed**（core 218 + server 143 + client 38） |
+| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层 + `client` 纯逻辑，2026-10-21 时点 **404 passed**（core 223 + server 143 + client 38） |
 | `pnpm --filter @app/client run test:coverage` | client 覆盖率（v8）。目前只覆盖 `selectors` / `labels` / `log` 三个纯逻辑模块；组件层由 E2E 兜 |
 | `pnpm build` | 构建客户端到 `packages/client/dist` |
-| `pnpm --filter @app/client test:e2e` | 端到端（Playwright）：**44 条** —— 房间流程 / 视口溢出 / 联机开局 / 回合操作 / 攻击与指挥官伤害 / 卡组编辑 / 人机对战 / 新手引导 / 390px 日志抽屉 / 断线与点击反馈 |
+| `pnpm --filter @app/client test:e2e` | 端到端（Playwright）：**45 条** —— 房间流程 / 视口溢出 / 联机开局 / 回合操作 / 攻击与指挥官伤害 / 卡组编辑 / 人机对战 / 新手引导 / 390px 日志抽屉 / 断线与点击反馈 |
 
 > 首次跑 E2E 需先下载浏览器：`pnpm --filter @app/client exec playwright install chromium`（约 197 MiB，慢）。
 > 截图落在 `packages/client/e2e/screenshots/`（已被 `.gitignore` 忽略）。
