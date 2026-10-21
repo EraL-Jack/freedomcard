@@ -7,7 +7,8 @@
  * 不直接跳到下一回合 —— A4-2 明令阶段不可跳过，超时也不构成例外。
  */
 
-import { RULE_ERRORS, type GameEvent, type GameState, type Intent, type Result, type Rejection, type RuleContext } from '@app/shared';
+import { RULE_ERRORS } from '@app/shared/constants';
+import type { GameEvent, GameState, Intent, Result, Rejection, RuleContext } from '@app/shared/types';
 
 import { reduce } from '../reducer.js';
 import { activePlayer } from '../state.js';

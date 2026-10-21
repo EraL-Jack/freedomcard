@@ -11,17 +11,8 @@
  *  4. 未选中的洗回卡组（H21，卡面未说去处，取通行做法；`rng:advance` + `deck:shuffled`）。
  */
 
-import {
-  BOARD_SLOTS,
-  RULE_ERRORS,
-  type CardInstance,
-  type GameEvent,
-  type GameState,
-  type PendingChoice,
-  type Result,
-  type Rejection,
-  type RuleContext,
-} from '@app/shared';
+import { BOARD_SLOTS, RULE_ERRORS } from '@app/shared/constants';
+import type { CardInstance, GameEvent, GameState, PendingChoice, Result, Rejection, RuleContext } from '@app/shared/types';
 
 import { moved, reject, rngAdvance, deckShuffled, strArg } from '../ops.js';
 import { reduce } from '../reducer.js';

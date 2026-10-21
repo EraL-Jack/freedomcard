@@ -5,12 +5,8 @@
  * 必须被拒绝，否则后面每一步都会踩到「指挥官不存在」的分支上。
  */
 
-import {
-  MAIN_DECK_SIZE,
-  MAX_COPIES,
-  type CardDef,
-  type PlayerState,
-} from '@app/shared';
+import { MAIN_DECK_SIZE, MAX_COPIES } from '@app/shared/constants';
+import type { CardDef, PlayerState } from '@app/shared/types';
 import { TOKEN_CARD_IDS } from '@app/shared/cards';
 
 /** 返回 null 表示合法；否则返回人话原因（直接给玩家看的提示文案）。 */

@@ -10,21 +10,8 @@
  *  - `onPlay`：法术 / 设置法术出牌后结算。
  */
 
-import {
-  COMMANDER_SKILL_COST,
-  RULE_ERRORS,
-  type CardDef,
-  type CardInstance,
-  type GameEvent,
-  type GameState,
-  type Intent,
-  type PendingChoice,
-  type PlayerId,
-  type PlayerState,
-  type Result,
-  type Rejection,
-  type RuleContext,
-} from '@app/shared';
+import { COMMANDER_SKILL_COST, RULE_ERRORS } from '@app/shared/constants';
+import type { CardDef, CardInstance, GameEvent, GameState, Intent, PendingChoice, PlayerId, PlayerState, Result, Rejection, RuleContext } from '@app/shared/types';
 import { isBladeCard } from '@app/shared/cards';
 
 import { ev, moved, reject, unitPower } from '../ops.js';

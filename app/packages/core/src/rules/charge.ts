@@ -6,16 +6,8 @@
  * （ADR-0012）。这是资源循环的核心入口 —— 费用区里的卡用于支付（见 `play.ts`）。
  */
 
-import {
-  RULE_ERRORS,
-  type CardDef,
-  type GameEvent,
-  type GameState,
-  type Intent,
-  type Result,
-  type Rejection,
-  type RuleContext,
-} from '@app/shared';
+import { RULE_ERRORS } from '@app/shared/constants';
+import type { CardDef, GameEvent, GameState, Intent, Result, Rejection, RuleContext } from '@app/shared/types';
 
 import { baseGuard, firstRejection, locate, moved, strListArg } from '../ops.js';
 

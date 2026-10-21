@@ -17,14 +17,8 @@
  * （不发动 = 不付费，卡面不写「可以」，见 docs/18 §4.0）。
  */
 
-import {
-  RULE_ERRORS,
-  STAR_TRACK_BASE_REVEAL,
-  STAR_TRACK_TIERS,
-  type GameEvent,
-  type Result,
-  type Rejection,
-} from '@app/shared';
+import { RULE_ERRORS, STAR_TRACK_BASE_REVEAL, STAR_TRACK_TIERS } from '@app/shared/constants';
+import type { GameEvent, Result, Rejection } from '@app/shared/types';
 
 import { playerOf, reject } from '../ops.js';
 

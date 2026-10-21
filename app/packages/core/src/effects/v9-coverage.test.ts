@@ -11,7 +11,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import type { CardInstance, GameEvent, GameState, Intent, Phase, Zone } from '@app/shared';
+import type { CardInstance, GameEvent, GameState, Intent, Phase, Zone } from '@app/shared/types';
 import { CARD_POOL } from '@app/shared/cards';
 
 import { applyIntent, createInitialState, reduce, INTENTS } from '../index.js';

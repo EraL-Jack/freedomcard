@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { GameEvent, GameState, Intent, Result, Rejection } from '@app/shared';
+import type { GameEvent, GameState, Intent, Result, Rejection } from '@app/shared/types';
 
 import { isDeterministic, replay, type ReplayDeps } from './replay.js';
 

@@ -10,21 +10,8 @@
  * （Era 2026-10-19，`drawForPhase` 内接续 `advanceOnce`）。
  */
 
-import {
-  COST_INCOME_PER_TURN,
-  MAX_COST_CURVE,
-  RULE_ERRORS,
-  TURN_LIMIT,
-  TURN_LIMIT_ROUNDS,
-  type GameEvent,
-  type GameState,
-  type Intent,
-  type Phase,
-  type PlayerId,
-  type Result,
-  type Rejection,
-  type RuleContext,
-} from '@app/shared';
+import { COST_INCOME_PER_TURN, MAX_COST_CURVE, RULE_ERRORS, TURN_LIMIT, TURN_LIMIT_ROUNDS } from '@app/shared/constants';
+import type { GameEvent, GameState, Intent, Phase, PlayerId, Result, Rejection, RuleContext } from '@app/shared/types';
 
 import { ev, maxCostChanged, phaseChanged, takeFromDeck, turnChanged } from '../ops.js';
 import { reduce } from '../reducer.js';

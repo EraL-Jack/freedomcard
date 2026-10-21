@@ -11,16 +11,8 @@
  *  - 执法者（被霜冻时成长）—— 结算在 `primitives.freezeUnit`。
  */
 
-import {
-  RULE_ERRORS,
-  type GameEvent,
-  type GameState,
-  type PendingChoice,
-  type PlayerId,
-  type Result,
-  type Rejection,
-  type RuleContext,
-} from '@app/shared';
+import { RULE_ERRORS } from '@app/shared/constants';
+import type { GameEvent, GameState, PendingChoice, PlayerId, Result, Rejection, RuleContext } from '@app/shared/types';
 
 import { reject, strArg } from '../ops.js';
 

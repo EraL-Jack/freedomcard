@@ -9,15 +9,8 @@
  * 供同一张卡的后续步骤继续使用。
  */
 
-import {
-  BOARD_SLOTS,
-  type CardDef,
-  type CardInstance,
-  type GameEvent,
-  type GameState,
-  type PlayerId,
-  type RuleContext,
-} from '@app/shared';
+import { BOARD_SLOTS } from '@app/shared/constants';
+import type { CardDef, CardInstance, GameEvent, GameState, PlayerId, RuleContext } from '@app/shared/types';
 import { isBladeCard } from '@app/shared/cards';
 
 import { drawCards, ev, locate, moved, takeFromDeck } from '../ops.js';

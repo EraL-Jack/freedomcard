@@ -6,7 +6,7 @@
  * （`revealAction`），因此同样触发星轨 +1 与「展示时」效果（Era 2026-10-21）。
  */
 
-import type { GameEvent, GameState, PlayerId, RuleContext } from '@app/shared';
+import type { GameEvent, GameState, PlayerId, RuleContext } from '@app/shared/types';
 
 import { revealAction } from './effects/index.js';
 import { ev } from './ops.js';

@@ -21,6 +21,20 @@ const WAIT = Number(process.env.E2E_WAIT_MS ?? 15_000);
 export async function newClient(browser: Browser, nickname: string): Promise<Page> {
   const context = await browser.newContext();
   const page = await context.newPage();
+  /*
+   * 新手引导（P-03）默认标记为「已看」。
+   *
+   * 它是 `fixed inset-0` 的模态浮层，会挡住对战桌的每一次点击 —— 全量 E2E
+   * 都会死在第一步「点充能没反应」。引导本身的出现/消失由 `guide.spec.ts`
+   * 单独验（那条用例不走本函数，自己建 context）。
+   */
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem('fc.introSeen', '1');
+    } catch {
+      // 忽略：没有 localStorage 时引导会自己兜底成不弹（见 TableScreen）
+    }
+  });
   await page.goto('/');
   await expect(page.getByText('服务端已连接')).toBeVisible({ timeout: WAIT });
   await page.getByTestId('nickname').fill(nickname);

@@ -1,5 +1,5 @@
 import type { MatchFormat, PlayerId } from '@app/shared';
-import { AI_NICKNAME, AI_PLAYER_ID, RECONNECT_GRACE_MS, ROOM_ERRORS } from '@app/shared/constants';
+import { AI_NICKNAME, AI_PLAYER_ID, RECONNECT_GRACE_MS, ROOM_ERRORS, normalizeTurnTimeout } from '@app/shared/constants';
 import { BASIC_DECKS } from '@app/shared/default-decks';
 
 import { validateCommander, validateDeckList } from '../deck-pool.js';
@@ -109,12 +109,16 @@ export class RoomManager {
     format?: MatchFormat;
     /** 人机房（D-242）—— 自动占一个 AI 席位，容量强制为 2。 */
     solo?: boolean;
+    /** 回合时限（H18）；缺省 / 非白名单档位 = 默认 60s。 */
+    turnTimeoutMs?: number;
     /** 本局指挥官（D-184）；缺省 = 第一套基础卡组的指挥官。 */
     commander?: string;
     /** 自建主卡组（D-141）；缺省或空数组 = 用默认卡组。 */
     deck?: readonly string[];
   }): Outcome<JoinInfo> {
     if (input.capacity < 1) {
+      // 入站 schema 已经卡了 1–8；这里只挡「0 席」这种必然自相矛盾的输入。
+      // 真正的席位数不看这个值 —— 见下方 `capacity: 2`（T-07）。
       return { ok: false, error: ROOM_ERRORS.ROOM_NOT_FOUND, message: '房间容量必须 >= 1' };
     }
     const deckCheck = this.checkDeck(input.deck);
@@ -146,14 +150,23 @@ export class RoomManager {
       id: this.ids.id(),
       code,
       phase: 'lobby',
-      // 人机房强制 2 席（我 + 电脑）：规则只验证过 2 人，
-      // 让人机房开放 3~8 席等于造一个跑不通的房间。
-      capacity: input.solo ? 2 : input.capacity,
+      /*
+       * 房间容量恒为 2（T-07 / D-244）。
+       *
+       * 规则引擎只验证过「两名玩家」：前排、嘲讽、伤害裁定都是二人语义，
+       * 3~8 席建出来的房间能开局但没人验证过它会怎样。此前 UI 允许填 1–8，
+       * 等于把一个没验证过的形状暴露给玩家。现在无论客户端传几都收到 2 ——
+       * 不报错（老客户端 / 手误不该被 400 挡住），只是建出来仍是双人房。
+       * 人机房本来就强制 2 席，两条路径在这里统一。
+       */
+      capacity: 2,
       hostId: playerId,
-      seats: Array.from({ length: input.solo ? 2 : input.capacity }, (_, i) => (i === 0 ? seat : null)),
+      seats: [seat, null],
       createdAt: this.clock.now(),
       // D-132：赛制由建房方选择，缺省 BO1（老客户端不带该字段）。
       format: input.format ?? 'bo1',
+      // H18：回合时限按建房选择，非法档位回落默认（`normalizeTurnTimeout`）。
+      turnTimeoutMs: normalizeTurnTimeout(input.turnTimeoutMs),
       wins: { [playerId]: 0 },
       gameNo: 0,
       awaitingNext: false,
@@ -518,6 +531,8 @@ export class RoomManager {
       hostId: room.hostId,
       // D-132：赛制与系列赛比分 —— 客户端据此显示「第 2 局 1:0」与「开始下一局」。
       format: room.format,
+      // H18：倒计时长度是公开信息（双方都要知道这局每回合给多久）。
+      turnTimeoutMs: room.turnTimeoutMs,
       gameNo: room.gameNo,
       wins: { ...room.wins },
       awaitingNext: room.awaitingNext,

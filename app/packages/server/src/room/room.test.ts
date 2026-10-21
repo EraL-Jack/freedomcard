@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { DEFAULT_MAIN_DECK } from '../deck-pool.js';
 import { BASIC_DECKS } from '@app/shared/default-decks';
+import { TURN_TIMEOUT_MS } from '@app/shared/constants';
 
 import { RoomManager } from './room.js';
 import type { Clock, IdGen } from './types.js';
@@ -472,11 +473,27 @@ describe('RoomManager · 人机房', () => {
     expect(manager.count()).toBe(0);
   });
 
-  it('非人机房的建房行为不受影响（capacity 照传、没有 AI 席位）', () => {
+  it('非人机房的建房行为不受影响（没有 AI 席位；容量统一收到 2，T-07）', () => {
     const { manager } = harness();
     const r = manager.create({ nickname: 'Era', capacity: 3 });
     if (!r.ok) throw new Error('create failed');
-    expect(r.value.room.capacity).toBe(3);
+    // T-07 / D-244：规则只验证过 2 人，容量不再照传 —— 传 3 也建出双人房。
+    expect(r.value.room.capacity).toBe(2);
+    expect(r.value.room.seats).toHaveLength(2);
     expect(r.value.room.seats.every((s) => s === null || s.playerId !== 'ai')).toBe(true);
+  });
+
+  it('回合时限按建房选择记录，非法档位回落默认（H18）', () => {
+    const { manager } = harness();
+    const picked = manager.create({ nickname: 'A', capacity: 2, turnTimeoutMs: 180_000 });
+    if (!picked.ok) throw new Error('create failed');
+    expect(picked.value.room.turnTimeoutMs).toBe(180_000);
+    // 视图里要能看到 —— 对手也得知道这局每回合给多久
+    expect(manager.publicView(picked.value.room).turnTimeoutMs).toBe(180_000);
+
+    // 未在白名单里的值不报错、回落默认（老客户端 / 手误不该被 400 挡住）
+    const fallback = manager.create({ nickname: 'B', capacity: 2, turnTimeoutMs: 120_000 });
+    if (!fallback.ok) throw new Error('create failed');
+    expect(fallback.value.room.turnTimeoutMs).toBe(TURN_TIMEOUT_MS);
   });
 });

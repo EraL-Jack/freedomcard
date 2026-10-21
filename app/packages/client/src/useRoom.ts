@@ -1,20 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import * as core from '@app/core';
-import {
-  ROOM_ERROR_TEXT,
-  SOCKET_EVENTS,
-  type CardInstance,
-  type GameEvent,
-  type GameState,
-  type Intent,
-  type MatchFormat,
-  type PlayerId,
-  type RoomErrorCode,
-} from '@app/shared';
+import { ROOM_ERROR_TEXT, SOCKET_EVENTS } from '@app/shared/constants';
+import type { RoomErrorCode } from '@app/shared/constants';
+import type { CardInstance, GameEvent, GameState, Intent, MatchFormat, PlayerId } from '@app/shared/types';
 
 import { describeEvent } from './log.js';
 import { PHASE_LABEL } from './labels.js';
+import { sfx } from './sfx.js';
 import { socket } from './socket.js';
 import type { Ack, RoomView } from './types.js';
 
@@ -120,20 +113,24 @@ export interface RoomSession {
   revealed: Record<string, { uid: string; defId: string }[]>;
   notice: string;
   /**
-   * 建房 —— `format` 是赛制（BO1/BO3，D-132）。
+   * 建房 —— 参数用**对象**而不是位置参数。
    *
-   * `deck` + `commander` 是**一整套**（D-141 / D-184）：30 个 `defId` 与 1 位指挥官。
-   * 没有阵营这一层（ADR-0042），客户端总是发确定的一套，服务端只在缺省时兜底。
+   * 位置参数在加入「人机房」「回合时限」两项后已经到第 7 个，调用处只剩一串
+   * `create(name, 2, format, deck, cmdr, true, 60000)`，「哪个 true 是什么」全靠数位；
+   * 对象参数让调用点自解释，也给以后加字段留了余地。
    */
-  create(
-    nickname: string,
-    capacity: number,
-    format?: MatchFormat,
-    deck?: string[],
-    commander?: string,
+  create(opts: {
+    nickname: string;
+    capacity: number;
+    format?: MatchFormat;
+    /** 30 张主卡组；空 = 服务端默认卡组。 */
+    deck?: string[];
+    commander?: string;
     /** 人机房（D-242）：服务端自动占一个 AI 席位，`capacity` 被强制为 2。 */
-    solo?: boolean,
-  ): void;
+    solo?: boolean;
+    /** 回合时限（H18）：30 / 60 / 180 / 999 秒，缺省用服务端默认。 */
+    turnTimeoutMs?: number;
+  }): void;
   join(code: string, nickname: string, deck?: string[], commander?: string): void;
   /** 准备页换卡组（D-184）—— 未开局时可用；卡组与指挥官一起换。 */
   setDeck(deck: string[], commander?: string): void;
@@ -364,6 +361,18 @@ export function useRoom(): RoomSession {
 
         if (e.type === 'combat:resolved') combatTick = e.at;
 
+        /*
+         * 音效（P-06）—— 三条，与横幅同一时刻发声，听觉和视觉才对得上。
+         *
+         * 为什么挂在这里而不是 UI 里：这是事件流的唯一消费点，
+         * 重连回放（快照之后的增量）也不会漏掉；放在组件的 useEffect 里
+         * 反而会因为 fx 合并而少响几下。
+         */
+        if (e.type === 'commander:damaged') sfx.hit(Number(e.payload?.['amount'] ?? 1));
+        else if (e.type === 'combat:resolved') sfx.hit(1);
+        else if (e.type === 'draw:completed') sfx.draw();
+        else if (e.type === 'game:ended') sfx.end(e.payload?.['winner'] === meRef.current);
+
         // 展示逐张「揭牌」的节奏：卡进展示区后停一下，让玩家看清这一张。
         if (e.type === 'card:moved' && String(e.payload?.['to'] ?? '') === 'reveal') {
           revealShownAt ??= Date.now();
@@ -511,14 +520,16 @@ export function useRoom(): RoomSession {
   };
 
   const create = useCallback(
-    (
-      nickname: string,
-      capacity: number,
-      format: MatchFormat = 'bo1',
-      deck?: string[],
-      commander?: string,
-      solo?: boolean,
-    ): void => {
+    (opts: {
+      nickname: string;
+      capacity: number;
+      format?: MatchFormat;
+      deck?: string[];
+      commander?: string;
+      solo?: boolean;
+      turnTimeoutMs?: number;
+    }): void => {
+      const { nickname, capacity, format = 'bo1', deck, commander, solo, turnTimeoutMs } = opts;
       localStorage.setItem(LS.nickname, nickname);
       socket.emit(
         SOCKET_EVENTS.roomCreate,
@@ -528,6 +539,8 @@ export function useRoom(): RoomSession {
           format,
           // D-242：人机房 —— 服务端会立刻坐入 AI 并把容量收到 2。
           ...(solo ? { solo: true } : {}),
+          // H18：不传 = 服务端默认 60s（与老客户端同一路径）。
+          ...(turnTimeoutMs ? { turnTimeoutMs } : {}),
           // D-141 / D-184：只有正好 30 张才会传；指挥官与它成对。
           ...(deck && deck.length > 0 ? { deck } : {}),
           ...(commander ? { commander } : {}),

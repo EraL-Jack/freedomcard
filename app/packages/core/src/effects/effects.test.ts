@@ -7,15 +7,8 @@
 
 import { describe, expect, it } from 'vitest';
 
-import {
-  RULE_ERRORS,
-  type CardInstance,
-  type GameState,
-  type Intent,
-  type Phase,
-  type RuleContext,
-  type Zone,
-} from '@app/shared';
+import { RULE_ERRORS } from '@app/shared/constants';
+import type { CardInstance, GameState, Intent, Phase, RuleContext, Zone } from '@app/shared/types';
 import { CARD_POOL } from '@app/shared/cards';
 
 import { applyIntent, createInitialState, reduce, replay, stateHash, INTENTS } from '../index.js';

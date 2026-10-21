@@ -14,19 +14,8 @@
  * 若按开局时刻算，后攻方（第 2 回合才轮到）永远落在窗外，放开等于没放。
  */
 
-import {
-  INITIAL_HAND,
-  MULLIGAN_WINDOW_MS,
-  SECOND_PLAYER_HAND,
-  RULE_ERRORS,
-  type CardInstance,
-  type GameEvent,
-  type GameState,
-  type Intent,
-  type Result,
-  type Rejection,
-  type RuleContext,
-} from '@app/shared';
+import { INITIAL_HAND, MULLIGAN_WINDOW_MS, SECOND_PLAYER_HAND, RULE_ERRORS } from '@app/shared/constants';
+import type { CardInstance, GameEvent, GameState, Intent, Result, Rejection, RuleContext } from '@app/shared/types';
 
 import {
   baseGuard,

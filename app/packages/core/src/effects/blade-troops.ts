@@ -8,11 +8,7 @@
  * 结算挂在 `effects/index.ts` 的 `bladeSummonTriggerEvents`（与军师同一时点）。
  */
 
-import {
-  type CardDef,
-  type GameState,
-  type PlayerId,
-} from '@app/shared';
+import type { CardDef, GameState, PlayerId } from '@app/shared/types';
 import { isBladeCard } from '@app/shared/cards';
 
 import { ev, reject, strArg } from '../ops.js';

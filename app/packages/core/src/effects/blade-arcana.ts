@@ -8,11 +8,7 @@
  * 保证**所有**除外路径都触发（骑士 / 老兵 / 凤凰 / 焚典 / 统领Ⅱ）。
  */
 
-import {
-  type GameEvent,
-  type GameState,
-  type PlayerId,
-} from '@app/shared';
+import type { GameEvent, GameState, PlayerId } from '@app/shared/types';
 import { isBladeCard } from '@app/shared/cards';
 
 import { ev, moved, reject, strArg } from '../ops.js';

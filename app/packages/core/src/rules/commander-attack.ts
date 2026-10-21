@@ -19,16 +19,8 @@
  * **再**结算伤害 —— 顺序保证「展示时：本回合指挥官伤害 +1」能吃到这一次攻击。
  */
 
-import {
-  COMMANDER_ATTACK_DAMAGE,
-  RULE_ERRORS,
-  type GameEvent,
-  type GameState,
-  type Intent,
-  type Result,
-  type Rejection,
-  type RuleContext,
-} from '@app/shared';
+import { COMMANDER_ATTACK_DAMAGE, RULE_ERRORS } from '@app/shared/constants';
+import type { GameEvent, GameState, Intent, Result, Rejection, RuleContext } from '@app/shared/types';
 
 import { commanderDamageEvents } from '../combat.js';
 import { EFFECTS } from '../effects/index.js';

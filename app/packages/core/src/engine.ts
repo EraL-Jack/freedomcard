@@ -1,4 +1,5 @@
-import { RULE_ERRORS, type GameEvent, type GameState, type Intent, type Result, type Rejection, type RuleContext } from '@app/shared';
+import { RULE_ERRORS } from '@app/shared/constants';
+import type { GameEvent, GameState, Intent, Result, Rejection, RuleContext } from '@app/shared/types';
 
 import { get } from './registry.js';
 import './rules/index.js';

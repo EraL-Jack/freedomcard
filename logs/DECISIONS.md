@@ -1086,3 +1086,48 @@ E2E 里先后手由掷骰决定、起手牌由洗牌决定，两者都是随机�
   `server/src/{index,room/room,room/room.test}.ts`、`client/src/{HomeScreen,useRoom}.tsx`、
   `client/e2e/solo.spec.ts`。
 - 破坏性：**否** —— `solo` 是可选字段（老客户端不带即纯双人房）；其余全是新增。
+
+## ADR-0045 · 回合时限是「房间级事实」，不是全局常量（D-244 / H18）
+
+- 背景：`TURN_TIMEOUT_MS = 30s` 从 ADR-0010 起就是一个全局常量。Era 2026-10-21 要求
+  「时长建议在建房能选择，30-60-180-999」—— 于是「多久算超时」不再有唯一答案。
+- 候选：
+
+  | 方案 | 做法 | 否决理由 |
+  | --- | --- | --- |
+  | 全局配置（env） | 改 `TURN_TIMEOUT_MS` 或加环境变量 | 一间服务器只有一个值，玩家选不了；且 env 已被测试占用 |
+  | 单局属性（`GameState`） | 写进对局状态 | 它是「这间房怎么打」的约定，跨局不变；进状态会让 BO3 第 2 局无端多一个字段差异 |
+  | **房间属性**（采纳） | `Room.turnTimeoutMs` + `TurnTimer.setTimeoutMs` | — |
+
+- 决策：
+  1. **`Room.turnTimeoutMs` 是权威来源**，随 `publicView` 下发给双方（对手也要知道这局给多久）。
+  2. **协议只认白名单**（`TURN_TIMEOUT_OPTIONS`），非法值**回落默认而不是 400** ——
+     拒绝一个手误的 `120000` 等于让人建不了房，代价远大于「档位不自由」。
+  3. **`TurnTimer.setTimeoutMs` 在计时中调用直接抛错**。计时中改时限只有两种结局：
+     当前回合截止时刻莫名跳动，或只对下一回合生效（同一局前后规则不一致）。
+     建房一定发生在 `arm()` 之前，所以拒绝违规用法是安全的。
+  4. **优先级：环境变量 > 房间档位 > 默认值**。环境变量唯一的用途是 E2E 放宽
+     （播放队列 + 慢速渲染会吃掉真实秒数），生产不得设置。
+- 影响：`shared/{constants,schema,index}.ts`、`server/src/{index,room/room,room/types,room/turn-timer}`、
+  `client/src/{HomeScreen,TableScreen,useRoom,types}`、`client/e2e/{form,room}.spec.ts`。
+- 破坏性：否（字段可选；默认值 30s → 60s 是行为变化，已记 CHANGELOG 与 `docs/09` H18）。
+
+## ADR-0046 · shared 拆成「类型 / 常量 / 协议」三入口，首屏不碰 zod（D-250 / T-03）
+
+- 背景：`@app/shared` 的根 `index.ts` re-export 了 `schema.ts`，于是**任何**从根导入
+  （哪怕只为一个类型）都会把 zod 拖进依赖图。client 自己早就改走 `@app/shared/constants`，
+  但 `core`（client 的直接依赖）有 43 处从根导入 —— 首屏一直在为一份「服务端才用」的校验库付费。
+- 关键事实：`shared/src/types.ts` 是**纯类型文件**（零 import、零运行时导出），
+  所以 `import type ... from '@app/shared/types'` 编译后完全消失，是零成本的正确落点。
+- 决策：
+  1. `shared/package.json` 增加 `./types` 子路径出口。
+  2. `core/src/**` 与 `client/src/**` 的导入按符号分派：**类型 → `/types`、常量 → `/constants`、
+     卡池 → `/cards`**。服务端继续用根导入（它本来就要 schema）。
+  3. 目录规约：**新增符号先想清楚它属于哪一类** ——
+     - 只是类型 → `types.ts`；
+     - 与玩法无关的常量 / 纯函数 → `constants.ts`；
+     - 需要 zod 的入站校验 → `schema.ts`（只有 server 可以运行时 `parse`）。
+     往 `types.ts` 塞运行时值会把这条防线打穿。
+- 结果：生产构建 gzip **144.53 → 121.16 kB（−23.37 kB）**，同期还净增了引导与音效代码。
+- 影响：`shared/{package.json,src/index.ts}`、`core/src/**`、`client/src/**`。
+- 破坏性：否（纯模块边界）。

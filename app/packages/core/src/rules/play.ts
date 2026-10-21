@@ -13,17 +13,8 @@
  *  - 法术 → `spellEntryEvents`，结算后置入弃牌区（设置法术留在法术区）。
  */
 
-import {
-  BOARD_SLOTS,
-  RULE_ERRORS,
-  type GameEvent,
-  type GameState,
-  type Intent,
-  type Result,
-  type Rejection,
-  type RuleContext,
-  type Zone,
-} from '@app/shared';
+import { BOARD_SLOTS, RULE_ERRORS } from '@app/shared/constants';
+import type { GameEvent, GameState, Intent, Result, Rejection, RuleContext, Zone } from '@app/shared/types';
 
 import { baseGuard, costToPay, ev, firstRejection, locate, moved, playerOf, strArg } from '../ops.js';
 import { reduce } from '../reducer.js';

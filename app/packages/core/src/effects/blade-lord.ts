@@ -18,14 +18,8 @@
  *  - 9 档「攻击后重置」**一回合一次**，生效一次即消耗（H23，Era 2026-10-19 拍板）。
  */
 
-import {
-  BOARD_SLOTS,
-  RULE_ERRORS,
-  type GameEvent,
-  type GameState,
-  type PendingChoice,
-  type RuleContext,
-} from '@app/shared';
+import { BOARD_SLOTS, RULE_ERRORS } from '@app/shared/constants';
+import type { GameEvent, GameState, PendingChoice, RuleContext } from '@app/shared/types';
 
 import { baseGuard, ev, firstRejection, locate, moved, playerOf, reject, strArg } from '../ops.js';
 

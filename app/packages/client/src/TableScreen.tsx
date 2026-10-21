@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 
 import * as core from '@app/core';
-import { MAIN_DECK_SIZE, type CardInstance, type GameState, type PlayerId, type PlayerState, type Zone } from '@app/shared';
+import { MAIN_DECK_SIZE } from '@app/shared/constants';
+import type { CardInstance, GameState, PlayerId, PlayerState, Zone } from '@app/shared/types';
 
 import { ACTIVATABLE_EFFECTS, CARD_POOL } from '@app/shared/cards';
-import { MULLIGAN_WINDOW_MS, RECONNECT_GRACE_MS } from '@app/shared/constants';
+import { RECONNECT_GRACE_MS, TURN_TIMEOUT_MS } from '@app/shared/constants';
 
 import CardTile from './CardTile.js';
+import IntroGuide, { INTRO_SEEN_KEY } from './IntroGuide.js';
 import {
   listSelectionOptions,
   loadActiveDeckId,
@@ -14,9 +16,11 @@ import {
   selectionForPlay,
 } from './decks.js';
 import { REPLAY_VIEW_ENABLED } from './features.js';
-import { KEYWORD_NOTE, PHASE_LABEL } from './labels.js';
+import { KEYWORD_NOTE, PHASE_LABEL, endReasonText, turnTimeoutLabel } from './labels.js';
+import { actionability, type Actionability } from './selectors.js';
 import type { RoomView } from './types.js';
 import type { Fx, RoomSession } from './useRoom.js';
+import { isSfxMuted, setSfxMuted } from './sfx.js';
 
 /**
  * 对战桌 —— B2 布局（我方视角，自上而下六排）+ B2-5 右侧日志列。
@@ -423,6 +427,11 @@ function GameOverPanel(props: {
     : 0;
   const isHost = room?.hostId === props.me;
   const nextGameNo = (room?.gameNo ?? 0) + 1;
+  /**
+   * 成因行（P-02 / D-238）—— 同一句「败北」有四种成因（被打死 / 认输 / 对手掉线 / 40 轮），
+   * 不给成因等于让玩家靠自己回忆。`endReason` 已经在状态里，这里只是翻译成视角文案。
+   */
+  const reasonText = endReasonText(props.state.endReason, draw, (seriesWon ?? won) === true);
 
   const title = awaitingNext
     ? draw
@@ -447,10 +456,14 @@ function GameOverPanel(props: {
       <p className="text-sm text-slate-400" data-testid="series-score">
         {room && room.format === 'bo3'
           ? `BO3 · 第 ${Math.max(1, room.gameNo)} 局结束 · 比分 我 ${myWins} : ${foeWins} 对手`
-          : draw
-            ? '40 轮未分胜负'
-            : '对局结束'}
+          : '对局结束'}
       </p>
+      {/* 成因行（P-02）：说清「怎么输的 / 怎么赢的」，避免同一句「败北」有四种含义 */}
+      {reasonText ? (
+        <p className="text-xs text-slate-500" data-testid="end-reason">
+          {reasonText}
+        </p>
+      ) : null}
       {awaitingNext ? (
         isHost ? (
           <button
@@ -692,6 +705,11 @@ function WaitingRoom({ session }: { session: RoomSession }): React.JSX.Element {
       <p className="text-xs text-slate-400">
         {room?.seats.filter(Boolean).length ?? 0}/{room?.capacity ?? 0} 人 · {room?.phase}
       </p>
+      {/* H18：赛制与回合时限是这间房的约定，开局前就要看得见（对手也要知道） */}
+      <p className="text-xs text-slate-400" data-testid="room-rules">
+        {room?.format === 'bo3' ? 'BO3 三局两胜' : 'BO1 一局定胜负'} · 每回合{' '}
+        {turnTimeoutLabel(room?.turnTimeoutMs ?? TURN_TIMEOUT_MS)}
+      </p>
       <ul className="space-y-1 text-sm" data-testid="seats">
         {room?.seats.map((s, i) => (
           <li key={i} className={s ? 'text-slate-200' : 'text-slate-500'}>
@@ -799,6 +817,29 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   const [now, setNow] = useState(() => Date.now());
 
   /**
+   * 新手引导（P-03）—— 只在**第一次进入对战桌**时弹，看过即写 localStorage。
+   *
+   * 初始化读 localStorage 是安全的（与 HomeScreen 的昵称同一做法）；
+   * E2E 通过 `addInitScript` 预置标记，避免浮层挡住每一步点击。
+   */
+  const [showIntro, setShowIntro] = useState(() => {
+    try {
+      return localStorage.getItem(INTRO_SEEN_KEY) !== '1';
+    } catch {
+      return false;
+    }
+  });
+  /** 音效开关（P-06）：默认开，选择存本机。 */
+  const [sfxOn, setSfxOn] = useState(() => !isSfxMuted());
+  /**
+   * 移动端日志抽屉（T-02）。
+   *
+   * 390px 竖屏下原来的右侧日志列是 `hidden sm:flex`，**整列消失** ——
+   * 战报在手机上根本看不到。桌面(≥640px)仍是常驻列，窄屏改为按钮展开的抽屉。
+   */
+  const [logOpen, setLogOpen] = useState(false);
+
+  /**
    * 拖拽状态（B3-1 / Era 2026-10-18）。
    *
    * ⚠️ **所有 hook 必须放在 early return 之前** —— 本组件有「等待房间」的提前返回，
@@ -823,27 +864,15 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
 
   /**
    * 可操作性判定（Era 2026-10-18：不可操作的不给高亮/提示，尽量置灰）。
-   * 全部是**状态直读**（阶段 / 回合归属 / 休眠都写在快照里），不是本地规则推算，
-   * 与服务端裁决不可能出现分歧 —— 阶段守卫与 `charge.ts` / `play.ts` / `attack.ts` 一致。
+   *
+   * T-04：判据已抽到 `selectors.ts`（纯函数、可单测），组件里只留取值 ——
+   * 原来这几条散在组件体内，3849 行零单测，「什么阶段能点」改错了没人拦得住。
+   * 仍是**状态直读**（阶段 / 回合归属 / 休眠都写在快照里），不是本地规则推算。
    */
-  const phaseNow = state && state.started ? state.phase : null;
-  const myTurnNow = !!state && !!me && state.seats[state.activeSeat] === me;
-  const canPickHand = myTurnNow && (phaseNow === 'charge' || phaseNow === 'main');
-  const canBattle = myTurnNow && phaseNow === 'battle';
-  /**
-   * 起手换牌窗口（A8-3/A10-1 + X-17）：己方第一个充能阶段（先攻方第 1 回合、
-   * 后攻方第 2 回合）、我方回合。「第一次」由 `chargeCount === 1` 判定（见 canMulligan）。
-   */
-  const mulliganWindow = myTurnNow && phaseNow === 'charge';
-  /**
-   * 换牌时间窗（Era 2026-10-19）：从「各自首次进入己方充能阶段」起算
-   * MULLIGAN_WINDOW_MS 内可换，过后按钮隐藏。
-   * ⚠️ 客户端时钟与服务端可能不同步，这里只做**展示**；权威判定在服务端 mulligan.ts。
-   */
-  const myFirstChargeAt = me && state ? (state.players[me]?.firstChargeAt ?? null) : null;
-  const mulliganTimeOpen =
-    !state || myFirstChargeAt === null || now - myFirstChargeAt <= MULLIGAN_WINDOW_MS;
-  const mulliganOpen = mulliganWindow && mulliganTimeOpen;
+  const act = state && me ? actionability(state, me, now) : null;
+  const canPickHand = act?.canPickHand ?? false;
+  const canBattle = act?.canBattle ?? false;
+  const mulliganOpen = act?.mulliganOpen ?? false;
 
   // 离开可操作阶段时清掉残留选中 —— 否则置灰后取消不了，卡在「看着被选中却动不了」。
   useEffect(() => {
@@ -897,40 +926,17 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   const foeOffline = foeSeat !== null && foeSeat !== undefined && !foeSeat.connected;
   const graceSeconds = Math.round(RECONNECT_GRACE_MS / 1000);
 
-  const myTurn = state.seats[state.activeSeat] === me;
-  /**
-   * 我方有挂起的待定选择 —— 此刻引擎只放行「回答选择」和「认输」，其余 Intent 一律被拒。
-   * 用它把底部操作区里**必然被拒**的按钮藏掉（Era 2026-10-19：不可操作的按钮不展示）。
+  /*
+   * early return 之后 state 与 me 都非空，`act` 必然算得出来 —— 这里断言一次，
+   * 避免把「不可能为 null」这件事传染给下面十几个使用点。
    */
-  const choiceOpen = state.pendingChoice !== null && state.pendingChoice.playerId === me;
-  /** 换牌可用 = 窗口内（己方首个充能阶段 + 时间窗）且本局还没换过（mulliganDone 每人一次，A8-3）。 */
-  const canMulligan = mulliganOpen && mine.chargeCount === 1 && !mine.mulliganDone;
-  /** 抽牌阶段且未抽：我方卡组区变为「点击抽牌」发光动作（Era 2026-10-18 手动抽牌）。 */
-  const canDraw = myTurn && state.phase === 'draw' && !state.drawnThisPhase && !choiceOpen;
-  /**
-   * 指挥官攻击（docs/16 §6.1）：战斗阶段、本回合未攻击过、非先攻方第一回合。
-   * 不可操作时不展示按钮（Era 2026-10-19）。
-   *
-   * `!choiceOpen` 与 D-152 同一口径：待定选择挂起时引擎只放行「回答 + 认输」，
-   * 攻击必然被拒 —— 留着就是「点了没反应」。
-   */
-  const canCommanderAttack =
-    myTurn &&
-    state.phase === 'battle' &&
-    !choiceOpen &&
-    !mine.commanderAttacked &&
-    !(state.turn === 1 && state.activeSeat === 0) &&
-    mine.zones.commander.length > 0;
-  /**
-   * 星轨观测者「攻击时【1】」（docs/17 §3）：付 1 费先展示再结算伤害。
-   * 只有「指挥官是星轨观测者 + 费用区有卡 + 本回合额度够」时才给这个按钮 ——
-   * 不可操作不展示（Era 2026-10-19）。
-   */
-  const canRevealAttack =
-    canCommanderAttack &&
-    mine.zones.commander[0]?.defId === 'starWatcher' &&
-    mine.zones.cost.length >= 1 &&
-    mine.usedCostThisTurn + 1 <= mine.maxCost;
+  const a = act as Actionability;
+  const myTurn = a.myTurn;
+  const choiceOpen = a.choiceOpen;
+  const canMulligan = a.canMulligan;
+  const canDraw = a.canDraw;
+  const canCommanderAttack = a.canCommanderAttack;
+  const canRevealAttack = a.canRevealAttack;
 
   /**
    * 本方的成长资源（D-229 / D-230）：炎刃看除外区「炎刃」数、霜律看霜痕、星轨看星轨层数。
@@ -1095,6 +1101,18 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
       </nav>
       {/* 卡牌详情浮层 —— 信息查看（任何阶段可用，不受回合/阶段置灰约束）。
           B3-2 的「不要弹窗」约束的是**出牌确认**；详情查看按 docs/11 X-13 默认建议用大卡浮层。 */}
+      {showIntro ? (
+        <IntroGuide
+          onDone={() => {
+            try {
+              localStorage.setItem(INTRO_SEEN_KEY, '1');
+            } catch {
+              // 隐私模式下写不进去 —— 本次会话仍然关掉，下次再弹一次无伤大雅
+            }
+            setShowIntro(false);
+          }}
+        />
+      ) : null}
       {detailCard ? (
         <CardDetail
           card={detailCard}
@@ -1430,11 +1448,24 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
           </section>
         </div>
 
-        {/* 右侧一列：日志框 + 对话框分开展示（B2-5） */}
-        <aside className="hidden w-40 shrink-0 flex-col gap-1 sm:flex md:w-56">
+        {/*
+          右侧一列：日志框 + 对话框分开展示（B2-5）。
+
+          T-02：窄屏（<640px）不再整列隐藏 —— 原来 `hidden sm:flex` 让 390px 竖屏下
+          战报彻底消失，玩家看不到「谁打了谁」。现在窄屏改为「日志」按钮展开的浮层抽屉
+          （`fixed inset-x-2 bottom-2 top-16`），桌面仍是常驻右列。
+        */}
+        <aside
+          className={`${
+            logOpen
+              ? 'fixed inset-x-2 top-16 bottom-2 z-[65] flex w-auto'
+              : 'hidden'
+          } flex-col gap-1 sm:static sm:z-auto sm:flex sm:w-40 sm:shrink-0 md:w-56`}
+          data-testid="log-panel"
+        >
           <div
             ref={logRef}
-            className="min-h-0 flex-1 overflow-y-auto rounded border border-slate-700 bg-slate-900/60 p-1 text-[11px]"
+            className="min-h-0 flex-1 overflow-y-auto rounded border border-slate-700 bg-slate-900/95 p-1 text-[11px] sm:bg-slate-900/60"
             data-testid="log"
           >
             {log.map((l) => (
@@ -1446,6 +1477,15 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
           <div className="h-20 rounded border border-slate-700 bg-slate-900/60 p-1 text-[11px] text-slate-500">
             对话框（占位）
           </div>
+          {/* 抽屉的关闭入口只在窄屏出现（桌面没有抽屉这回事） */}
+          <button
+            type="button"
+            className="rounded bg-slate-700 py-2 text-xs sm:hidden"
+            onClick={() => setLogOpen(false)}
+            data-testid="log-close"
+          >
+            收起日志
+          </button>
         </aside>
       </div>
 
@@ -1561,6 +1601,28 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
           data-testid="leave"
         >
           离开
+        </button>
+        {/* 日志抽屉入口（T-02）—— 只在窄屏需要；桌面日志列常驻 */}
+        <button
+          type="button"
+          className="rounded bg-slate-800 px-3 py-2 text-xs sm:hidden"
+          onClick={() => setLogOpen((v) => !v)}
+          data-testid="log-toggle"
+        >
+          {logOpen ? '关闭日志' : '日志'}
+        </button>
+        {/* 音效开关（P-06）—— 选择存本机；静音只影响本端，不影响对手 */}
+        <button
+          type="button"
+          className={`rounded px-3 py-2 text-xs sm:text-sm ${sfxOn ? 'bg-slate-800' : 'bg-slate-900 text-slate-500'}`}
+          onClick={() => {
+            const next = !sfxOn;
+            setSfxOn(next);
+            setSfxMuted(!next);
+          }}
+          data-testid="sfx-toggle"
+        >
+          音效：{sfxOn ? '开' : '关'}
         </button>
       </footer>
 

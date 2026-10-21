@@ -42,10 +42,40 @@ export const SOCKET_EVENTS = {
 /**
  * 传输层超时常量（ADR-0010）。**禁止混用**：
  * - `RECONNECT_GRACE_MS`：断线后席位保留时长
- * - `TURN_TIMEOUT_MS`：回合内无操作，服务端自动结束回合的时长
+ * - `TURN_TIMEOUT_MS`：回合内无操作，服务端自动结束回合的**默认**时长
+ *
+ * ⚠️ 两者当前数值相同（都是 60s）纯属巧合，**语义完全不同**：
+ * 一个是「人不在位」的宽限，一个是「人不在动」的兜底。改任何一个都不该动另一个。
+ *
+ * H18（Era 2026-10-21）：「时长建议在建房能选择，30-60-180-999」——
+ * 于是这条常量降级为**默认值**，真正生效的时限按房间（`Room.turnTimeoutMs`）取。
  */
 export const RECONNECT_GRACE_MS = 60_000;
-export const TURN_TIMEOUT_MS = 30_000;
+
+/** 建房里可选的回合时限（秒 → 毫秒）。Era 2026-10-21 定稿的四个档位。 */
+export const TURN_TIMEOUT_OPTIONS = [30_000, 60_000, 180_000, 999_000] as const;
+
+/**
+ * 默认回合时限 —— 取 **60s**。
+ *
+ * 为什么不是 30s：8 血节奏下一个回合要「充能 → 推阶段 → 出牌 → 攻击」四步，
+ * 30s 实测常被自动结束回合（`docs/21` P-08 / H18 的证据）。
+ * 为什么不是 180s：默认值该照顾「正常打一局」，长时限留给主动选的人。
+ */
+export const TURN_TIMEOUT_MS = 60_000;
+
+/**
+ * 归一房间回合时限（H18）—— 只认白名单，其余一律回落默认值。
+ *
+ * 为什么**不**在 schema 里直接拒绝非法值：老客户端 / 手误传 120000 的人
+ * 会拿到一个「参数不合法」的 400，而他其实只是想建房。
+ * 回落默认值不会让任何人卡住，且禁止了「任意毫秒数」这种未定义档位。
+ */
+export function normalizeTurnTimeout(ms: unknown): number {
+  return typeof ms === 'number' && (TURN_TIMEOUT_OPTIONS as readonly number[]).includes(ms)
+    ? ms
+    : TURN_TIMEOUT_MS;
+}
 
 /**
  * 人机对战的 AI 席位（D-242，Era 2026-10-21）。
