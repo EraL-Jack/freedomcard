@@ -96,6 +96,10 @@ pnpm dev          # 同时起 server(3000) 与 client(5173)
 2. **选费用**：费用区比「该付的张数」多时，弹面板让你挑用哪几张付（点击切换，选满才能确认）；
    刚好够付则不弹，直接结算。
 
+**拖拽出牌**（D-272 / issue #108）：法术与设置法术**没有位置**，所以拖到**我方法术区**就是直接出牌
+（等价于点「出牌」）；万一拖到随从格，也按「无位置出牌」处理，不会出现「只有随从需要指定位置」。
+拖着随从时随从区高亮（充能阶段则是费用区），拖着法术时法术区高亮 —— 高亮跟着牌型走。
+
 行动条上方常显一句「现在该做什么」的提示（`data-testid="phase-hint"`）：
 充能阶段是**琥珀底色**、换牌阶段是紫色 —— 这两个阶段最容易迷路。
 
@@ -154,7 +158,7 @@ Windows 需放行 5173 / 3000 端口的入站规则（网络配置文件为 Publ
 | `pnpm dev` | 并行起服务端与客户端 |
 | `pnpm typecheck` | 全量 `tsc --noEmit` |
 | `pnpm lint` | ESLint（flat config） |
-| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层 + `client` 纯逻辑，2026-10-21 时点 **440 passed**（core 237 + server 153 + client 50） |
+| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层 + `client` 纯逻辑，2026-10-21 时点 **447 passed**（core 237 + server 153 + client 57） |
 | `pnpm --filter @app/client run test:coverage` | client 覆盖率（v8）。目前只覆盖 `selectors` / `labels` / `log` 三个纯逻辑模块；组件层由 E2E 兜 |
 | `pnpm build` | 构建客户端到 `packages/client/dist` |
 | `pnpm --filter @app/client test:e2e` | 端到端（Playwright）：**50 条** —— 房间流程 / 视口溢出 / 联机开局 / 回合操作 / 攻击与指挥官伤害 / 卡组编辑 / 人机对战 / 人机房换牌阶段与倒计时 / 回合边界的指引不变量 / 堆叠区浮窗 / 新手引导 / 390px 日志抽屉 / 断线与点击反馈 |
