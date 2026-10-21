@@ -150,7 +150,7 @@ Windows 需放行 5173 / 3000 端口的入站规则（网络配置文件为 Publ
 | `pnpm dev` | 并行起服务端与客户端 |
 | `pnpm typecheck` | 全量 `tsc --noEmit` |
 | `pnpm lint` | ESLint（flat config） |
-| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层 + `client` 纯逻辑，2026-10-21 时点 **425 passed**（core 231 + server 150 + client 44） |
+| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层 + `client` 纯逻辑，2026-10-21 时点 **432 passed**（core 235 + server 153 + client 44） |
 | `pnpm --filter @app/client run test:coverage` | client 覆盖率（v8）。目前只覆盖 `selectors` / `labels` / `log` 三个纯逻辑模块；组件层由 E2E 兜 |
 | `pnpm build` | 构建客户端到 `packages/client/dist` |
 | `pnpm --filter @app/client test:e2e` | 端到端（Playwright）：**50 条** —— 房间流程 / 视口溢出 / 联机开局 / 回合操作 / 攻击与指挥官伤害 / 卡组编辑 / 人机对战 / 人机房换牌阶段与倒计时 / 回合边界的指引不变量 / 堆叠区浮窗 / 新手引导 / 390px 日志抽屉 / 断线与点击反馈 |
@@ -247,6 +247,12 @@ pnpm --filter @app/server run replay:verify replays/<file>.json --events   # 连
 ⚠️ **时间源取记录里每步事件的 `at`，不能用「起点 + 步长」推算**。
 `startRule` 会把 `ctx.now` 写进 `state.startedAt`，而原局用的是真实时钟；
 用固定步长重放，第一步哈希就会对不上（实测踩过）。
+
+⚠️ **开局随机游标跟着 `setup.rngCursor` 走**（D-269 / ADR-0058）。
+每份记录都会写这个字段；重放时用它而不是「拿 seed 重新派生」，
+所以以后换派生算法也不会让老文件失效。
+**D-269 之前录的文件没有这个字段**，校验工具按 `0` 补 —— 那时的游标确实是 0
+（也正是「每局固定起手」那个缺陷本身），补上后老文件依旧能逐帧校验。
 
 ### 7.3 运维开关：回放清理与限流（D-182）
 

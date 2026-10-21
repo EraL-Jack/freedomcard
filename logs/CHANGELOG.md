@@ -4319,3 +4319,57 @@ events.push(turnChanged(at, nextTurn, nextSeat));       // 才换席位
 - **首版 E2E 自己写错过**（记一笔）：最初的不变量是「任何一帧都不得同时出现
   『你的回合』与『充能阶段』」，结果**绿代码也红** —— 因为**我自己回合的充能阶段本来就长这样**。
   可见「不变量」必须先确认它在正确实现下恒真，否则测的是措辞而不是行为。
+
+---
+
+## D-269 · 种子从未真的参与随机 —— 每局牌序完全相同（issue #103，2026-10-21）
+
+Era 报 issue #103「每次进游戏都是固定起手，没洗牌吗」。
+
+### 根因：洗了，但每局洗的都是同一副
+
+`core/state.ts` 的 `createInitialState` 把随机游标**写死成 0**：
+
+```ts
+return {
+  rngCursor: 0,          // ← 恒为 0
+  seed: opts.seed,       // ← 只是被存进 state 供回放记录，一次都没参与随机
+  ...
+```
+
+于是 `startRule` 的洗牌、掷骰、发牌永远从同一个游标出发 —— 每局的
+**牌序、先后手、起手**全都一样。种子确实每局都不同（`nextSeed()` 取 `Date.now()`），
+但它从来没被用上，是条断掉的线。
+
+### 为什么单测一直是绿的
+
+`session.test.ts` 里那组 `nextSeed` 用例盯的是**上游**（「种子是不是每次都不同」），
+还专门写了注释「要防的是恒返回同一个常量」—— 上游一直正确，所以全绿。
+坏的是**下游**（种子有没有流到随机流里），那一侧当时没有任何断言。
+`rng.test.ts` 同理：它测「同游标同结果、不同游标不同结果」，但没有任何用例问
+「游标的初值从哪来」。
+
+**教训**：测了生产随机数，还要测它流到哪里。中间接头没人管，两头各自正确也白搭。
+
+### 改动
+
+| # | 改动 | 文件 |
+| --- | --- | --- |
+| 1 | 新增 `initialRngCursor(seed)`：`seed → 游标` 的**唯一入口**（FNV-1a 打散相邻种子，`seed=0` 也不退化成 0） | `core/src/rng.ts` |
+| 2 | `createInitialState` 改用 `opts.rngCursor ?? initialRngCursor(opts.seed)`；新增可选 `rngCursor` 入参供回放重建 | `core/src/state.ts` |
+| 3 | `SeedSetup` 增可选 `rngCursor`，`seedSetup` 总是写出它 —— 回放不依赖派生算法，以后换算法老文件仍可重跑 | `server/src/room/session.ts` |
+| 4 | `replay:verify` 对缺该字段的**历史文件**补 0（那时真实游标就是 0），老回放继续可校验 | `server/src/tools/replay-verify.ts` |
+| 5 | `pipeline.test.ts` 三条断言从写死的 `1 / 2 / 'h1'` 改成相对初值 `h.state0.rngCursor + n` —— 原来它们把「初值恒 0」这个缺陷钉进了夹具 | `server/src/room/pipeline.test.ts` |
+
+### 测试（单测 425 → **432**，core 231→235 / server 150→153；E2E 50 不变）
+
+- 新增 `core/src/seed.test.ts` 4 条：游标随 seed 变、不同 seed 起手不同、整副牌序不同、
+  同 seed 两次开局完全一致（回放可复现不能被这次修复破坏）。
+- `session.test.ts` 新增 3 条：回放记录的游标 = 真实状态游标、不同种子不同游标、
+  用回放记录重建的开局哈希 = 直接开局哈希。
+- **红绿验证**：把 `rngCursor` 改回写死 `0` → core 3 条红（`游标全部相同：0 / 0 / 0 / 0`）、
+  server 2 条红；还原即绿。
+- **生产实测（390px，3100）**：连开三局人机，起手分别是 6 张 / 5 张 / 5 张且卡名全不同 ——
+  连先后手也不再固定。
+- **旧回放兼容实测**：`replays/6b985803-…json`（D-269 之前录）用新代码 `replay:verify`
+  → 「可重放，1 局共 3 步逐帧一致」。

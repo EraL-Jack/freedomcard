@@ -60,6 +60,17 @@ export interface SeedOptions {
  */
 export interface SeedSetup {
   seed: number;
+  /**
+   * 开局随机游标（D-269）。
+   *
+   * 记进回放的理由：`seed → 游标` 是一层**派生**（`initialRngCursor`）。
+   * 记录值本身才能让「回放」不依赖派生算法 —— 以后换算法，老文件照样能重跑。
+   *
+   * **可选**：`seedSetup` 永远会写出它（新录的文件一定有）；手写 setup 的地方
+   * （单测夹具）可以省略，此时 `createInitialState` 按 `seed` 派生。
+   * 没有这一项的**历史文件**（D-269 之前录的）由校验工具补 0，见 `replay-verify`。
+   */
+  rngCursor?: number;
   seats: PlayerId[];
   decks: Record<PlayerId, readonly string[]>;
   commanders: Record<PlayerId, string>;
@@ -82,7 +93,14 @@ export function seedSetup(opts: SeedOptions): SeedSetup {
     const custom = opts.decks?.[id];
     if (custom && custom.length > 0) finalDecks[id] = custom;
   }
-  return { seed: opts.seed, seats: [...opts.seats], decks: finalDecks, commanders };
+  return {
+    seed: opts.seed,
+    // 派生规则只住在 core 的 `initialRngCursor`，这里只**记录**结果，不自己算一遍
+    rngCursor: core.initialRngCursor(opts.seed),
+    seats: [...opts.seats],
+    decks: finalDecks,
+    commanders,
+  };
 }
 
 /** 用装配参数建立开局状态 —— 与 `seedSetup` 一一对应，回放时也走这条。 */

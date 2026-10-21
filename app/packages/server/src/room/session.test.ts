@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { checkDeck } from '@app/core';
+import { checkDeck, createInitialState, stateHash } from '@app/core';
 import { MAIN_DECK_SIZE } from '@app/shared';
 
 import { CARD_POOL } from '../cards.js';
 import { DEFAULT_COMMANDER_ID, DEFAULT_MAIN_DECK, FROST_MAIN_DECK } from '../deck-pool.js';
-import { nextSeed, seedGameState } from './session.js';
+import { nextSeed, seedGameState, seedSetup } from './session.js';
 
 /**
  * 开局桥自检 —— ADR-0019。
@@ -148,5 +148,44 @@ describe('nextSeed（ADR-0021）', () => {
     withEnv('', () => {
       expect(Number.isNaN(nextSeed())).toBe(false);
     });
+  });
+});
+
+/**
+ * 种子真的接到随机流上了吗 —— D-269 / issue #103。
+ *
+ * ## 为什么上面那组 `nextSeed` 测试没能拦住这个 bug
+ *
+ * 它测的是**上游**（「种子是不是每次都不一样」），而坏的是**下游**
+ * （「种子有没有被用上」）：`createInitialState` 把 `rngCursor` 写死 0，
+ * 种子只是被存进 state 供回放记录。上游一直是对的，所以那组测试全绿，
+ * 而 Era 每局都拿到同一副牌。教训：**测了生产随机数，没测它流到哪里。**
+ *
+ * 这组断言钉住两侧的接头：
+ *  1. `seedSetup` 记录进回放的游标，必须与状态里真实的游标一致（否则回放必分叉）；
+ *  2. 不同种子必须得到不同游标；
+ *  3. 用回放记录重建出来的初始状态，哈希必须等于开局的哈希（自包含）。
+ */
+describe('种子 → 随机游标（D-269）', () => {
+  const seats = ['p1', 'p2'];
+
+  it('回放记录里的 rngCursor 与真实开局状态一致', () => {
+    for (const seed of [1, 20261013]) {
+      const setup = seedSetup({ seats, seed });
+      const state = seedGameState({ seats, seed });
+      expect(setup.rngCursor, `seed=${seed}`).toBe(state.rngCursor);
+    }
+  });
+
+  it('不同种子得到不同游标 —— 游标是「种子决定牌序」的唯一接头', () => {
+    const cursors = [1, 2, 3, 20261013].map((seed) => seedGameState({ seats, seed }).rngCursor);
+    expect(new Set(cursors).size).toBe(cursors.length);
+  });
+
+  it('用回放记录能原样重建开局哈希（回放自包含，D-159）', () => {
+    const setup = seedSetup({ seats, seed: 20261013 });
+    const rebuilt = createInitialState(setup);
+    const direct = seedGameState({ seats, seed: 20261013 });
+    expect(stateHash(rebuilt)).toBe(stateHash(direct));
   });
 });
