@@ -38,6 +38,21 @@ export function maxCostForTurn(turn: number): number {
  */
 export function advanceOnce(state: GameState, ctx: RuleContext): GameEvent[] {
   const at = ctx.now;
+
+  /*
+   * 换牌阶段（D-262）**不是回合里的阶段**，这里必须直接返回空。
+   *
+   * `PHASE_ORDER.indexOf('mulligan')` 是 -1，若不在这里挡住，下面的 `else` 分支
+   * 会把它当成「结束阶段之后」→ 直接 `turn + 1` 进下一回合。人机局的真实表现：
+   * AI 先手、提交换牌后又被调度一拍，`decideAiMove` 落到兜底 `phaseAdvance`，
+   * 于是玩家的换牌阶段被瞬间推走、开局直接跳到「第 2 回合 · 充能」——
+   * 玩家从没看见过换牌界面（Era 2026-10-21 实机反馈）。
+   *
+   * 返回 `[]` 而不是抛错：`turnEndRule` 的循环靠「空步」自然收尾，
+   * 这样任何来源的推进（玩家 / AI / 超时兜底）在换牌阶段都变成空操作。
+   */
+  if (state.phase === 'mulligan') return [];
+
   const idx = PHASE_ORDER.indexOf(state.phase);
   const active = activePlayer(state);
   const events: GameEvent[] = [];
@@ -135,6 +150,15 @@ export const phaseRule = (
   }
   if (intent.actor === 'player' && activePlayer(state) !== intent.playerId) {
     return { ok: false, error: { code: RULE_ERRORS.NOT_YOUR_TURN, message: '不是你的回合' } };
+  }
+  /*
+   * 换牌阶段（D-262）不属于回合，没有「推进阶段」这回事。
+   *
+   * 显式拒绝而不是靠 `advanceOnce` 返回空数组：空数组是 `ok: true`，
+   * AI 兜底 / 超时链路会以为推进成功，日志里一片干净，问题只能靠实机发现。
+   */
+  if (state.phase === 'mulligan') {
+    return { ok: false, error: { code: RULE_ERRORS.WRONG_PHASE, message: '开局换牌阶段不能推进' } };
   }
   // Era 2026-10-18：抽牌必须点击卡组完成 —— 未抽牌的抽牌阶段**禁止推进**
   // （阶段不可跳过的含义随手动抽牌延伸到「阶段动作不可跳过」）。

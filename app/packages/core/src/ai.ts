@@ -135,16 +135,26 @@ export function decideAiMove(
     };
   }
 
-  if (state.seats[state.activeSeat] !== aiId) return null;
-
-  // ② 换牌：AI 不换（保留原起手就是它的最优解），但必须**主动提交**一次 ——
-  //    否则要等 30s 兜底才轮到它行动，人机局第一分钟就卡住了。
-  //    D-259：换牌在开局前的 `mulligan` 阶段，不再是「第一个充能阶段」。
-  //    这里**不判时间窗**：窗口过后仍然允许「跳过」（否则阶段关不掉），
-  //    而换牌本身对 AI 没有价值，所以任何时刻都发同一条空 returns。
-  if (state.phase === 'mulligan' && !me.mulliganDone) {
-    return { type: INTENTS.mulligan, payload: { returns: [] } };
+  /*
+   * ② 换牌（D-259 / D-262）：AI 不换（保留原起手就是它的最优解），但必须**主动提交**一次 ——
+   *    否则要等 30s 兜底才轮到它行动，人机局第一分钟就卡住了。
+   *
+   * ⚠️ 这一段必须排在**「是不是我的回合」之前**：换牌阶段是双方同时的，
+   * 此时 `activeSeat` 还指着先攻方。若排在后面，玩家先手时 AI 永远不会提交，
+   * 玩家就要干等 30 秒超时兜底（Era 2026-10-21 人机局实测）。
+   *
+   * ⚠️ **已提交就返回 `null`**（不是落到兜底 `phaseAdvance`）：
+   * D-262 之前这里漏了后半句，AI 提交换牌后再被调度一拍就会请求推进阶段，
+   * 而 `advanceOnce` 当时把 `mulligan` 当成「结束阶段之后」直接 `turn + 1` ——
+   * 玩家的换牌阶段被瞬间推走，开局直接跳到第 2 回合。
+   *
+   * 这里**不判时间窗**：窗口过后仍然允许「跳过」（否则阶段关不掉）。
+   */
+  if (state.phase === 'mulligan') {
+    return me.mulliganDone ? null : { type: INTENTS.mulligan, payload: { returns: [] } };
   }
+
+  if (state.seats[state.activeSeat] !== aiId) return null;
 
   // ③ 抽牌阶段：抽牌是手动点卡组触发的（Era 2026-10-18），不抽不能推进。
   if (state.phase === 'draw' && !state.drawnThisPhase) {

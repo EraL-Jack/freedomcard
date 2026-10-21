@@ -8,6 +8,7 @@ import { commanderDamageEvents } from '../combat.js';
 
 import { unitPower } from '../ops.js';
 import { resolveCombat } from './attack.js';
+import { advanceOnce } from './phase.js';
 
 /* ------------------------------ 夹具 ------------------------------ */
 
@@ -399,6 +400,34 @@ describe('起手换牌 mulliganRule', () => {
     expect(two.state.phase).toBe('charge');
     // 先攻方从这一刻起进入自己的第一回合
     expect(two.state.players[first]!.chargeCount).toBe(1);
+  });
+
+  /**
+   * D-262（Era 2026-10-21 实机：「还是没有换牌阶段」）—— **换牌阶段不能被推走**。
+   *
+   * 三条钉的是同一个不变量。修之前的根因：`PHASE_ORDER` 里没有 `mulligan`，
+   * `advanceOnce` 的 `indexOf` 返回 -1，直接落进「结束阶段之后 → 进入下一回合」
+   * 分支，一次推进就把 `turn` 变成 2 —— 人机局里 AI 提交完又被调度一拍，
+   * 玩家的换牌阶段就这么整段消失了（联机 E2E 全绿也照样存在）。
+   */
+  it('D-262：advanceOnce 在换牌阶段是空操作（不产事件、不推进回合）', () => {
+    const s = started();
+    expect(s.turn).toBe(1);
+    expect(advanceOnce(s, CTX)).toEqual([]);
+  });
+
+  it('D-262：phaseAdvance 在换牌阶段被拒（WRONG_PHASE），不是静默成功', () => {
+    const s = started();
+    const r = applyIntent(s, intent(s.seats[0]!, INTENTS.phaseAdvance), CTX);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.WRONG_PHASE);
+  });
+
+  it('D-262：turn:end 在换牌阶段被拒，回合数仍是 1', () => {
+    const s = started();
+    const r = applyIntent(s, intent(s.seats[0]!, INTENTS.turnEnd), CTX);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.WRONG_PHASE);
   });
 
   /**
@@ -1160,6 +1189,21 @@ describe('攻击的事件序列与触发点（ADR-0013 §7）', () => {
 function advance(state: GameState, times: number, ctx: RuleContext = CTX) {
   let s = state;
   const events: GameEvent[] = [];
+  /*
+   * 先把开局换牌走完（D-259 / D-262）。
+   *
+   * 换牌阶段不属于任何回合，`phaseAdvance` 在它上面是**非法动作**（D-262 起显式拒绝）。
+   * 本辅助的语义是「推进回合内阶段」，所以这里先替双方各提交一次「不换」。
+   * 对本来就是 `charge` 及之后的局面是空操作。
+   */
+  while (s.phase === 'mulligan') {
+    const undecided = s.seats.find((id) => s.players[id]?.mulliganDone !== true);
+    if (!undecided) break;
+    const r = applyIntent(s, intent(undecided, INTENTS.mulligan, { returns: [] }), ctx);
+    if (!r.ok) throw new Error(`意外拒绝（换牌）: ${r.error.code} ${r.error.message}`);
+    events.push(...r.value);
+    s = r.value.reduce(reduce, s);
+  }
   for (let i = 0; i < times; i++) {
     // 抽牌手动化（Era 2026-10-18）：未抽牌的抽牌阶段禁止推进，先补抽牌动作。
     if (s.phase === 'draw' && !s.drawnThisPhase) {
@@ -1222,8 +1266,15 @@ describe('确定性', () => {
   it('同一串 Intent 跑两遍，状态哈希一致', () => {
     const seq = (base: GameState): GameState => {
       let s = run(base, intent('p1', INTENTS.start), { now: 1, cards: CARDS });
-      const active = s.seats[0]!;
-      s = run(s, intent(active, INTENTS.mulligan, { returns: [] }), { now: 2, cards: CARDS });
+      /*
+       * 开局换牌（D-259）：**双方都要提交**，只提交一方不会关闭阶段
+       * （D-262 之后这不是可选项 —— 阶段没关掉时 `phaseAdvance` 会被拒）。
+       */
+      while (s.phase === 'mulligan') {
+        const undecided = s.seats.find((id) => s.players[id]?.mulliganDone !== true);
+        if (!undecided) break;
+        s = run(s, intent(undecided, INTENTS.mulligan, { returns: [] }), { now: 2, cards: CARDS });
+      }
       for (let i = 0; i < 6; i++) {
         // 手动抽牌（Era 2026-10-18）：抽牌阶段先抽再推进
         if (s.phase === 'draw' && !s.drawnThisPhase) {

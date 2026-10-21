@@ -29,6 +29,16 @@ export const turnEndRule = (
   if (state.winner !== null || state.draw) {
     return { ok: false, error: { code: RULE_ERRORS.GAME_OVER, message: '对局已结束' } };
   }
+  /*
+   * 换牌阶段（D-262）没有「回合」可言，`turn:end` 在这里是**非法动作**。
+   *
+   * 显式拒绝而不是靠 `advanceOnce` 返回空步：后者会让本规则以 `ok: true` +
+   * 空事件数组「假装成功」，调用方（AI / 超时兜底）看到 accepted 就以为推进了，
+   * 排查时完全看不出异常。拒绝会在服务端日志里留下一条可搜索的记录。
+   */
+  if (state.phase === 'mulligan') {
+    return { ok: false, error: { code: RULE_ERRORS.WRONG_PHASE, message: '开局换牌阶段不能结束回合' } };
+  }
   if (intent.actor === 'player' && activePlayer(state) !== intent.playerId) {
     return { ok: false, error: { code: RULE_ERRORS.NOT_YOUR_TURN, message: '不是你的回合' } };
   }

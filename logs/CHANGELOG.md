@@ -3966,3 +3966,50 @@ Playwright 认为它 visible。只有 `toBeInViewport()` 会红。这一点以�
 - `game.spec` 详情用例改走长按；新增 1 条覆盖右键与「详情」按钮（E2E 45 条）。
 - **红绿验证**：把长按阈值从 400ms 改成 5000ms + 改掉「详情」按钮的 testid →
   两条用例同时变红；还原即绿。
+
+---
+
+## D-262 · 人机局没有换牌阶段 —— `mulligan` 不在 `PHASE_ORDER` 里，被当成「结束阶段」（issue #91，2026-10-21）
+
+**Era 报的原文**：
+
+> 还是没有换牌阶段
+
+配图：点「人机对战」后牌桌直接显示「第 1 回合」，已经在充能阶段。
+
+**根因**：D-259 把换牌提成独立阶段 `phase = 'mulligan'`，但它**不属于任何回合**，
+所以故意没进 `PHASE_ORDER`（进了的话六阶段进度条会多一格）。于是：
+
+```ts
+const idx = PHASE_ORDER.indexOf('mulligan');      // -1
+if (idx >= 0 && idx + 1 < PHASE_ORDER.length) {}  // false
+// 落到末尾 → 「结束阶段之后」→ turn + 1 并切 charge
+```
+
+人机局还多一拍：AI 提交换牌后服务端会再调度一次 AI，而当时 `aiToMove` 只看
+`seats[activeSeat]`（换牌阶段 `activeSeat` 还指着先攻方），这一拍正好把玩家的
+换牌阶段推走，开局直接跳到「第 2 回合 · 充能」。联机局没暴露是因为双方都确认后
+由 `mulligan:closed` 自己切阶段，没人去调 `advanceOnce`。
+
+**改了五处（缺一不可）**：
+
+| 位置 | 原来的问题 | 改法 |
+| --- | --- | --- |
+| `core/rules/phase.ts` `advanceOnce` | `indexOf` 得 -1 落到「下一回合」分支 | `phase === 'mulligan'` 直接 return `[]` |
+| `core/rules/phase.ts` `phaseRule` | 同一入口仍可推阶段 | 显式回 `WRONG_PHASE`「开局换牌阶段不能推进」 |
+| `core/rules/turn-end.ts` | `turn:end` 在换牌阶段也生效 | 加同样的守卫 |
+| `core/ai.ts` `decideAiMove` | 换牌判定排在 `activeSeat` 判定之后 | 换牌判定**提前**；已确认时返回 `null`（原来返回 `phase:advance`，正是推走阶段的元凶） |
+| `server/src/index.ts` `aiToMove` | 只看 `seats[activeSeat]` | 换牌阶段按「AI 自己还没确认」判 |
+
+> 为什么 `advanceOnce` 返回 `[]` 而 `phaseRule` 抛错：`advanceOnce` 是纯推进函数，
+> `turnEndRule` 的循环靠「空步」自然收尾，任何来源的推进在换牌阶段都该是空操作；
+> 而玩家主动点推进会被告知「不能推进」，否则日志一片干净、问题只能靠实机发现。
+
+**测试**：
+- core `rules.test.ts`：`advance()` 在 mulligan 阶段事件数为 0；`turn:end` 被拒。
+- core `ai.test.ts`：「已确认 → `null`，不是 `phase:advance`」；「玩家先手时 AI 也要提交」；
+  AI 自对弈的 actor 在换牌阶段改为「谁还没确认」。
+- E2E 新增 `solo.spec.ts` 2 条：人机房开局停在换牌阶段 / 点「不换牌」后进**第 1** 回合。
+- **红绿验证用单测而不是 E2E**：`tsx watch` 不监听 workspace 包，改坏 core 后
+  E2E 跑的仍是旧代码，红检无效（试过，46 条照样全绿 —— 假绿）。
+  改单测后去掉 `advanceOnce` 守卫 → 2 条变红；还原即绿。

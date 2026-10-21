@@ -100,8 +100,36 @@ export async function startGame(
 }
 
 /**
- * 替双方点「不换牌」，把开局换牌阶段推过去（D-259）。
+ * 开一局**人机对战**（D-242），返回已进桌的页面。
  *
+ * 人机局的座位与联机不同：AI 在**建房时**就坐下并恒为「已准备」（房间代码在
+ * `room.ts` 的 `solo` 分支），所以这里只有「建房 → 准备」两步，没有对手页面。
+ *
+ * `skipMulligan` 默认 `true`：绝大多数用例只关心「进对局之后」的阶段。
+ * 要验 **D-262 的回归点**（人机局的开局换牌阶段是否真的存在）的用例传 `false` ——
+ * 换牌阶段曾被 `advanceOnce` 当成「结束阶段之后」整段推走，玩家从没见过这个界面。
+ *
+ * 注意玩家只需点**一次**「不换牌」：AI 会自己提交（`decideAiMove` 的换牌分支），
+ * 不是「两个页面各点一次」。
+ */
+export async function startSoloGame(
+  browser: Browser,
+  opts: { skipMulligan?: boolean; deck?: string } = {},
+): Promise<{ page: Page }> {
+  const page = await newClient(browser, 'Solo');
+  if (opts.deck) await page.getByTestId('deck-choice').selectOption(opts.deck);
+  await page.getByTestId('create-solo').click();
+  await page.getByTestId('ready').click();
+  await expect(page.getByTestId('turn')).toBeVisible({ timeout: WAIT });
+  if (opts.skipMulligan !== false) {
+    await expect(page.getByTestId('mulligan-skip')).toBeVisible({ timeout: WAIT });
+    await page.getByTestId('mulligan-skip').click();
+  }
+  return { page };
+}
+
+/**
+ * 替双方点「不换牌」，把开局换牌阶段推过去（D-259）。
  * 换牌是**开局前的独立阶段**：双方各自提交一次才进第一回合（服务端发 `mulligan:closed`）。
  * 所以这里必须两边都点 —— 只点一边，阶段会一直停着，后续所有「你的回合」断言都会超时。
  *
