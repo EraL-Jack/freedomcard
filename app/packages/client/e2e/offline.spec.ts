@@ -51,3 +51,38 @@ test('连上之后按钮可用，人机对战能真的开局', async ({ browser 
 
   await context.close();
 });
+
+/**
+ * 资源加载失败时的兜底提示（issue #107 / D-273）。
+ *
+ * Era 2026-10-21 手机浏览器「样式没了」：样式表请求失败时浏览器**不重试也不报错**，
+ * 页面静默变成白底黑字，玩家只能认为游戏坏了。
+ *
+ * 这里不能靠 `page.route` 拦截 `*.css` —— dev 态样式由 JS 注入、没有单独的 CSS 请求。
+ * 改成插一个真的加载不到的 `<link rel=stylesheet>`：浏览器自己触发 error 事件，
+ * 走的是与线上完全相同的兜底分支。
+ */
+test('样式表加载失败时，页面给出「请刷新重试」而不是静默白纸', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByTestId('asset-error')).toHaveCount(0);
+
+  /*
+   * ⚠️ 不能用「指向一个不存在的 .css」来制造失败：Vite dev 的 SPA 回退会回
+   * `200 + text/html`，浏览器把它当**加载成功**（`onload`，只是解析出 0 条规则）——
+   * 实测确认过，`onerror` 根本不触发。线上修好之后缺失资源是 404，会触发 error；
+   * 隧道丢包则是网络失败，同样触发 error。
+   *
+   * 所以这里用 `route.abort()` 模拟**请求失败**（= 隧道那条路径），
+   * 与线上失败时的兜底分支完全一致。
+   */
+  await page.route('**/issue-107-missing.css', (route) => route.abort());
+  await page.evaluate(() => {
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = '/issue-107-missing.css';
+    document.head.appendChild(link);
+  });
+
+  await expect(page.getByTestId('asset-error')).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId('asset-error')).toContainText('刷新');
+});

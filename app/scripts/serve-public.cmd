@@ -28,7 +28,8 @@ set "SERVE_STATIC=1"
 set "HOST=0.0.0.0"
 
 echo [1/2] Building client bundle...
-call pnpm.cmd --filter @app/client run build
+rem issue #107：先构建到 dist.new 再原子切换，避免重建空窗里出现 404 资源
+call pnpm.cmd --filter @app/client run build:atomic
 if errorlevel 1 (
   echo [FAIL] client build failed, aborting.
   exit /b 1
