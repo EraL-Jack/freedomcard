@@ -16,7 +16,7 @@
 import { BOARD_SLOTS, RULE_ERRORS } from '@app/shared/constants';
 import type { GameEvent, GameState, Intent, Result, Rejection, RuleContext, Zone } from '@app/shared/types';
 
-import { baseGuard, costToPay, ev, firstRejection, locate, moved, playerOf, strArg } from '../ops.js';
+import { baseGuard, costToPay, ev, firstRejection, locate, moved, playerOf, replacedOut, strArg, strListArg } from '../ops.js';
 import { reduce } from '../reducer.js';
 import { spellEntryEvents, summonEntryEvents } from '../effects/index.js';
 
@@ -52,7 +52,39 @@ export const playRule = (
   if (!p) return { ok: false, error: { code: RULE_ERRORS.NOT_YOUR_TURN, message: '玩家不在本局' } };
 
   const dest: Zone = def.type === 'minion' ? 'board' : 'spell';
-  if (dest === 'board' && p.zones.board.length >= BOARD_SLOTS) {
+
+  /*
+   * 召唤位置（D-257）—— `payload.slot` 为 0 ~ BOARD_SLOTS-1。
+   *
+   * 语义（Era 2026-10-21）：「该位置有随从可以直接顶替，被顶替的卡进弃牌区」。
+   * 所以**指定了位置就不再受「随从区已满」限制** —— 满场时的正常操作就是顶替；
+   * 只有不指定位置（老客户端 / AI）时才保留原来的 BOARD_FULL 拒绝。
+   */
+  const slotRaw = intent.payload?.['slot'];
+  let slot: number | null = null;
+  if (slotRaw !== undefined && slotRaw !== null) {
+    if (
+      typeof slotRaw !== 'number' ||
+      !Number.isInteger(slotRaw) ||
+      slotRaw < 0 ||
+      slotRaw >= BOARD_SLOTS
+    ) {
+      return {
+        ok: false,
+        error: { code: RULE_ERRORS.INVALID_SLOT, message: `位置必须是 0–${BOARD_SLOTS - 1} 的整数` },
+      };
+    }
+    if (def.type !== 'minion') {
+      // 给法术指定位置 = 前端把「选格子」错接到非随从上。早报错，别让它静默变成「随便放」。
+      return {
+        ok: false,
+        error: { code: RULE_ERRORS.INVALID_SLOT, message: '只有随从需要指定位置' },
+      };
+    }
+    slot = slotRaw;
+  }
+
+  if (dest === 'board' && slot === null && p.zones.board.length >= BOARD_SLOTS) {
     return { ok: false, error: { code: RULE_ERRORS.BOARD_FULL, message: `随从区已满（${BOARD_SLOTS}）` } };
   }
 
@@ -81,17 +113,66 @@ export const playRule = (
     };
   }
 
+  /*
+   * 支付用哪几张（D-257）—— `payload.costUids` 可选。
+   *
+   * 不传 = 沿用旧行为（按费用区顺序取前 `pay` 张），AI 与老客户端走这条；
+   * 传了就必须**恰好 `pay` 张、都在己方费用区、不重复** —— 少给会让玩家白赚，
+   * 多给会悄悄多丢卡，两种都必须拒绝而不是「尽力而为」。
+   */
+  const pick = strListArg(intent.payload?.['costUids']);
+  if (pick !== null) {
+    if (pick.length !== pay) {
+      return {
+        ok: false,
+        error: {
+          code: RULE_ERRORS.INVALID_COST_PICK,
+          message: `需要支付 ${pay} 张，实际选了 ${pick.length} 张`,
+        },
+      };
+    }
+    const seen = new Set<string>();
+    for (const u of pick) {
+      if (seen.has(u)) {
+        return { ok: false, error: { code: RULE_ERRORS.INVALID_COST_PICK, message: `费用卡重复：${u}` } };
+      }
+      if (!p.zones.cost.some((c) => c.uid === u)) {
+        return {
+          ok: false,
+          error: { code: RULE_ERRORS.INVALID_COST_PICK, message: `${u} 不在你的费用区` },
+        };
+      }
+      seen.add(u);
+    }
+  }
+  const paying = pick ?? p.zones.cost.slice(0, pay).map((c) => c.uid);
+
   const at = ctx.now;
   const events: GameEvent[] = [];
-  for (let i = 0; i < pay; i++) {
-    events.push(moved(at, intent.playerId, p.zones.cost[i]!.uid, 'cost', 'graveyard'));
+  for (const uid of paying) {
+    events.push(moved(at, intent.playerId, uid, 'cost', 'graveyard'));
   }
   if (pay > 0) events.push(ev(at, 'cost:spent', { playerId: intent.playerId, amount: pay }));
   // 星轨传令的减费只作用于**下一张**随从 —— 打出即消耗。
   if (def.type === 'minion' && p.nextMinionDiscount > 0) {
     events.push(ev(at, 'cost:discount', { playerId: intent.playerId, value: 0 }));
   }
-  events.push(moved(at, intent.playerId, uid, 'hand', dest));
+  /*
+   * 顶替（D-257）—— 指定位置先腾空。
+   *
+   * 顺序必须是「被顶替者离场」在前、「新卡登场」在后：
+   * reducer 见到 `card:moved` 进随从区时会找空槽，如果旧卡还占着这一格，
+   * 新卡就会被挤到别的格子去（玩家选了 2 号位却出现在 3 号位）。
+   */
+  if (dest === 'board' && slot !== null) {
+    const idx = p.zones.board.findIndex((c, i) => (c.slot ?? i) === slot);
+    const occupant = idx >= 0 ? p.zones.board[idx] : undefined;
+    if (occupant) {
+      events.push(ev(at, 'unit:replaced', { playerId: intent.playerId, slot, byUid: occupant.uid, uid }));
+      events.push(replacedOut(at, intent.playerId, occupant.uid, slot));
+    }
+  }
+  events.push(moved(at, intent.playerId, uid, 'hand', dest, slot ?? undefined));
 
   // 效果接线：先推演移动事件（效果读的是登场/入区后的场面）。
   const next = events.reduce(reduce, state);

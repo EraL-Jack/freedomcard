@@ -27,6 +27,8 @@ export const ZONE_LABEL: Readonly<Record<Zone, string>> = {
  * 正确用词为「抽牌阶段」。代码与文档均已统一更正。
  */
 export const PHASE_LABEL: Readonly<Record<Phase, string>> = {
+  // 开局前的换牌阶段（D-259）—— 不属于任何回合，进度条上单独提示。
+  mulligan: '换牌',
   charge: '充能',
   reset: '重置',
   draw: '抽牌',

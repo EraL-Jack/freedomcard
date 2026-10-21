@@ -24,7 +24,7 @@
  * 强度可调，但**先保证不卡死** —— 调度器在 AI 操作被拒时会兜底推进阶段。
  */
 
-import { BOARD_SLOTS, KEYWORD_TAUNT, MULLIGAN_WINDOW_MS } from '@app/shared/constants';
+import { BOARD_SLOTS, KEYWORD_TAUNT } from '@app/shared/constants';
 import type { CardDef, CardInstance, GameState, PlayerId } from '@app/shared/types';
 
 import { costToPay, defOf, hasKeyword, unitPower } from './ops.js';
@@ -61,12 +61,11 @@ function playableHand(
   me: GameState['players'][string],
   cards: Record<string, CardDef>,
 ): CardInstance[] {
-  const boardFull = me.zones.board.length >= BOARD_SLOTS;
+  // ⚠️ 满场不再过滤随从（D-257）：现在可以顶替，是否值得顶替由调用方按力量判断。
   return me.zones.hand
     .filter((c) => {
       const def = defOf(cards, c.defId);
       if (!def || def.type === 'commander') return false;
-      if (def.type === 'minion' && boardFull) return false;
       return affordable(me, def);
     })
     .sort((a, b) => {
@@ -79,15 +78,43 @@ function playableHand(
 }
 
 /**
+ * 满场时找出最弱的那一格（D-257）。
+ *
+ * AI 顶替的唯一理由是把弱随从换成强随从 —— 换弱或换平只是白扔一张手牌，
+ * 所以调用方要拿新随从的力量跟这里的返回值比一比。
+ */
+function weakestSlot(
+  state: GameState,
+  cards: Record<string, CardDef>,
+  me: GameState['players'][string],
+): { slot: number; power: number } | null {
+  const board = me.zones.board;
+  if (board.length === 0) return null;
+  let bestSlot = board[0]!.slot ?? 0;
+  let bestPower = unitPower(state, cards, board[0]!.uid) ?? 0;
+  for (let i = 1; i < board.length; i++) {
+    const c = board[i]!;
+    const power = unitPower(state, cards, c.uid) ?? 0;
+    if (power < bestPower) {
+      bestPower = power;
+      bestSlot = c.slot ?? i;
+    }
+  }
+  return { slot: bestSlot, power: bestPower };
+}
+
+/**
  * 决定 AI 的下一手。返回 `null` = 「现在没我事」（不是我的回合 / 对局已结束）。
  *
- * @param now 服务端时间戳 —— 只用于换牌时间窗判定（core 不读时钟）。
+ * @param _now 服务端时间戳 —— D-259 之后换牌不再判时间窗（`mulligan` 阶段任何时刻
+ *             都能提交「跳过」），当前没有用到；保留参数是为了**调用方签名稳定**，
+ *             且未来任何「看时间」的决策都必须从这里取而不许读时钟（core 禁止 IO）。
  */
 export function decideAiMove(
   state: GameState,
   aiId: PlayerId,
   cards: Record<string, CardDef>,
-  now: number,
+  _now: number,
 ): AiMove | null {
   const me = state.players[aiId];
   if (!me || !state.started) return null;
@@ -111,13 +138,11 @@ export function decideAiMove(
   if (state.seats[state.activeSeat] !== aiId) return null;
 
   // ② 换牌：AI 不换（保留原起手就是它的最优解），但必须**主动提交**一次 ——
-  //    否则要等 30s 窗口过期才轮到它行动，人机局第一分钟就卡住了。
-  if (
-    state.phase === 'charge' &&
-    me.chargeCount === 1 &&
-    !me.mulliganDone &&
-    (me.firstChargeAt === null || now - me.firstChargeAt <= MULLIGAN_WINDOW_MS)
-  ) {
+  //    否则要等 30s 兜底才轮到它行动，人机局第一分钟就卡住了。
+  //    D-259：换牌在开局前的 `mulligan` 阶段，不再是「第一个充能阶段」。
+  //    这里**不判时间窗**：窗口过后仍然允许「跳过」（否则阶段关不掉），
+  //    而换牌本身对 AI 没有价值，所以任何时刻都发同一条空 returns。
+  if (state.phase === 'mulligan' && !me.mulliganDone) {
     return { type: INTENTS.mulligan, payload: { returns: [] } };
   }
 
@@ -128,8 +153,18 @@ export function decideAiMove(
 
   // ④ 主要阶段：出一张付得起的牌；没有就推进。
   if (state.phase === 'main') {
-    const next = playableHand(me, cards)[0];
-    if (next) return { type: INTENTS.play, payload: { uid: next.uid } };
+    const full = me.zones.board.length >= BOARD_SLOTS;
+    for (const cand of playableHand(me, cards)) {
+      const def = defOf(cards, cand.defId);
+      if (!def) continue;
+      if (def.type === 'minion' && full) {
+        // 满场 → 只在「更强」时顶替（D-257）。换弱/换平等于白扔一张牌。
+        const weak = weakestSlot(state, cards, me);
+        if (!weak || def.power <= weak.power) continue;
+        return { type: INTENTS.play, payload: { uid: cand.uid, slot: weak.slot } };
+      }
+      return { type: INTENTS.play, payload: { uid: cand.uid } };
+    }
     return { type: INTENTS.phaseAdvance };
   }
 

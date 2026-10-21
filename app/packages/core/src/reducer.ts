@@ -6,9 +6,30 @@
  * 若 `reduce` 在 `engine.ts` 里，规则模块就会反向依赖引擎。
  */
 
+import { BOARD_SLOTS } from '@app/shared/constants';
 import type { CardInstance, GameEvent, GameState, PlayerId, Zone } from '@app/shared/types';
 
 import { ZONES } from './state.js';
+
+/**
+ * 给「即将进入随从区」的卡分配格子（D-257）。
+ *
+ * 语义：优先用事件指定的 `want`（玩家选的那一格），被占或非法则**落到最小的空槽**。
+ * 之所以在这里兜底而不是只信任规则层：衍生物（`card:created`）与回放重演都会走到
+ * 同一条路径，任何一处漏分配，界面就只能按下标猜位置 —— 两张卡会挤在同一格。
+ *
+ * 只统计**已有 slot** 的卡：老快照里可能一张都没有，此时全部按需分配，
+ * 结果与「按数组顺序填 0,1,2」一致，不影响旧回放。
+ */
+function boardSlotFor(existing: readonly CardInstance[], want: unknown): number | undefined {
+  const taken = new Set<number>();
+  for (const c of existing) if (typeof c.slot === 'number') taken.add(c.slot);
+  if (typeof want === 'number' && Number.isInteger(want) && want >= 0 && want < BOARD_SLOTS && !taken.has(want)) {
+    return want;
+  }
+  for (let i = 0; i < BOARD_SLOTS; i++) if (!taken.has(i)) return i;
+  return undefined;
+}
 
 /** 取 payload 里的字符串，缺失返回空串。 */
 function s(e: GameEvent, key: string): string {
@@ -90,6 +111,11 @@ export function reduce(state: GameState, event: GameEvent): GameState {
           const { pendingPowerBuff, ...rest } = movedCard;
           movedCard = { ...rest, tempPower: (rest.tempPower ?? 0) + pendingPowerBuff };
         }
+        // D-257：进随从区就定格子（玩家指定的优先，被占则最小空槽）。
+        if (to === 'board') {
+          const slot = boardSlotFor(dst, event.payload?.['slot']);
+          if (slot !== undefined) movedCard = { ...movedCard, slot };
+        }
         p.zones[to] = [...dst, movedCard];
       });
     }
@@ -102,7 +128,10 @@ export function reduce(state: GameState, event: GameEvent): GameState {
       const to = (s(event, 'to') || 'board') as Zone;
       return withPlayer(state, id, (p) => {
         if (p.zones[to].some((c) => c.uid === uid)) return;
-        p.zones[to] = [...p.zones[to], { uid, defId }];
+        // 衍生物同样要占一格（D-257）：不分配就会出现两张卡叠在同一格里。
+        const slot = to === 'board' ? boardSlotFor(p.zones[to], event.payload?.['slot']) : undefined;
+        const card: CardInstance = slot === undefined ? { uid, defId } : { uid, defId, slot };
+        p.zones[to] = [...p.zones[to], card];
         p.tokenSeq += 1;
       });
     }
@@ -415,10 +444,20 @@ export function reduce(state: GameState, event: GameEvent): GameState {
 
     case 'game:started': {
       const seats = list(event, 'seats');
-      // startedAt = 对局开局时刻；先攻方开局即处于己方第一个充能阶段（没有「进入」
-      // 动作，ADR-0016 §3），其充能计数与换牌窗基准（X-17）在此一并写入。
-      let next: GameState = { ...state, seats, activeSeat: 0, started: true, startedAt: event.at };
-      const first = seats[0];
+      /*
+       * D-259（Era 2026-10-21）：开局先停在**换牌阶段**，不直接进第一回合。
+       *
+       * 旧实现让先攻方「开局即处于己方第一个充能阶段」（ADR-0016 §3），
+       * 换牌挂在那个充能阶段的 30 秒窗口里 —— 玩家看到的是「好像直接开始了」。
+       * 现在先攻方的 `chargeCount` / `firstChargeAt` 改由 `mulligan:closed` 写入。
+       */
+      return { ...state, seats, activeSeat: 0, started: true, startedAt: event.at, phase: 'mulligan' };
+    }
+
+    case 'mulligan:closed': {
+      // 双方都确认（或超时兜底）→ 第一回合的充能阶段。
+      let next: GameState = { ...state, phase: 'charge' };
+      const first = state.seats[0];
       if (first) {
         next = withPlayer(next, first, (p) => {
           p.firstChargeAt = event.at;

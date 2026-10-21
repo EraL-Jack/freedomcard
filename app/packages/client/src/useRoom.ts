@@ -34,7 +34,7 @@ export type LinkState = 'connecting' | 'online' | 'offline';
  */
 export interface Fx {
   id: number;
-  kind: 'phase' | 'turn' | 'reset' | 'draw' | 'combat' | 'damage' | 'destroy' | 'ended';
+  kind: 'phase' | 'turn' | 'reset' | 'draw' | 'income' | 'combat' | 'damage' | 'destroy' | 'ended';
   /** 主文案（如「战斗阶段」「裁决 2 ⚔ 1」）。 */
   text: string;
   /** 副文案（如「防守方破坏」「轮到你行动」）。 */
@@ -52,6 +52,8 @@ const FX_MS: Readonly<Record<string, number>> = {
   'turn:changed': 1100,
   'units:reset': 550,
   'draw:completed': 550,
+  // D-258：回合开始的自动充能 —— 停够一拍，让「充能 +2」看得见。
+  'cost:income': 900,
   'combat:resolved': 900,
   'commander:damaged': 800,
   'game:ended': 1600,
@@ -169,7 +171,13 @@ export interface RoomSession {
    */
   endTurn(): void;
   charge(uids: string[]): void;
-  play(uid: string): void;
+  /**
+   * 出牌（D-257）。
+   *
+   * `costUids` = 自选支付哪几张费用卡（省略则服务端按费用区顺序取前 N 张）；
+   * `slot` = 随从放到第几格（0–2），该格有随从则顶替、被顶替者进弃牌区。
+   */
+  play(uid: string, opts?: { costUids?: string[]; slot?: number }): void;
   /** 手动抽牌（Era 2026-10-18）：抽牌阶段点击卡组触发。 */
   draw(): void;
   attack(attackerUid: string, targetUid: string): void;
@@ -304,6 +312,15 @@ export function useRoom(): RoomSession {
         return { fx: { kind: 'reset', text: '随从已重置', sub: '休眠解除' }, ms: FX_MS['units:reset']! };
       case 'draw:completed':
         return { fx: { kind: 'draw', text: '抽牌完成' }, ms: FX_MS['draw:completed']! };
+      /* D-258：充能阶段最需要被看见的一件事 —— 这两张是回合开始白给的。 */
+      case 'cost:income': {
+        const amount = Number(e.payload?.['amount'] ?? 0);
+        const mine = e.payload?.['playerId'] === meNow;
+        return {
+          fx: { kind: 'income', text: `充能 +${amount}`, sub: mine ? '你的费用区' : '对方的费用区' },
+          ms: FX_MS['cost:income']!,
+        };
+      }
       case 'mulligan:done':
         return { fx: { kind: 'draw', text: '换牌完成' }, ms: FX_MS['draw:completed']! };
       case 'combat:resolved': {
@@ -338,7 +355,10 @@ export function useRoom(): RoomSession {
         const uid = String(e.payload?.['uid'] ?? '');
         const pid = String(e.payload?.['playerId'] ?? '');
         const owner = prev.players[pid];
-        const slotIndex = owner ? owner.zones.board.findIndex((x) => x.uid === uid) : -1;
+        const indexInBoard = owner ? owner.zones.board.findIndex((x) => x.uid === uid) : -1;
+        // D-257：残影要落在**它原来那一格**。卡上有 slot 就用它，老快照按数组下标兜底。
+        const slotIndex =
+          owner && indexInBoard >= 0 ? (owner.zones.board[indexInBoard]!.slot ?? indexInBoard) : -1;
         const card = owner
           ? (owner.zones.board.find((x) => x.uid === uid) ??
             owner.zones.commander.find((x) => x.uid === uid) ??
@@ -787,7 +807,18 @@ export function useRoom(): RoomSession {
     advance: () => send(core.INTENTS.phaseAdvance),
     endTurn: () => send(core.INTENTS.turnEnd),
     charge: (uids) => send(core.INTENTS.charge, { uids }),
-    play: (uid) => send(core.INTENTS.play, { uid }),
+    /*
+     * 出牌（D-257）：`costUids` / `slot` 只在玩家真的选了才发。
+     *
+     * 一律「不带就不发」而不是发空值 —— 服务端把「没提供」与「提供但不合法」
+     * 当两件事处理（后者拒绝），多发一个空数组会变成「选了 0 张费用」被拒。
+     */
+    play: (uid, opts) =>
+      send(core.INTENTS.play, {
+        uid,
+        ...(opts?.costUids ? { costUids: opts.costUids } : {}),
+        ...(opts?.slot !== undefined ? { slot: opts.slot } : {}),
+      }),
     draw: () => send(core.INTENTS.draw),
     attack: (attackerUid, targetUid) => send(core.INTENTS.attack, { attackerUid, targetUid }),
     /**

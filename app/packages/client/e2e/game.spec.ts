@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-import { startGame, newClient } from './helpers.js';
+import { skipMulligan, startGame, newClient } from './helpers.js';
 
 /**
  * 联机开局端到端验证（真界面）。
@@ -241,6 +241,9 @@ test('认输只判负本局；BO3 第 3 局由上一局败者先攻（D-147 / H3
   // 第 3 小局：先手 = 第 2 局败者 guest（H33 取代原先的重新掷骰）
   await host.getByTestId('next-game').click();
   await expect(host.getByTestId('series')).toContainText('第 3 局', { timeout: 20_000 });
+  // 每一小局开局都先过换牌阶段（D-259）—— 起手张数在发牌时就定了，
+  // 但「你的回合」要等双方都确认换牌、真正进入第一回合才会出现。
+  await skipMulligan([host, guest]);
   await expect.poll(() => handCount(guest)).toBe(5);
   await expect.poll(() => handCount(host)).toBe(6);
   await expect(guest.getByText('你的回合')).toBeVisible({ timeout: 10_000 });

@@ -59,7 +59,14 @@ export type Zone =
   | 'reveal';
 
 /** 回合阶段 —— `docs/06` A4-1，顺序固定且均不可跳过（A4-2）。 */
-export type Phase = 'charge' | 'reset' | 'draw' | 'main' | 'battle' | 'end';
+/**
+ * 阶段。
+ *
+ * `mulligan` 是**开局前的独立阶段**（D-259，Era 2026-10-21：「换牌这个动作不是在第一回合做，
+ * 而是在游戏开始之前做」）—— 它不在 `PHASE_ORDER` 里，也不属于任何回合。
+ * 双方都确认（或超时兜底）之后才进入第一回合的 `charge`。
+ */
+export type Phase = 'mulligan' | 'charge' | 'reset' | 'draw' | 'main' | 'battle' | 'end';
 
 /** 卡池中的一张卡**定义**（静态，不随对局变化）。 */
 export interface CardDef {
@@ -136,6 +143,22 @@ export interface CardInstance {
    * 登场（`card:moved` → board）时由 reducer 消费成本回合 `tempPower`。
    */
   pendingPowerBuff?: number;
+  /**
+   * **随从区槽位**（0 ~ `BOARD_SLOTS - 1`）—— D-257，Era 2026-10-21 要求
+   * 「随从召唤支持选择位置，该位置有随从可以直接顶替」。
+   *
+   * 为什么槽位记在卡上而不是让数组稀疏：
+   *  - `zones.board` 是**紧凑数组**，全项目几十处按 `for (const c of board)` 遍历，
+   *    改成稀疏会波及所有效果/攻击/冲锋判定；
+   *  - 加一个可选字段，数组语义不变，界面按 `card.slot` 把卡摆到对应格子即可。
+   *
+   * 何时写入：`card:moved` 进入 `board` 时由 reducer 分配（规则层可以指定，
+   * 被占则规则层会先产出顶替事件腾出该槽）。**离开随从区不清理** ——
+   * 它只是「摆在哪一格」的标签，回场时一定会被重新分配。
+   *
+   * 缺失（老回放 / 不进随从区的卡）= 按数组下标兜底，故旧数据仍能正确渲染。
+   */
+  slot?: number;
 }
 
 /** 回合内触发器（军师类「本回合获得效果」，ADR-0023 §7）。 */

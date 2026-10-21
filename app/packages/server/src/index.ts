@@ -16,6 +16,7 @@ import {
   SOCKET_EVENTS,
   RECONNECT_GRACE_MS,
   TURN_TIMEOUT_MS,
+  MULLIGAN_WINDOW_MS,
   AI_PLAYER_ID,
   AI_STEP_DELAY_MS,
   type GameState,
@@ -142,6 +143,14 @@ interface RoomRuntime {
    * 真正开局后才置 `true`，并作为**幂等阀门**防止重复开局。
    */
   seeded: boolean;
+  /**
+   * 开局换牌阶段的超时句柄（D-259）。
+   *
+   * 换牌是**开局前**的阶段，不属于任何回合，所以不能借 `timer`（它会在超时时发
+   * `turn:end`）—— 那会让「还没开局」直接跳到下一回合。这里单独一个句柄，
+   * 到点做的事是「替还没确认的人提交跳过」。
+   */
+  mulliganHandle: unknown | null;
 }
 const runtimes = new Map<string, RoomRuntime>();
 
@@ -181,6 +190,7 @@ function runtimeOf(roomId: string): RoomRuntime {
       replay: new ReplayRecorder(Date.now()),
       serverSeq: 0,
       seeded: false,
+      mulliganHandle: null,
     } as RoomRuntime;
     rt.timer = new TurnTimer({
       now: () => Date.now(),
@@ -193,6 +203,82 @@ function runtimeOf(roomId: string): RoomRuntime {
     runtimes.set(roomId, rt);
   }
   return rt;
+}
+
+/** 清掉换牌超时句柄。未计时时为空操作。 */
+function clearMulliganTimer(rt: RoomRuntime): void {
+  if (rt.mulliganHandle !== null) {
+    hostScheduler.clearTimeout(rt.mulliganHandle);
+    rt.mulliganHandle = null;
+  }
+}
+
+/**
+ * 换牌阶段超时兜底（D-259）。
+ *
+ * 换牌是**开局前**的阶段，不属于任何回合，所以不能借「回合超时」（那会发 `turn:end`
+ * 把还没开始的对局直接推进）。到期做的事只有一件：**替还没确认的人提交「跳过」**。
+ *
+ * 跳过不受时间窗限制（规则层只拦「换牌」不拦「跳过」），所以这里一定能走通 ——
+ * 否则一旦有人不点，整局会永久停在换牌阶段。
+ */
+function handleMulliganTimeout(roomId: string): void {
+  const rt = runtimes.get(roomId);
+  const room = roomManager.getRoom(roomId);
+  if (!rt || !room || room.phase !== 'playing') return;
+  if (rt.state.phase !== 'mulligan') return;
+
+  for (const pid of [...rt.state.seats]) {
+    if (rt.state.players[pid]?.mulliganDone) continue;
+    // 前一个人的「跳过」可能已经关闭了阶段（对方早就确认过）。
+    if (rt.state.phase !== 'mulligan') break;
+    const intent: Intent = {
+      type: core.INTENTS.mulligan,
+      actor: 'system',
+      playerId: pid,
+      seq: rt.serverSeq + 1,
+      reason: 'mulligan-timeout',
+    };
+    const result = submitSystemIntent(rt.state, intent, {
+      engine,
+      replay: rt.replay,
+      now: () => Date.now(),
+      cards: CARD_POOL,
+      emit: (out) => emitGameOut(roomId, rt, out),
+    });
+    rt.state = result.state;
+  }
+
+  // 两条「跳过」必然关闭阶段 → 进入第一回合，从这里开始算回合时限。
+  if (rt.state.phase !== 'mulligan') rt.timer.arm();
+  broadcastRoom(roomId);
+  scheduleAi(roomId);
+}
+
+/** 开始换牌倒计时。已在计时时不重置 —— 一次「确认」不该给另一个人续命。 */
+function armMulliganTimer(roomId: string, rt: RoomRuntime): void {
+  if (rt.mulliganHandle !== null) return;
+  rt.mulliganHandle = hostScheduler.setTimeout(() => {
+    rt.mulliganHandle = null;
+    handleMulliganTimeout(roomId);
+  }, MULLIGAN_WINDOW_MS);
+}
+
+/**
+ * 按当前阶段选计时器（D-259）。
+ *
+ * 换牌阶段与回合是**两套**计时：前者固定 `MULLIGAN_WINDOW_MS`、超时做「跳过」，
+ * 后者按房间档位（H18）、超时做「结束回合」。共用一个 handle 会让换牌阶段
+ * 被当成一个回合提前结束。
+ */
+function syncTimers(roomId: string, rt: RoomRuntime): void {
+  if (rt.state.phase === 'mulligan') {
+    rt.timer.clear();
+    armMulliganTimer(roomId, rt);
+    return;
+  }
+  clearMulliganTimer(rt);
+  rt.timer.arm();
 }
 
 function broadcastRoom(roomId: string): void {
@@ -256,6 +342,7 @@ function abandonSeat(roomId: string, playerId: string): void {
     rt.state = result.state;
     if (gameOver(rt.state)) {
       rt.timer.clear();
+      clearMulliganTimer(rt);
       roomManager.forfeitSeries(roomId, playerId);
     }
     return;
@@ -318,7 +405,9 @@ function handleTurnTimeout(roomId: string): void {
   if (rt.state.winner !== null || rt.state.draw) {
     finishGame(roomId);
   } else {
-    rt.timer.arm(); // 已进入下一回合 —— 重新计时
+    // 已进入下一回合 —— 重新计时（D-259 起统一走 syncTimers：AI 若刚在换牌阶段，
+    // 这里也要能正确切到回合计时）。
+    syncTimers(roomId, rt);
   }
   broadcastRoom(roomId);
   // 超时是把回合交给下一个人，人机房里可能正好轮到 AI（D-242）。
@@ -417,7 +506,8 @@ function runAiStep(roomId: string): void {
     return;
   }
   // 与玩家 Intent 同一口径：只有被接受才重新计时（否则非法操作能无限续命）。
-  rt.timer.arm();
+  // D-259：AI 在换牌阶段提交「跳过」后阶段会关闭，这里要顺势切到回合计时。
+  syncTimers(roomId, rt);
   broadcastRoom(roomId);
   // 可能仍是 AI 的回合（出牌 / 攻击可以连着做），继续排下一拍。
   scheduleAi(roomId);
@@ -440,6 +530,7 @@ function finishGame(roomId: string): void {
   const room = roomManager.getRoom(roomId);
   if (!rt || !room) return;
   rt.timer.clear();
+  clearMulliganTimer(rt);
   if (!gameOver(rt.state)) return;
   roomManager.recordGameResult(roomId, rt.state.winner);
   fastify.log.info(
@@ -532,7 +623,8 @@ function startGame(roomId: string, opts: { firstPlayerId?: string } = {}): void 
   const first = rt.state.seats[0];
   if (first) room.firstPlayers.push(first);
   // 新一局重新计时（上一局结束时已 clear）。
-  rt.timer.arm();
+  // D-259：此时停在换牌阶段，`syncTimers` 会改成 30s 换牌倒计时，而不是回合时限。
+  syncTimers(roomId, rt);
   // 再发一次快照：这次才带上计时截止时刻（首次快照在 arm 之前，只能给 deadline = 0）。
   broadcastSnapshot(roomId);
   broadcastRoom(roomId);
@@ -649,6 +741,7 @@ function sweepRuntimes(): void {
     }
     // 不 clear 的话，定时器句柄会把已销毁房间的运行时吊住不释放。
     rt.timer.clear();
+    clearMulliganTimer(rt);
     // 没开过局的房间不落盘（D-177）—— 否则每间「建房后散了」的房间都会留一个空壳。
     if (!rt.replay.hasContent()) continue;
     // ⚠️ 必须 catch（D-176）：`void` 一个会 reject 的 Promise，在 Node 22 上等于
@@ -997,7 +1090,8 @@ io.on('connection', (socket) => {
       if (gameOver(rt.state)) {
         finishGame(located.room.id);
       } else {
-        rt.timer.arm();
+        // D-259：换牌阶段与回合用两套计时，统一交给 `syncTimers` 按阶段选。
+        syncTimers(located.room.id, rt);
         // 人机房（D-242）：玩家这一手做完可能就轮到 AI 了。
         scheduleAi(located.room.id);
       }
