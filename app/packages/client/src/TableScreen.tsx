@@ -18,7 +18,7 @@ import {
 } from './decks.js';
 import { REPLAY_VIEW_ENABLED } from './features.js';
 import { KEYWORD_NOTE, PHASE_LABEL, endReasonText, linkBannerText, turnTimeoutLabel } from './labels.js';
-import { actionability, turnGuidance, type Actionability } from './selectors.js';
+import { actionability, choiceSideLabels, turnGuidance, type Actionability } from './selectors.js';
 import type { RoomView } from './types.js';
 import type { Fx, RoomSession } from './useRoom.js';
 import { isSfxMuted, setSfxMuted } from './sfx.js';
@@ -727,7 +727,7 @@ function ChoiceOverlay(props: {
   const SUB_LABEL: Readonly<Record<string, string>> = {
     l1: '1档：从弃牌区召唤随从（力量 ≤ 炎刃数）',
     l3: '3档：一个随从本回合力量 +1',
-    l5: '5档：破坏一个随从（力量 ≤ 炎刃数）',
+    l5: '5档：破坏一个随从（力量 ≤ 炎刃数，可选对方场上）',
     l7: '7档：一个随从本回合对指挥官伤害 +1',
     l9: '9档：一个随从一回合一次攻击后重置',
   };
@@ -778,6 +778,9 @@ function ChoiceOverlay(props: {
       .flatMap((p) => Object.values(p.zones).flat())
       .find((x) => x.uid === uid);
 
+  // 候选跨了双方时标出「我方 / 敌方」（issue #105）—— 镜像对局里同名随从靠卡名分不清
+  const sideLabels = choiceSideLabels(props.state, choice);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" data-testid="choice-overlay">
       <div className="w-80 max-w-full rounded-xl border border-emerald-600/60 bg-slate-900 p-4">
@@ -806,6 +809,7 @@ function ChoiceOverlay(props: {
             }
             const inst = findCard(opt);
             const def = inst ? CARD_POOL[inst.defId] : undefined;
+            const side = sideLabels[opt];
             return (
               <button
                 key={opt}
@@ -814,6 +818,16 @@ function ChoiceOverlay(props: {
                 onClick={() => answer(opt)}
                 data-testid={`choice-card`}
               >
+                {side ? (
+                  <span
+                    className={`block text-[9px] leading-tight ${
+                      side === '我方' ? 'text-emerald-300' : 'text-rose-300'
+                    }`}
+                    data-testid="choice-side"
+                  >
+                    {side}
+                  </span>
+                ) : null}
                 <span className="block truncate text-[11px] text-slate-100">{def?.name ?? opt}</span>
                 <span className="block text-[10px] text-slate-400">
                   费 {def?.cost ?? 0} / 力 {def?.power ?? 0}

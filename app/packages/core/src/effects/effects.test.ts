@@ -148,7 +148,7 @@ describe('统领 Ⅰ：按除外区炎刃数分档', () => {
     expect(s.pendingChoice).toBeNull();
   });
 
-  it('5 档：破坏力量值 ≤ 炎刃数的随从，候选同样限己方（H22）', () => {
+  it('5 档：破坏力量值 ≤ 炎刃数的随从 —— 候选含对手场上（issue #105 / H22 修订）', () => {
     let s = craft({
       zones: {
         commander: [LORD],
@@ -156,18 +156,38 @@ describe('统领 Ⅰ：按除外区炎刃数分档', () => {
         exile: Array.from({ length: 5 }, (_, i) => c(`x${i}`, 'bladeVanguard')), // 5 张炎刃
         board: [c('b1', 'bladeRecruit')],
       },
-      // 对方随从力量 4 ≤ 5，旧口径（不限体系）下会是候选 —— 钉住它不再出现
-      foeZones: { board: [c('fb1', 'bladeKnight')] },
+      // 对方随从力量 4 ≤ 5 → 可选；力量 6 的 bladeVeteran > 5 → 不可选
+      foeZones: { board: [c('fb1', 'bladeKnight'), c('fb2', 'bladeVeteran')] },
     });
     s = run(s, intent('p1', INTENTS.effectActivate, { uid: 'lord1', effect: '1' }));
     s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'l5' }));
     expect(s.pendingChoice?.kind).toBe('blade-lord-1-target');
-    expect(s.pendingChoice?.options).toEqual(['b1']);
+    // 己方在前、对手在后；力量超标的对手随从 fb2 不出现
+    expect(s.pendingChoice?.options).toEqual(['b1', 'fb1']);
 
+    // 破坏对手随从 —— 结算路径必须按目标持有者搬卡，不能按发动者搬
+    s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'fb1' }));
+    expect(s.players['p2']!.zones.board.map((x) => x.uid)).toEqual(['fb2']);
+    expect(s.players['p2']!.zones.graveyard.map((x) => x.uid)).toEqual(['fb1']);
+    // 自己的随从不受影响
+    expect(s.players['p1']!.zones.board.map((x) => x.uid)).toEqual(['b1']);
+  });
+
+  it('5 档：也能破坏己方随从（候选是双方场上，不是只有对手）', () => {
+    let s = craft({
+      zones: {
+        commander: [LORD],
+        cost: [c('k1', 'bladeRecruit'), c('k2', 'bladeRecruit')],
+        exile: Array.from({ length: 5 }, (_, i) => c(`x${i}`, 'bladeVanguard')),
+        board: [c('b1', 'bladeRecruit')],
+      },
+      foeZones: { board: [c('fb1', 'bladeKnight')] },
+    });
+    s = run(s, intent('p1', INTENTS.effectActivate, { uid: 'lord1', effect: '1' }));
+    s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'l5' }));
     s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'b1' }));
     expect(s.players['p1']!.zones.board).toHaveLength(0);
     expect(s.players['p1']!.zones.graveyard.map((x) => x.uid)).toContain('b1');
-    // 对方随从不受影响
     expect(s.players['p2']!.zones.board.map((x) => x.uid)).toEqual(['fb1']);
   });
 

@@ -1,4 +1,4 @@
-import type { GameState, PlayerId } from '@app/shared/types';
+import type { GameState, PendingChoice, PlayerId } from '@app/shared/types';
 
 /**
  * 「现在能不能做某个操作」的纯判定（T-04）。
@@ -169,4 +169,31 @@ export function turnGuidance(
             : '';
 
   return { hint, label, tone };
+}
+
+/**
+ * 待定选择浮层里「卡片选项」该不该标阵营（issue #105）。
+ *
+ * 统领Ⅰ的 5 档破坏改成候选含对手场上之后，同一张卡可能同时出现在两边
+ * （镜像对局时名字、费用、力量完全一样），只靠卡名分不清点的是谁家的随从。
+ *
+ * 纪律：**只有候选真的跨了双方**才标注。单边列表（冻结敌方、检视己方弃牌区等）
+ * 一律返回空表 —— 每个选项都挂「敌方」只是噪声。
+ */
+export function choiceSideLabels(
+  state: GameState,
+  choice: PendingChoice,
+): Readonly<Record<string, '我方' | '敌方'>> {
+  const owner = new Map<string, PlayerId>();
+  for (const [pid, p] of Object.entries(state.players)) {
+    for (const zone of Object.values(p.zones)) for (const card of zone) owner.set(card.uid, pid);
+  }
+  const sides = new Set(choice.options.map((o) => owner.get(o)).filter(Boolean));
+  if (sides.size < 2) return {};
+  const out: Record<string, '我方' | '敌方'> = {};
+  for (const opt of choice.options) {
+    const pid = owner.get(opt);
+    if (pid !== undefined) out[opt] = pid === choice.playerId ? '我方' : '敌方';
+  }
+  return out;
 }
