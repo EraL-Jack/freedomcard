@@ -130,6 +130,13 @@ export interface RoomSession {
   /** 本回合的计时截止时刻（服务端时钟）；未计时为 `null`。 */
   turnDeadline: number | null;
   log: LogEntry[];
+  /**
+   * 回合边界是否还在播放中（D-268 / issue #101）。
+   *
+   * `true` = 队列里还有 `turn:changed` 没应用。此刻 `phase` 可能已经翻到下一回合的
+   * 充能，但席位还没换 —— 界面**不得**据此给出「你的回合，该这么操作」的指引。
+   */
+  turnPending: boolean;
   /** 正在播放的呈现事件（横幅/飘字）；无则 `null`。 */
   fx: Fx | null;
   /** 展示区内容（D-123）：按玩家记的最近一批「从卡组展示」的卡。 */
@@ -276,6 +283,15 @@ export function useRoom(): RoomSession {
    */
   const [revealed, setRevealed] = useState<Record<string, { uid: string; defId: string }[]>>({});
   const revealTickRef = useRef<Record<string, number>>({});
+  /**
+   * 队列里还有 `turn:changed` 没应用（D-268 / issue #101）。
+   *
+   * 回合边界在事件流里是两条事件：`phase:changed(… → charge)` 紧跟 `turn:changed`。
+   * 播放循环逐条 reduce，中间那一帧就成了「阶段已是下一回合的充能、`activeSeat` 还是上一家」
+   * —— 这个局面从未真实存在过，照它算出的「你的回合 + 充能阶段」指引会误导玩家。
+   * 界面据此把归属文案换成「回合切换中…」并暂停给指引（`turnGuidance`）。
+   */
+  const [turnPending, setTurnPending] = useState(false);
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -433,6 +449,8 @@ export function useRoom(): RoomSession {
         const next = core.reduce(prev, e);
         stateRef.current = next;
         if (mountedRef.current) setState(next);
+        // 回合边界落地 —— 归属文案恢复成「你的回合 / 对手回合」（D-268）。
+        if (e.type === 'turn:changed' && mountedRef.current) setTurnPending(false);
         // 用**reduce 后**的状态翻译：卡刚移动完，才能按 uid 反查到卡名。
         const text = describeEvent(e, namesRef.current, next);
         if (text) appendLog(text, e.at);
@@ -494,6 +512,13 @@ export function useRoom(): RoomSession {
     } finally {
       if (mountedRef.current) setFx(null);
       pumpingRef.current = false;
+      /*
+       * 兜底：队列已空却还挂着「回合切换中」是不可能的组合 ——
+       * 唯一走到这里的异常路径是「还没有起点状态，事件被 `continue` 跳过」，
+       * 那条 `turn:changed` 永远不会被应用。不在这里清掉，顶栏会永久停在
+       * 「回合切换中…」且不再给任何指引（Era 最烦的「点了没反应」的变体）。
+       */
+      if (queueRef.current.length === 0 && mountedRef.current) setTurnPending(false);
     }
   }, [appendLog]);
 
@@ -513,6 +538,7 @@ export function useRoom(): RoomSession {
     const onSnapshot = (snap: SnapshotOut): void => {
       // 快照是新的起点：播放队列作废（重连场景下队列里的事件已被快照覆盖）。
       queueRef.current = [];
+      setTurnPending(false);
       setFx(null);
       setRevealed({});
       revealTickRef.current = {};
@@ -540,7 +566,15 @@ export function useRoom(): RoomSession {
       }
       if (!stateRef.current) return; // 还没有起点状态 —— 等服务端补发快照
       // 事件进播放队列，逐条 reduce + 按节奏停顿（见 FX_MS）。
-      queueRef.current.push(...(out.events ?? []));
+      const incoming = out.events ?? [];
+      /*
+       * 这一批里若含回合边界，从**入队那一刻**就把归属标成「切换中」（D-268）。
+       *
+       * 不能等到 `phase:changed(charge)` 应用时才标 —— 那时已经晚了一帧：
+       * 中间态「阶段 充能 + 上一家还没交棒」正是要避免的那一帧。
+       */
+      if (incoming.some((e) => e.type === 'turn:changed')) setTurnPending(true);
+      queueRef.current.push(...incoming);
       setHash(out.hash ?? null);
       void pump();
     };
@@ -794,6 +828,8 @@ export function useRoom(): RoomSession {
     foe,
     turnDeadline,
     log,
+    // 回合边界是否还在播放中（D-268）—— 顶栏与阶段提示据此避免「半批状态」误导。
+    turnPending,
     fx,
     revealed,
     notice,

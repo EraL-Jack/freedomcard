@@ -18,7 +18,7 @@ import {
 } from './decks.js';
 import { REPLAY_VIEW_ENABLED } from './features.js';
 import { KEYWORD_NOTE, PHASE_LABEL, endReasonText, linkBannerText, turnTimeoutLabel } from './labels.js';
-import { actionability, type Actionability } from './selectors.js';
+import { actionability, turnGuidance, type Actionability } from './selectors.js';
 import type { RoomView } from './types.js';
 import type { Fx, RoomSession } from './useRoom.js';
 import { isSfxMuted, setSfxMuted } from './sfx.js';
@@ -1009,7 +1009,8 @@ function WaitingRoom({ session }: { session: RoomSession }): React.JSX.Element {
 }
 
 export default function TableScreen({ session }: { session: RoomSession }): React.JSX.Element {
-  const { room, state, me, foe, turnDeadline, log, notice, fx, revealed, dismiss } = session;
+  const { room, state, me, foe, turnDeadline, log, notice, fx, revealed, turnPending, dismiss } =
+    session;
   // 手牌选中 —— Era 2026-10-18：**非多目标场景的选中必须排他**，任何时候最多一张手牌高亮。
   // （充能规则上允许任意数量（X-2），但协议支持逐张发，多张充能 = 连续多次单张操作。）
   const [picked, setPicked] = useState<string | null>(null);
@@ -1201,12 +1202,16 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   const mulliganExpired = state.phase === 'mulligan' && mulliganLeft !== null && mulliganLeft <= 0;
 
   /**
-   * 当前阶段该做什么（D-258）。
+   * 当前阶段该做什么（D-258）+ 顶栏归属文案。
    *
    * Era 2026-10-21：「过回合时充能阶段显示好像不太明显」——
    * 阶段进度条只回答「我在哪」，没有回答「我现在该做什么」。
-   * 六阶段里最容易迷路的就是充能（要主动把随从换进费用区）与抽牌（要点卡组）。
+   *
+   * 判据已抽到 `selectors.ts` 的 `turnGuidance`（纯函数、可单测），因为它在 D-268 上
+   * 踩过一个坑：逐条播放事件时，回合边界中间那一帧「阶段已充能、席位还没换」
+   * 会让结束回合的人看到「你的回合 · 充能阶段…」。详见该函数注释。
    */
+  const guide = turnGuidance(state, me, turnPending);
   const phaseHint = choiceOpen
     ? ''
     : state.phase === 'mulligan'
@@ -1217,17 +1222,7 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
               mulliganLeft === null ? '' : `（剩余 ${mulliganLeft} 秒，到点自动不换牌开局）`
             }`
         : '你已确认，等待对手完成换牌…'
-      : !myTurn
-        ? ''
-        : state.phase === 'charge'
-          ? '充能阶段：点手牌里的随从 →「充能」放进费用区（每回合开始已自动 +2 张）'
-          : state.phase === 'draw'
-            ? '抽牌阶段：点你的卡组区抽一张'
-            : state.phase === 'main'
-              ? '主要阶段：点手牌 →「出牌」；出随从时点格子选位置，有随从的格子会被顶替'
-              : state.phase === 'battle'
-                ? '战斗阶段：点我方随从（或指挥官）→ 点对方目标'
-                : '';
+      : guide.hint;
 
   /**
    * 指挥官攻击也走「点自己 → 点目标」（D-258，Era 2026-10-21 明确要求）。
@@ -1621,7 +1616,9 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
       {/* 回合数 / 计时居中（B2-5） */}
       <header className="flex items-center justify-center gap-3 text-xs sm:text-sm">
         <span data-testid="turn">{state.phase === 'mulligan' ? '开局' : `第 ${state.turn} 回合`}</span>
-        <span className="text-slate-400">阶段 {PHASE_LABEL[state.phase]}</span>
+        <span className="text-slate-400" data-testid="phase">
+          阶段 {PHASE_LABEL[state.phase]}
+        </span>
         {/* 计时（D-267）：换牌阶段下发的是**换牌截止时刻**，不再是「—」（issue #99）。 */}
         <span className="text-slate-400" data-testid="clock">
           计时 {remain === null ? '—' : `${remain}s`}
@@ -1639,8 +1636,21 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
             {mine.mulliganDone ? '你已确认' : '等你换牌'} · {theirs.mulliganDone ? '对手已确认' : '对手换牌中'}
           </span>
         ) : (
-          <span className={myTurn ? 'text-emerald-400' : 'text-slate-400'}>
-            {myTurn ? '你的回合' : '对手回合'}
+          /*
+           * 回合归属（D-268）—— 文案与色调都来自 `turnGuidance`，不在这里二次判断：
+           * 边界在播时显示「回合切换中…」，避免结束回合的一方先看到「你的回合 · 充能阶段」。
+           */
+          <span
+            className={
+              guide.tone === 'mine'
+                ? 'text-emerald-400'
+                : guide.tone === 'pending'
+                  ? 'text-amber-300'
+                  : 'text-slate-400'
+            }
+            data-testid="turn-label"
+          >
+            {guide.label}
           </span>
         )}
         {/* 对手断线（D-233）：宽限期内给明确提示，否则「对面不动」看起来像自己卡了 */}

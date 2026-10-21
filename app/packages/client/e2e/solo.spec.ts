@@ -62,3 +62,72 @@ test('换牌阶段桌面有倒计时，并写明到点自动开局（D-267）', 
   await expect(page.getByTestId('phase-hint')).toContainText('剩余');
   await expect(page.getByTestId('phase-hint')).toContainText('到点自动不换牌开局');
 });
+
+/**
+ * D-268 / issue #101：**回合边界的中间帧不许被当成真局面**。
+ *
+ * Era 的原话：「充能阶段的提示在切换回合之前显示了」。
+ *
+ * 根因不在引擎 —— 回合边界在事件流里就是两条（`phase:changed(… → charge)` +
+ * `turn:changed`），是客户端**逐条播放 + 每相位停 750ms** 把中间那一帧画了出来：
+ * 阶段已经是下一回合的充能、`activeSeat` 还是自己，于是结束回合的人看到
+ * 「你的回合 · 充能阶段：点手牌里的随从…」，愣一下才交棒给对手。
+ *
+ * ## 为什么这样断言
+ *
+ * 单点断言会漏：坏状态下只有 750ms 是错的，`toHaveText` 可能正好错过，好状态下
+ * 也不该依赖时序。所以这里**连续采样**整个交棒过程，只钉一条不变量：
+ * 任何一帧都不得同时出现「你的回合」与「充能阶段」的指引 ——
+ * 这个组合从未真实存在过。坏代码必然在窗口内被采到，好代码一帧都不违例。
+ */
+test('结束回合时不给「你的回合 + 充能阶段」的错误指引（D-268）', async ({ browser }) => {
+  const { page } = await startSoloGame(browser);
+
+  // 先后手由 seed 决定，不能假设玩家先手 —— 等到真的轮到我再动手
+  await expect(page.getByTestId('turn-label'), '应轮到玩家行动').toHaveText('你的回合', {
+    timeout: 15_000,
+  });
+
+  const sample = (): Promise<{ label: string; phase: string; hint: string }> =>
+    page.evaluate(() => {
+      const text = (id: string): string =>
+        document.querySelector(`[data-testid="${id}"]`)?.textContent ?? '';
+      return { label: text('turn-label'), phase: text('phase'), hint: text('phase-hint') };
+    });
+
+  await expect(page.getByTestId('phase'), '开局应停在充能阶段').toContainText('充能');
+  await page.getByTestId('end-turn').click();
+
+  const samples: { label: string; phase: string; hint: string }[] = [];
+  const until = Date.now() + 8_000;
+  while (Date.now() < until) {
+    const s = await sample();
+    samples.push(s);
+    // 交棒完成即停止 —— 再往后「真的是我」的充能阶段不算违例
+    if (s.label === '对手回合') break;
+    await page.waitForTimeout(40);
+  }
+
+  // ① 交棒必须真的发生过，否则后面的断言是空验证
+  expect(
+    samples.at(-1)?.label,
+    `回合应已交给电脑，实际采样：${JSON.stringify(samples.slice(-3))}`,
+  ).toBe('对手回合');
+
+  /*
+   * ② 先定位「阶段第一次离开充能、又回到充能」的那一帧 —— 那是新回合的起点。
+   *
+   * ⚠️ 不能只断言「不得同时出现 你的回合 + 充能阶段」：**我自己的充能阶段本来就是
+   * 这个组合**（合法的回合起点），照字面断言会把正确行为判成错误（首版就是这么翻的车）。
+   * 违例只在「离开过充能之后又回到充能、席位却还没换」时成立 —— 那个局面从未真实存在。
+   */
+  const leftCharge = samples.findIndex((s) => !s.phase.includes('充能'));
+  expect(leftCharge, '应观察到阶段离开充能（战斗 / 结束阶段）').toBeGreaterThan(-1);
+  const backToCharge = samples.findIndex((s, i) => i > leftCharge && s.phase.includes('充能'));
+  expect(backToCharge, '应观察到阶段回到充能（新回合起点）').toBeGreaterThan(-1);
+
+  const lies = samples
+    .slice(backToCharge)
+    .filter((s) => s.label === '你的回合' && s.hint.includes('充能阶段'));
+  expect(lies, '交棒前的那 750ms 不应给出「你的回合 · 充能阶段」的指引').toEqual([]);
+});

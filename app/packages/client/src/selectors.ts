@@ -103,3 +103,70 @@ export function actionability(state: GameState, me: PlayerId, _now: number): Act
     canRevealAttack,
   };
 }
+
+/** 回合归属的色调 —— 界面据此选文字颜色（不在这里拼 class）。 */
+export type TurnTone = 'mine' | 'foe' | 'pending';
+
+export interface TurnGuidance {
+  /** 「现在该做什么」的阶段提示文案；空串 = 不显示。 */
+  hint: string;
+  /** 顶栏的回合归属文案；`null` = 此刻不归这里管（换牌阶段有自己的状态条）。 */
+  label: string | null;
+  /** 归属色调。 */
+  tone: TurnTone;
+}
+
+/** 回合边界正在播放时，顶栏显示这个而不是「你的回合 / 对手回合」（D-268）。 */
+export const TURN_SWITCHING_LABEL = '回合切换中…';
+
+/**
+ * 回合内的「该做什么」提示 + 顶栏归属文案（D-258 / D-268）。
+ *
+ * ## 为什么需要 `turnChangePending`
+ *
+ * 客户端播放事件是**逐条 reduce + 按节奏停顿**的（`FX_MS`），一个回合边界在事件流里
+ * 是两条：`phase:changed(… → charge)` 与紧随其后的 `turn:changed`。分开渲染就会出现
+ * 一帧「阶段已经是充能、`activeSeat` 还是上一家」的**半批状态** —— 这个局面从来没有
+ * 真实存在过（第 N 回合的充能阶段早就过去了）。
+ *
+ * 若照着它给指引，结束回合的那一方会看到「你的回合 · 充能阶段：点手牌里的随从…」，
+ * 停 750ms 后回合才交给对手（Era 2026-10-21 issue #101：充能阶段的提示在切换回合之前显示了）。
+ *
+ * 所以：**回合归属只信「已落地」的状态**。边界在播时既不给指引，也不宣称是谁的回合。
+ *
+ * @param turnChangePending 队列里还有 `turn:changed` 没应用（`useRoom` 提供）
+ */
+export function turnGuidance(
+  state: GameState,
+  me: PlayerId,
+  turnChangePending: boolean,
+): TurnGuidance {
+  // 换牌（D-259）不属于任何回合，顶栏由换牌状态条负责，这里不掺和。
+  if (!state.started || state.phase === 'mulligan') return { hint: '', label: null, tone: 'foe' };
+
+  if (turnChangePending) return { hint: '', label: TURN_SWITCHING_LABEL, tone: 'pending' };
+
+  const myTurn = state.seats[state.activeSeat] === me;
+  const label = myTurn ? '你的回合' : '对手回合';
+  const tone: TurnTone = myTurn ? 'mine' : 'foe';
+  // 对方回合不讲解「你该做什么」—— 讲了他也做不了，只会和桌面上的禁用态打架。
+  if (!myTurn) return { hint: '', label, tone };
+
+  // 待定选择挂起时只放行「回答 + 认输」，不给别的指引（D-152 口径）。
+  if (state.pendingChoice !== null && state.pendingChoice.playerId === me) {
+    return { hint: '', label, tone };
+  }
+
+  const hint =
+    state.phase === 'charge'
+      ? '充能阶段：点手牌里的随从 →「充能」放进费用区（每回合开始已自动 +2 张）'
+      : state.phase === 'draw'
+        ? '抽牌阶段：点你的卡组区抽一张'
+        : state.phase === 'main'
+          ? '主要阶段：点手牌 →「出牌」；出随从时点格子选位置，有随从的格子会被顶替'
+          : state.phase === 'battle'
+            ? '战斗阶段：点我方随从（或指挥官）→ 点对方目标'
+            : '';
+
+  return { hint, label, tone };
+}
