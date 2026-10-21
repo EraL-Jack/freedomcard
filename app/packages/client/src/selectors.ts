@@ -66,8 +66,8 @@ export function actionability(state: GameState, me: PlayerId, _now: number): Act
    * 旧口径挂在「各自第一个充能阶段」上（X-17），理由是后攻方要等一回合 ——
    * 现在换牌被提到开局前的独立阶段，双方同时进行，那个理由不再成立。
    *
-   * 这里只管**界面给不给入口**；时间窗由服务端按 `startedAt` 判定，
-   * 且「跳过」永远允许（否则窗口一过阶段就关不掉）。
+   * 这里只管**界面给不给入口**；时间窗由服务端计时器裁决（D-267 起换牌窗口
+   * 跟随房间回合时限），到点它会替未确认方提交「跳过」，阶段随即关闭。
    */
   const mulliganOpen = phase === 'mulligan' && mine?.mulliganDone !== true;
   const canMulligan = mulliganOpen;

@@ -101,12 +101,14 @@ export const AI_NICKNAME = '电脑';
 export const AI_STEP_DELAY_MS = 600;
 
 /**
- * 开局换牌时间窗 —— Era 2026-10-19：「开局换牌需要加一个时间窗，时间窗过了隐藏换牌按钮」。
+ * 开局换牌时间窗的**默认值** —— Era 2026-10-19：「开局换牌需要加一个时间窗」。
  *
- * 基准 = **各自首次进入己方充能阶段**（`PlayerState.firstChargeAt`），不是开局时刻 ——
- * 后攻方的首个充能阶段在下一回合，按开局起算会让它永远落在窗外（X-17 放开后攻换牌的前提）。
- * 窗口过后服务端拒换牌（`MULLIGAN_EXPIRED`）、客户端隐藏按钮。
- * 时长按 Era 2026-10-19 拍板取 **30 秒**（H25 已确认）。
+ * ⚠️ **D-267 起它只是兜底**：换牌窗口跟随该房间的回合时限（建房档位 30/60/180/999 秒，
+ * Era 2026-10-21「换牌时间也按每回合时间来定，不要固定值」）。
+ * 只有房间没设档位时才用到这个数（`server/src/room/mulligan-timeout.ts` 的 `mulliganWindowMs`）。
+ *
+ * 窗口到点由**服务端计时器**裁决：替未确认方提交「不换牌」，阶段随即关闭。
+ * 规则层（`core/rules/mulligan.ts`）不读时间 —— 它拿不到房间档位，读了就会与计时器分裂。
  */
 export const MULLIGAN_WINDOW_MS = 30_000;
 
@@ -304,8 +306,12 @@ export const RULE_ERRORS = {
   MAX_COST_EXCEEDED: 'MAX_COST_EXCEEDED',
   GAME_OVER: 'GAME_OVER',
   MULLIGAN_DONE: 'MULLIGAN_DONE',
-  /** 开局换牌时间窗已过（Era 2026-10-19：换牌加时间窗，窗口外禁止换牌）。 */
-  MULLIGAN_EXPIRED: 'MULLIGAN_EXPIRED',
+  /*
+   * D-267 删掉了 `MULLIGAN_EXPIRED` —— 换牌窗口改由服务端计时器裁决后，
+   * 规则层不再产生「时间窗已过」这个拒绝：到点时计时器已经替未确认方提交了「跳过」，
+   * 阶段随之关闭，此后换牌的拒绝原因是 `WRONG_PHASE`（「当前已不是开局换牌阶段」）。
+   * 留一个永不产生的错误码只会让客户端映射表里多一条死文案。
+   */
   /** 本抽牌阶段已抽过牌（抽牌为手动点击卡组，Era 2026-10-18）。 */
   DRAW_DONE: 'DRAW_DONE',
   /** 卡组构成不合法（主卡组张数、同名上限、指挥官缺失或类型错）。 */

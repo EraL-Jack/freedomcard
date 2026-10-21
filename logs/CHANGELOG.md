@@ -4203,3 +4203,58 @@ D-265 收尾时留了一个待 Era 定的交互问题：浮窗现在是**居中�
 
 **未做的（仍然待 Era）**：README §10 第 20 条 —— 390px 下各区的高度权重、
 五区一行是否拆两行。与浮窗无关，仍属视觉决策。
+
+---
+
+## D-267 · 换牌超时兜底的 Intent 漏参数 + 换牌倒计时/时长（issue #99，2026-10-21）
+
+Era 报 issue #99「游戏流程：换牌时选择失败」：先是英文报错弹框（`returns 必须是 uid 数组`），
+然后是「换牌时间窗已过」。附带要求：**换牌时长按回合时间来定、倒计时显示在桌面上、
+倒计时结束默认不换牌直接开局**。
+
+### 根因（不是「玩家操作错了」，是服务端兜底自己坏了）
+
+`server/src/index.ts` 的 `handleMulliganTimeout` 构造系统 Intent 时**漏了 `payload.returns`**：
+
+```ts
+const intent: Intent = { type: INTENTS.mulligan, actor: 'system', playerId: pid, seq, reason: 'mulligan-timeout' };
+```
+
+而 `mulliganRule` 要求 `returns` 必须是 uid 数组（`strListArg` 返回 null 就拒）。于是：
+
+1. 30 秒一到 → 兜底自己先被规则拒掉 → **换牌阶段关不掉**；
+2. system Intent 没有 socket，`emitGameOut` 走**广播**分支 → 全房玩家看到那句内部契约文案
+   （截图 1，16:47:44）；
+3. 玩家此时再提交换牌 → 窗口已过 → 「开局换牌时间窗已过」（截图 2，16:48:13）；
+4. 16:55 玩家离开 → `opponent-left` 判负。
+
+**证据**：`app/replays/bd0808bc-…json` 的 `intents` 里**只有 AI 的 mulligan**，
+玩家的提交全被拒（拒绝不进回放）；`game:ended` 的 `at` 与截图时间对得上。
+
+### 改动
+
+| # | 改动 | 文件 |
+| --- | --- | --- |
+| 1 | 抽出 `buildMulliganSkipIntent`（**带 `payload: { returns: [] }`**），兜底改用它 | `server/src/room/mulligan-timeout.ts`（新） |
+| 2 | 换牌窗口**跟随房间回合时限**（env > 建房档位 > 默认），不再写死 30s | 同上 `mulliganWindowMs` + `armMulliganTimer` |
+| 3 | 换牌截止时刻下发给客户端（`turnDeadline` 在 mulligan 阶段取 `rt.mulliganDeadline`） | `index.ts` `snapshotOf` |
+| 4 | **system Intent 被拒不广播**，只记 `fastify.log.warn` | `index.ts` `emitGameOut` |
+| 5 | 规则层**删掉时间窗判定**（`MULLIGAN_EXPIRED` 一并删除）：窗口只由服务端计时器裁决，core 拿不到房间档位，两边判就必然分裂 | `core/rules/mulligan.ts` / `shared/constants.ts` |
+| 6 | 界面：顶栏「计时 Ns」在换牌阶段有值；提示条写「剩余 N 秒，到点自动不换牌开局」；归零后按钮变「换牌时间到，正在开局…」且手牌不可选 | `client/TableScreen.tsx` |
+| 7 | 提交前清洗 `mulliganPicks`（只留非空字符串） | 同上 |
+
+**为什么规则层要删时间窗**（ADR-0056）：窗口时长属于**房间配置**，而 `core` 是纯函数、
+拿不到档位。塞进 `RuleContext` 会让回放重验必须拿到同一个值（否则「实时接受、重放拒绝」），
+塞进 state 会改 `stateHash`。所以窗口只有一个裁决者：服务端计时器。它到点替未确认方提交
+「跳过」，阶段随即关闭，此后换牌的拒绝原因是 `WRONG_PHASE`（「当前已不是开局换牌阶段」）。
+
+### 测试（单测 413 → **422**；E2E 48 → **49**）
+
+- 新增 `server/src/room/mulligan-timeout.test.ts` 8 条：构造出的 Intent **跑一遍 `applyIntent`**
+  必须被接受（不是只查形状）、双方跳过能关阶段、缺 payload 被拒（钉住「调用方必须显式带空数组」）、
+  `pendingMulliganPlayers` 过滤、窗口三段优先级。
+- core：删 1 条时间窗用例，加 2 条（规则层不再看表 / 缺 returns 被拒）。
+- E2E 新增：换牌阶段顶栏 `计时 \d+s` + 提示条「到点自动不换牌开局」。
+- **红绿验证**：
+  - 把 `buildMulliganSkipIntent` 的 `payload` 删掉 → 3 条单测红；还原即绿。
+  - 把 `snapshotOf` 改回 `rt.timer.deadlineAt` → E2E「倒计时」红；还原即绿。

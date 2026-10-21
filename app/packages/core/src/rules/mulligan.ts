@@ -21,11 +21,12 @@
  *  - 各自确认一次即锁定（`mulliganDone`），先确认的等对方；
  *  - 双方都确认（或服务端超时兜底）→ `mulligan:closed` → 进入第一回合充能阶段。
  *
- * 时间窗从**开局时刻**（`state.startedAt`）起算 —— 现在双方是同时的，
- * 不再有「后攻方永远落在窗外」的问题（那正是 X-17 当初按各自充能阶段起算的原因）。
+ * 时间窗（D-267 起）**不由本规则裁决**：换牌时长跟随该房间的回合时限，
+ * 由服务端计时器到点后替未确认方提交「跳过」（`room/mulligan-timeout.ts`）。
+ * 规则层只认「阶段是否还开着」—— 阶段关了，换牌自然被拒。
  */
 
-import { INITIAL_HAND, MULLIGAN_WINDOW_MS, SECOND_PLAYER_HAND, RULE_ERRORS } from '@app/shared/constants';
+import { INITIAL_HAND, SECOND_PLAYER_HAND, RULE_ERRORS } from '@app/shared/constants';
 import type { CardInstance, GameEvent, GameState, Intent, Result, Rejection, RuleContext } from '@app/shared/types';
 
 import {
@@ -67,18 +68,29 @@ export const mulliganRule = (
 
   const returns = strListArg(intent.payload?.returns);
   if (!returns) {
-    return { ok: false, error: { code: RULE_ERRORS.CARD_NOT_IN_ZONE, message: 'returns 必须是 uid 数组' } };
+    /*
+     * 这条是**入参契约**，不是给玩家看的提示：`returns` 必须显式给出（空数组 = 不换）。
+     *
+     * D-267 教训：服务端的换牌超时兜底原来漏了 `payload`，于是它自己被这条拒掉，
+     * 换牌阶段关不掉。修法在调用方（`room/mulligan-timeout.ts`），
+     * 这里**不改成「缺参数就当空数组」** —— 那会让「客户端漏发参数」永远查不出来。
+     */
+    return { ok: false, error: { code: RULE_ERRORS.CARD_NOT_IN_ZONE, message: '换牌请求缺少 returns 参数' } };
   }
 
   /*
-   * 时间窗**只管「换牌」这个动作，不管「确认/跳过」**（D-259）。
+   * 时间窗**不在这里判**（D-267）。
    *
-   * 若把跳过也拦掉，窗口一过双方就再也关不掉换牌阶段 —— 整局卡死在这里。
-   * 「过期」的语义是「不能再改了」，不是「不能表示不改」。
+   * 原来这里按固定的 `MULLIGAN_WINDOW_MS` 拦「窗口过后换牌」，但换牌时长在 D-267
+   * 改成跟随房间的回合时限（Era：「换牌时间也按每回合时间来定，不要固定值」），
+   * 而 core 是纯函数、拿不到房间档位。两条路都会分裂真相：
+   *   - 把档位塞进 `RuleContext` → 回放重验必须拿到同一个值，否则「实时接受、重放拒绝」；
+   *   - 把档位写进 state → 改状态结构 + 影响 `stateHash`。
+   *
+   * 所以窗口**只由服务端计时器裁决**（`armMulliganTimer` → `handleMulliganTimeout`）：
+   * 到点后它替未确认方提交「跳过」，阶段随即关闭。此后再提交换牌的拒绝原因是
+   * 「当前已不是开局换牌阶段」—— 玩家看到的也就不会是内部字段名。
    */
-  if (returns.length > 0 && state.startedAt !== null && ctx.now - state.startedAt > MULLIGAN_WINDOW_MS) {
-    return { ok: false, error: { code: RULE_ERRORS.MULLIGAN_EXPIRED, message: '开局换牌时间窗已过' } };
-  }
 
   const at = ctx.now;
   const events: GameEvent[] = [];

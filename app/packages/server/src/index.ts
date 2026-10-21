@@ -39,6 +39,7 @@ import {
 import type { Room } from './room/types.js';
 import { makeRoomCode } from './room/code.js';
 import { normalizePlayerIntent } from './room/inbound.js';
+import { buildMulliganSkipIntent, mulliganWindowMs, pendingMulliganPlayers } from './room/mulligan-timeout.js';
 import { WindowRateLimit } from './room/rate-limit.js';
 import { sweepReplayDir } from './room/replay-maintenance.js';
 import { TurnTimer, hostScheduler } from './room/turn-timer.js';
@@ -151,6 +152,16 @@ interface RoomRuntime {
    * 到点做的事是「替还没确认的人提交跳过」。
    */
   mulliganHandle: unknown | null;
+  /**
+   * 换牌阶段的截止时刻（D-267）—— 客户端据此显示桌面倒计时。
+   *
+   * 原来换牌阶段没有对外暴露任何截止时刻，`snapshot.turnDeadline` 取的是回合计时器
+   * 的 `deadlineAt`，而换牌时该计时器是 `clear` 状态（值为 0）→ 顶栏「计时 —」。
+   * Era 2026-10-21 issue #99：「倒计时要显示在桌面上，目前看倒计时是 -」。
+   *
+   * `0` = 没在计时（未开局 / 已进入回合阶段）。
+   */
+  mulliganDeadline: number;
 }
 const runtimes = new Map<string, RoomRuntime>();
 
@@ -191,6 +202,7 @@ function runtimeOf(roomId: string): RoomRuntime {
       serverSeq: 0,
       seeded: false,
       mulliganHandle: null,
+      mulliganDeadline: 0,
     } as RoomRuntime;
     rt.timer = new TurnTimer({
       now: () => Date.now(),
@@ -211,16 +223,20 @@ function clearMulliganTimer(rt: RoomRuntime): void {
     hostScheduler.clearTimeout(rt.mulliganHandle);
     rt.mulliganHandle = null;
   }
+  // 截止时刻与句柄同生共死：句柄没了还留着日期，客户端会显示一个永远不动的倒计时。
+  rt.mulliganDeadline = 0;
 }
 
 /**
- * 换牌阶段超时兜底（D-259）。
+ * 换牌阶段超时兜底（D-259 / D-267）。
  *
  * 换牌是**开局前**的阶段，不属于任何回合，所以不能借「回合超时」（那会发 `turn:end`
  * 把还没开始的对局直接推进）。到期做的事只有一件：**替还没确认的人提交「跳过」**。
  *
- * 跳过不受时间窗限制（规则层只拦「换牌」不拦「跳过」），所以这里一定能走通 ——
- * 否则一旦有人不点，整局会永久停在换牌阶段。
+ * ⚠️ **D-267**：这条 Intent 原来漏了 `payload.returns`，被 `mulliganRule` 以
+ * 「returns 必须是 uid 数组」拒掉 —— 兜底失效、阶段关不掉，而且 system Intent
+ * 没有 socket，拒绝被**广播给全房**，Era 因此在手机上看到那句英文（issue #99）。
+ * 现在 Intent 由 `buildMulliganSkipIntent` 构造并有单测钉住 payload。
  */
 function handleMulliganTimeout(roomId: string): void {
   const rt = runtimes.get(roomId);
@@ -228,18 +244,17 @@ function handleMulliganTimeout(roomId: string): void {
   if (!rt || !room || room.phase !== 'playing') return;
   if (rt.state.phase !== 'mulligan') return;
 
-  for (const pid of [...rt.state.seats]) {
-    if (rt.state.players[pid]?.mulliganDone) continue;
-    // 前一个人的「跳过」可能已经关闭了阶段（对方早就确认过）。
+  /*
+   * 每提交一次就重算「还有谁没确认」——前一个人的「跳过」可能已经关闭了阶段
+   * （对方早就确认过）。因此不能一次性取快照再逐个提交。
+   */
+  for (;;) {
+    const pending = pendingMulliganPlayers(rt.state);
+    const pid = pending[0];
+    if (pid === undefined) break;
+    // 阶段被上一次提交关掉了 —— `pendingMulliganPlayers` 会返回空，循环自然结束。
     if (rt.state.phase !== 'mulligan') break;
-    const intent: Intent = {
-      type: core.INTENTS.mulligan,
-      actor: 'system',
-      playerId: pid,
-      seq: rt.serverSeq + 1,
-      reason: 'mulligan-timeout',
-    };
-    const result = submitSystemIntent(rt.state, intent, {
+    const result = submitSystemIntent(rt.state, buildMulliganSkipIntent(pid, rt.serverSeq), {
       engine,
       replay: rt.replay,
       now: () => Date.now(),
@@ -247,29 +262,47 @@ function handleMulliganTimeout(roomId: string): void {
       emit: (out) => emitGameOut(roomId, rt, out),
     });
     rt.state = result.state;
+    /*
+     * 提交被拒就退出循环。不收手会是**死循环**：状态没变，`pending` 每一轮都返回同一批人。
+     * 拒绝原因已经在 `emitGameOut` 里记了日志（D-267 起 system 拒绝不再广播给玩家）。
+     */
+    if (result.out.kind !== 'accepted') break;
   }
 
-  // 两条「跳过」必然关闭阶段 → 进入第一回合，从这里开始算回合时限。
-  if (rt.state.phase !== 'mulligan') rt.timer.arm();
+  // 「跳过」提交完必然关闭阶段 → 进入第一回合，从这里开始算回合时限。
+  if (rt.state.phase !== 'mulligan') {
+    clearMulliganTimer(rt);
+    rt.timer.arm();
+  }
   broadcastRoom(roomId);
   scheduleAi(roomId);
+  // 关掉了阶段要补一次快照：客户端靠 `turnDeadline` 显示倒计时，
+  // 不刷新就会一直停在换牌阶段那个已经过期的截止时刻上。
+  broadcastSnapshot(roomId);
 }
 
 /** 开始换牌倒计时。已在计时时不重置 —— 一次「确认」不该给另一个人续命。 */
 function armMulliganTimer(roomId: string, rt: RoomRuntime): void {
   if (rt.mulliganHandle !== null) return;
+  /*
+   * 窗口跟随**房间的回合时限**（D-267 / issue #99）。优先级与回合计时器完全一致
+   * （env > 房间档位 > 默认），否则测试里两个时限会打架：换牌 120s、回合 30s。
+   */
+  const windowMs = mulliganWindowMs(resolveTurnTimeout(roomId), MULLIGAN_WINDOW_MS);
+  // 先落截止时刻再挂句柄：快照随时可能被广播，不能让客户端读到「有句柄没日期」的中间态。
+  rt.mulliganDeadline = Date.now() + windowMs;
   rt.mulliganHandle = hostScheduler.setTimeout(() => {
     rt.mulliganHandle = null;
     handleMulliganTimeout(roomId);
-  }, MULLIGAN_WINDOW_MS);
+  }, windowMs);
 }
 
 /**
- * 按当前阶段选计时器（D-259）。
+ * 按当前阶段选计时器（D-259 / D-267）。
  *
- * 换牌阶段与回合是**两套**计时：前者固定 `MULLIGAN_WINDOW_MS`、超时做「跳过」，
- * 后者按房间档位（H18）、超时做「结束回合」。共用一个 handle 会让换牌阶段
- * 被当成一个回合提前结束。
+ * 换牌阶段与回合是**两套**计时：前者时长**跟随房间的回合时限**（D-267 之前写死 30s，
+ * 与建房选的档位矛盾）、超时做「跳过」；后者也按同一档位（H18）、超时做「结束回合」。
+ * 共用一个 handle 会让换牌阶段被当成一个回合提前结束。
  */
 function syncTimers(roomId: string, rt: RoomRuntime): void {
   if (rt.state.phase === 'mulligan') {
@@ -363,11 +396,30 @@ function abandonSeat(roomId: string, playerId: string): void {
 function emitGameOut(roomId: string, rt: RoomRuntime, out: PipelineOut, socket?: Socket): void {
   rt.serverSeq += 1;
   const payload = { ...out, serverSeq: rt.serverSeq };
-  if (out.kind === 'accepted' || !socket) {
+  if (out.kind === 'accepted') {
     io.to(roomId).emit(SOCKET_EVENTS.gameEvents, payload);
-  } else {
-    socket.emit(SOCKET_EVENTS.gameEvents, payload);
+    return;
   }
+  if (socket) {
+    // 玩家自己的操作被拒 → 只回给他（不打扰对手）
+    socket.emit(SOCKET_EVENTS.gameEvents, payload);
+    return;
+  }
+  /*
+   * **system Intent 被拒 → 不广播**（D-267）。
+   *
+   * 原来这里和「接受」走同一条广播分支，于是引擎对系统 Intent 的拒绝原因会直接
+   * 弹到每个玩家屏幕上。issue #99 就是实例：换牌超时兜底漏了 `payload.returns`，
+   * 引擎回「returns 必须是 uid 数组」—— 一句内部契约文案，玩家既看不懂也不知道该怎么办，
+   * 更糟的是它会让人以为是**自己的操作**被拒了。
+   *
+   * 系统 Intent 由服务端自己发起，被拒是**服务端 bug**，应该进日志让开发者看见，
+   * 而不是推给玩家。玩家的界面只该看到「阶段真的推进了」。
+   */
+  fastify.log.warn(
+    { roomId, kind: out.kind, error: 'error' in out ? out.error : out.reason },
+    '系统 Intent 未被接受（不广播给玩家）',
+  );
 }
 
 /**
@@ -663,7 +715,12 @@ function snapshotOf(room: Room, rt: RoomRuntime): Record<string, unknown> {
   const playerIds = room.seats.flatMap((s) => (s ? [s.playerId] : []));
   return {
     ...buildSnapshot(rt.state, rt.serverSeq, rt.guard, playerIds, core),
-    turnDeadline: rt.timer.deadlineAt,
+    /*
+     * 换牌阶段没有回合，`rt.timer` 是 `clear` 状态（`deadlineAt` 为 0），
+     * 拿它下发会让顶栏显示「计时 —」（Era issue #99 看到的正是这个）。
+     * 换牌自己的截止时刻存在 `rt.mulliganDeadline`（D-267）。
+     */
+    turnDeadline: rt.state.phase === 'mulligan' ? rt.mulliganDeadline : rt.timer.deadlineAt,
   };
 }
 
