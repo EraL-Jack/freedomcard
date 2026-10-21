@@ -1,5 +1,5 @@
 import { drawCountFor } from '@app/core';
-import type { GameState, PendingChoice, PlayerId } from '@app/shared/types';
+import type { GameState, PendingChoice, Phase, PlayerId } from '@app/shared/types';
 
 /**
  * 「现在能不能做某个操作」的纯判定（T-04）。
@@ -213,4 +213,67 @@ export function choiceSideLabels(
     if (pid !== undefined) out[opt] = pid === choice.playerId ? '我方' : '敌方';
   }
   return out;
+}
+
+/**
+ * 拖拽松手后该做什么（issue #108）—— `onDragUp` 里原来那串 DOM 分支的纯函数版。
+ *
+ * 为什么搬出来：那段代码按 DOM 标记手写，**没有任何单测能覆盖组合**，
+ * 于是「法术拖到随从格」这种落点一直带着一个非法 `slot` 传给规则层，
+ * 换回一句「只有随从需要指定位置」的报错（Era 现场：法术拖到哪都放不出来）。
+ *
+ * 落点语义（与 `TableScreen` 的 `data-drop*` 标记一一对应）：
+ *  - `spell`：我方法术区 —— 法术 / 设置法术在这里出牌，**不带位置**；
+ *  - `board` / 带 `slot`：我方随从区 —— 随从带位置出牌；法术/设置法术**也照出**（忽略位置），
+ *    不把非法 slot 传下去（规则层的守卫保留，前端只是不制造非法请求）；
+ *  - `cost`：费用区 —— 只在充能阶段等于「充能」；
+ *  - `uid`：某张卡（攻击目标）。
+ *
+ * ⚠️ 这里只判「拖拽这种输入手势怎么映射成 Intent」，不判规则合法性 ——
+ * 能不能出牌、够不够费仍由服务端裁决（ADR-0002）。
+ */
+export type DropIntent =
+  | { kind: 'play'; slot?: number }
+  | { kind: 'charge' }
+  | { kind: 'attack'; targetUid: string }
+  | { kind: 'none' };
+
+export interface DragDropInput {
+  /** 拖动源：手牌 或 场上随从。 */
+  dragging: 'hand' | 'minion';
+  phase: Phase;
+  /** 拖动的手牌类型（`dragging === 'hand'` 时用）。 */
+  cardType?: 'minion' | 'spell' | 'continuous' | 'commander';
+  /** `data-drop` 命中值（`board` / `cost` / `spell` / `uid`）。 */
+  drop?: string;
+  /** `data-drop-slot` 命中值（随从格序号，字符串形态与 DOM 一致）。 */
+  slot?: string;
+  /** `data-drop-uid` 命中值（攻击目标）。 */
+  targetUid?: string;
+}
+
+export function dragDropIntent(input: DragDropInput): DropIntent {
+  const { dragging, phase, cardType, drop, slot, targetUid } = input;
+
+  if (dragging === 'minion') {
+    return targetUid ? { kind: 'attack', targetUid } : { kind: 'none' };
+  }
+
+  const isMinion = cardType === 'minion';
+  const onBoard = drop === 'board' || slot !== undefined;
+
+  if (drop === 'spell') {
+    // 只收「不是随从」的牌；随从拖到法术区没有语义，按取消处理（B3-4）
+    return phase === 'main' && !isMinion ? { kind: 'play' } : { kind: 'none' };
+  }
+  if (onBoard && phase === 'main') {
+    // 随从带位置；法术与设置法术忽略格子号（它们没有位置概念）
+    if (!isMinion) return { kind: 'play' };
+    return slot === undefined ? { kind: 'play' } : { kind: 'play', slot: Number(slot) };
+  }
+  if (drop === 'cost') {
+    // X-2：只有随从能充能 —— 法术拖到费用区不是「无效操作」，是「本来就不该充能」
+    return phase === 'charge' && isMinion ? { kind: 'charge' } : { kind: 'none' };
+  }
+  return { kind: 'none' };
 }

@@ -18,7 +18,13 @@ import {
 } from './decks.js';
 import { REPLAY_VIEW_ENABLED } from './features.js';
 import { KEYWORD_NOTE, PHASE_LABEL, endReasonText, linkBannerText, turnTimeoutLabel } from './labels.js';
-import { actionability, choiceSideLabels, turnGuidance, type Actionability } from './selectors.js';
+import {
+  actionability,
+  choiceSideLabels,
+  dragDropIntent,
+  turnGuidance,
+  type Actionability,
+} from './selectors.js';
 import type { RoomView } from './types.js';
 import type { Fx, RoomSession } from './useRoom.js';
 import { isSfxMuted, setSfxMuted } from './sfx.js';
@@ -1341,6 +1347,18 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   const destroyGhost = fx?.kind === 'destroy' ? (fx.destroyed ?? null) : null;
 
   /**
+   * 正在拖的手牌属于哪种牌（issue #108）—— 决定**哪个区域该高亮**。
+   *
+   * 以前无论拖什么牌都只亮随从区，等于在暗示「法术也往这儿拖」，
+   * 而法术拖到随从格会被规则拒绝。现在：随从亮随从区、法术/设置法术亮法术区。
+   */
+  const draggingHandType = (() => {
+    if (dragging?.kind !== 'hand') return undefined;
+    const card = mine.zones.hand.find((x) => x.uid === dragging.uid);
+    return card ? CARD_POOL[card.defId]?.type : undefined;
+  })();
+
+  /**
    * 详情浮层里的效果发动列表（ADR-0023 / ADR-0025）。
    * 数据来自 `ACTIVATABLE_EFFECTS`（卡牌数据的一部分），
    * ⚠️ 只做**展示门槛**（读状态），能不能发动由服务端裁决（ADR-0002）。
@@ -1411,24 +1429,24 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
       .elementFromPoint(e.clientX, e.clientY)
       ?.closest<HTMLElement>('[data-drop],[data-drop-uid],[data-drop-slot]');
     if (!hit) return; // 拖到无效区域 = 取消（B3-4）
-    if (d.kind === 'hand') {
-      const drop = hit.dataset['drop'];
-      // D-257：拖到**具体格子**就等于选了那个位置；拖到整排空白处则不指定。
-      const slotRaw = hit.dataset['dropSlot'];
-      /*
-       * ⚠️ `closest()` 命中的是**最近**的标记节点：拖到格子上时命中的是格子本身
-       * （只有 `data-drop-slot`，没有 `data-drop="board"`），
-       * 只判 `drop === 'board'` 的话这批拖拽会全部静默失效（拖了没反应）。
-       * 两个标记任取其一都算「落在随从区」。
-       */
-      const onBoard = drop === 'board' || slotRaw !== undefined;
-      if (onBoard && state.phase === 'main') {
-        commitPlay(d.uid, slotRaw === undefined ? undefined : Number(slotRaw));
-      } else if (drop === 'cost' && state.phase === 'charge') session.charge([d.uid]);
-    } else {
-      const targetUid = hit.dataset['dropUid'];
-      if (targetUid) session.attack(d.uid, targetUid);
-    }
+    /*
+     * 落点语义住在 `selectors.dragDropIntent`（issue #108）—— 原来这段是手写 DOM 分支，
+     * 组合情况没有单测，「法术拖到随从格」因此一直带着非法 slot 去换一句报错。
+     * ⚠️ `closest()` 命中的是**最近**的标记节点：拖到格子上时命中的是格子本身
+     * （只有 `data-drop-slot`，没有 `data-drop="board"`），两种标记都算「落在随从区」。
+     */
+    const card = d.kind === 'hand' ? mine.zones.hand.find((x) => x.uid === d.uid) : undefined;
+    const action = dragDropIntent({
+      dragging: d.kind,
+      phase: state.phase,
+      ...(card ? { cardType: CARD_POOL[card.defId]?.type } : {}),
+      ...(hit.dataset['drop'] === undefined ? {} : { drop: hit.dataset['drop'] }),
+      ...(hit.dataset['dropSlot'] === undefined ? {} : { slot: hit.dataset['dropSlot'] }),
+      ...(hit.dataset['dropUid'] === undefined ? {} : { targetUid: hit.dataset['dropUid'] }),
+    });
+    if (action.kind === 'play') commitPlay(d.uid, action.slot);
+    else if (action.kind === 'charge') session.charge([d.uid]);
+    else if (action.kind === 'attack') session.attack(d.uid, action.targetUid);
   };
 
   /* ---------------- 长按看详情（D-261 / issue #87） ----------------
@@ -1900,7 +1918,9 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
               费用区自带 data-drop="cost"，closest() 命中更近的它 = 充能。 */}
           <section
             className={`grid min-h-0 flex-1 auto-rows-fr grid-cols-5 gap-1 rounded ${
-              dragging?.kind === 'hand' && state.phase === 'main' ? 'ring-2 ring-cyan-400/70' : ''
+              dragging?.kind === 'hand' && state.phase === 'main' && draggingHandType === 'minion'
+                ? 'ring-2 ring-cyan-400/70'
+                : ''
             } ${myTurn ? 'shadow-[0_0_14px_rgba(52,211,153,0.12)]' : ''}`}
             data-drop="board"
           >
@@ -1913,7 +1933,9 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
               badge={`本回合 ${costText}`}
               badgeTestId="cost-usage"
               dropKey="cost"
-              highlight={dragging?.kind === 'hand' && state.phase === 'charge'}
+              highlight={
+                dragging?.kind === 'hand' && state.phase === 'charge' && draggingHandType === 'minion'
+              }
             />
             {slots.map((i) => {
               const mc = atSlot(mine.zones.board, i);
@@ -1999,7 +2021,21 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
                   : undefined
               }
             />
-            <ZoneBox label="法术区" zone="spell" cards={mine.zones.spell} content="float" state={state} />
+            <ZoneBox
+              label="法术区"
+              zone="spell"
+              cards={mine.zones.spell}
+              content="float"
+              state={state}
+              /* issue #108：法术没有「位置」概念，拖到法术区就该直接出牌（与点「出牌」等价） */
+              dropKey="spell"
+              highlight={
+                dragging?.kind === 'hand' &&
+                state.phase === 'main' &&
+                draggingHandType !== undefined &&
+                draggingHandType !== 'minion'
+              }
+            />
             {/* 抽牌阶段未抽时，卡组区变为发光动作「点击抽牌」（Era 2026-10-18 手动抽牌）。
                 卡组区**不给 inspectable**（D-265）：卡组顺序是隐藏信息 ——
                 能翻看就等于提前知道下一张抽什么，本来那一版点标题能看到 25 张。

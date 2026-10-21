@@ -134,6 +134,65 @@ test('拖拽我方随从到对方随从 = 发起攻击', async ({ browser }) => 
     .toBe(true);
 });
 
+/**
+ * 法术拖到法术区（issue #108 / D-272）。
+ *
+ * Era 2026-10-21：「拖动释放法术卡时，应该可以放到法术区，目前只能拖动到随从区而且放不出来。」
+ *
+ * 修之前法术**只能**用「出牌」按钮出；拖拽这条入口是给随从做的，
+ * 法术区没有落点、拖到随从格又必然带一个非法 slot。
+ */
+test('拖拽法术卡到法术区 = 出牌（issue #108）', async ({ browser }) => {
+  test.setTimeout(90_000);
+  const { host, guest } = await startGame(browser);
+  const pages = [host, guest];
+
+  // 先攻首回合 0 充能、maxCost 1 —— 换到后攻方（6 张起手 + 充能收入 2 张）
+  const first = await activePage(pages);
+  const turn0 = await turnNo(first);
+  await first.getByTestId('end-turn').click();
+  await expect.poll(() => turnNo(first), { timeout: 15_000 }).toBe(turn0 + 1);
+
+  const p = await activePage(pages);
+  await expect.poll(() => phaseOf(p)).toContain('阶段 充能');
+  await chargeMinions(p);
+  await advancePhase(p, '抽牌'); // 抽完自动落在主要阶段
+
+  const hand = await readHand(p);
+  const costZone = await zoneCount(p, 'cost', 1);
+  const budget = await costRemaining(p);
+  const spell = hand
+    .filter((c) => c.kind === '法术' || c.kind === '设置')
+    .filter((c) => payOf(c) <= costZone && payOf(c) <= budget)
+    .sort((a, b) => payOf(a) - payOf(b))[0];
+  expect(spell, `手牌里应有付得起的法术（费用区 ${costZone} 张、本回合额度 ${budget}）`).toBeDefined();
+
+  const before = hand.length;
+  const spellZoneBefore = await zoneCount(p, 'spell', 1);
+  const graveBefore = await zoneCount(p, 'graveyard', 1);
+
+  // 拖到**我方法术区**（B2 镜像：我方是后出现的那个，nth(1)）
+  await dragTo(
+    p,
+    p.getByTestId('hand').locator('[data-testid="card"]').nth(spell!.index),
+    p.getByTestId('zone-spell').nth(1),
+  );
+  await confirmPay(p); // 费用区比该付的多时会弹支付面板
+
+  await expect
+    .poll(() => p.getByTestId('hand').locator('[data-testid="card"]').count(), { timeout: 10_000 })
+    .toBe(before - 1);
+  // 普通法术结算后进弃牌区、设置法术留在法术区 —— 两者任一增加即说明牌真的出去了
+  await expect
+    .poll(async () => {
+      const spellZone = await zoneCount(p, 'spell', 1);
+      const grave = await zoneCount(p, 'graveyard', 1);
+      return spellZone > spellZoneBefore || grave > graveBefore;
+    })
+    .toBe(true);
+  await expect(p.getByText('只有随从需要指定位置')).toHaveCount(0);
+});
+
 /** header 文本（含阶段名）—— 与 helpers.phaseText 同口径。 */
 async function phaseOf(page: Page): Promise<string> {
   return ((await page.locator('header').innerText()) ?? '').trim();

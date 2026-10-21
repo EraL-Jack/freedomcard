@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createInitialState } from '@app/core';
 import type { CardInstance, GameState, Phase, PlayerState } from '@app/shared/types';
 
-import { TURN_SWITCHING_LABEL, actionability, choiceSideLabels, turnGuidance } from './selectors.js';
+import { TURN_SWITCHING_LABEL, actionability, choiceSideLabels, dragDropIntent, turnGuidance } from './selectors.js';
 
 /**
  * 可操作性判定（T-04）—— client 的第一个真单测。
@@ -325,5 +325,70 @@ describe('先攻第一回合「零抽牌」的抽牌阶段（issue #109）', () 
   it('该抽 0 张时也不给「点卡组抽一张」的指引 —— 不指引一个不存在的动作', () => {
     expect(turnGuidance(zeroDraw(), ME, false).hint).toBe('');
     expect(turnGuidance(normalDraw(), FOE, false).hint).toContain('抽一张');
+  });
+});
+
+describe('拖拽落点判定（issue #108）', () => {
+  /*
+   * Era 2026-10-21：「拖动释放法术卡时，应该可以放到法术区，目前只能拖动到随从区而且放不出来。」
+   *
+   * 这条判定从 `onDragUp` 里搬出来：组件里那段是按 DOM 标记手写的，
+   * 没有任何单测能覆盖「拖法术到随从格会带一个非法 slot」这种组合。
+   * 纯函数进、结构出，四种落点都能精确断言。
+   */
+  const hand = { dragging: 'hand' as const };
+
+  it('法术拖到法术区 = 出牌，且不带位置', () => {
+    expect(dragDropIntent({ ...hand, phase: 'main', cardType: 'spell', drop: 'spell' })).toEqual({
+      kind: 'play',
+    });
+  });
+
+  it('设置法术（continuous）同样走法术区，不带位置', () => {
+    expect(dragDropIntent({ ...hand, phase: 'main', cardType: 'continuous', drop: 'spell' })).toEqual({
+      kind: 'play',
+    });
+  });
+
+  it('法术拖到随从格：按「无位置出牌」处理，而不是把 slot 传给规则层换一句报错', () => {
+    expect(
+      dragDropIntent({ ...hand, phase: 'main', cardType: 'spell', drop: 'board', slot: '1' }),
+    ).toEqual({ kind: 'play' });
+    expect(
+      dragDropIntent({ ...hand, phase: 'main', cardType: 'continuous', drop: 'board', slot: '0' }),
+    ).toEqual({ kind: 'play' });
+  });
+
+  it('随从拖到随从格：带位置出牌；拖到整排空白处则不指定位置', () => {
+    expect(
+      dragDropIntent({ ...hand, phase: 'main', cardType: 'minion', drop: 'board', slot: '2' }),
+    ).toEqual({ kind: 'play', slot: 2 });
+    expect(dragDropIntent({ ...hand, phase: 'main', cardType: 'minion', drop: 'board' })).toEqual({
+      kind: 'play',
+    });
+  });
+
+  it('随从拖到法术区 / 法术拖到费用区：无效落点，什么都不做', () => {
+    expect(dragDropIntent({ ...hand, phase: 'main', cardType: 'minion', drop: 'spell' })).toEqual({
+      kind: 'none',
+    });
+    expect(dragDropIntent({ ...hand, phase: 'charge', cardType: 'spell', drop: 'cost' })).toEqual({
+      kind: 'none',
+    });
+  });
+
+  it('充能阶段：手牌拖到费用区 = 充能；拖到随从区无效（不在主要阶段）', () => {
+    expect(dragDropIntent({ ...hand, phase: 'charge', cardType: 'minion', drop: 'cost' })).toEqual({
+      kind: 'charge',
+    });
+    expect(
+      dragDropIntent({ ...hand, phase: 'charge', cardType: 'minion', drop: 'board', slot: '0' }),
+    ).toEqual({ kind: 'none' });
+  });
+
+  it('场上随从拖到目标卡 = 攻击', () => {
+    expect(
+      dragDropIntent({ dragging: 'minion', phase: 'battle', drop: 'uid', targetUid: 'foe1' }),
+    ).toEqual({ kind: 'attack', targetUid: 'foe1' });
   });
 });
