@@ -27,25 +27,37 @@ const ev = (type: string, payload: Record<string, unknown> = {}): GameEvent => (
 
 /** 只带一张手牌的状态 —— 用于验证「按 uid 反查卡名」。 */
 function stateWithCard(uid: string, defId: string): GameState {
-  return {
-    seats: ['p1'],
-    players: {
-      p1: {
-        id: 'p1',
-        zones: {
-          deck: [],
-          hand: [{ uid, defId }],
-          commander: [],
-          board: [],
-          spell: [],
-          cost: [],
-          graveyard: [],
-          exile: [],
-          reveal: [],
-        },
+  return stateWithHands({ p1: [{ uid, defId }] });
+}
+
+/**
+ * 按「玩家 → 手牌列表」构造状态。
+ *
+ * 隐藏信息（#136）的用例必须把牌放到**对手**手里：卡只在自己手上时，
+ * 「不打印卡名」会被 `defIdOf` 查不到这一层顺手满足，测试假绿。
+ */
+function stateWithHands(
+  hands: Readonly<Record<string, { uid: string; defId: string }[]>>,
+): GameState {
+  const seats = Object.keys(hands);
+  const players: Record<string, unknown> = {};
+  for (const id of seats) {
+    players[id] = {
+      id,
+      zones: {
+        deck: [],
+        hand: hands[id],
+        commander: [],
+        board: [],
+        spell: [],
+        cost: [],
+        graveyard: [],
+        exile: [],
+        reveal: [],
       },
-    },
-  } as unknown as GameState;
+    };
+  }
+  return { seats, players } as unknown as GameState;
 }
 
 describe('事件日志文案', () => {
@@ -61,9 +73,16 @@ describe('事件日志文案', () => {
 
   it('抽牌 / 破坏 / 出牌用卡名而不是 defId', () => {
     const s = stateWithCard('u1', 'bladeScout');
-    expect(describeEvent(ev('card:moved', { from: 'deck', to: 'hand', uid: 'u1', playerId: 'p1' }), NAMES, s)).toBe(
-      'Era 抽到 炎刃斥候',
-    );
+    // 第 4 参是**视角玩家**（#136）—— 自己的抽牌才显示卡名，故必须显式传 'p1'，
+    // 不能靠默认值蒙对（默认值走的是 fail-closed 的「看不到对手手牌」分支）。
+    expect(
+      describeEvent(
+        ev('card:moved', { from: 'deck', to: 'hand', uid: 'u1', playerId: 'p1' }),
+        NAMES,
+        s,
+        'p1',
+      ),
+    ).toBe('Era 抽到 炎刃斥候');
     expect(describeEvent(ev('card:moved', { from: 'board', to: 'graveyard', uid: 'u1' }), NAMES, s)).toBe(
       '炎刃斥候 被破坏',
     );
@@ -142,5 +161,150 @@ describe('事件日志文案', () => {
     expect(
       describeEvent(ev('card:moved', { from: 'graveyard', to: 'hand', uid: 'u1' }), NAMES, null),
     ).toContain('→');
+  });
+});
+
+/**
+ * #136（Era 2026-10-22 拍板「对手只记『抽了 1 张』」）：**抽牌是私有信息**。
+ *
+ * 桌面上的对手手牌区只有「对方手牌 N 张」，战报却在逐张念卡名 ——
+ * 同一份信息一半隐藏一半公开，玩家没法判断哪条规则是真的。
+ *
+ * 这里的用例是**一对不变量**：
+ *  ① 私有流向按视角分叉（自己念卡名、对手只念张数、未知视角按对手处理）；
+ *  ② 公开区（打出 / 展示 / 被破坏 / 手牌与场上 → 费用区）**不受影响** ——
+ *     只藏私有流向，不是把对手整段静音。
+ *
+ * 「只藏私有流向」很容易被顺手写成「对手的事件都不念卡名」，那样会把战斗战报也毁掉，
+ * 所以 ② 那几条和 ① 一样必须钉死。
+ *
+ * ## 两条子项共用一个 `viewer` 参数
+ *
+ * issue #136 的拍板（Era 2026-10-21 23:47「充能那一行请一并收口」）要求把两个
+ * **同源**漏洞一起修：`deck → hand`（抽牌）与 `deck → cost`（充能）都是
+ * 「牌库顶 → 一个不该公开的区」。做成两条子项、共用第 4 参 `viewer`，
+ * 是为了「最小改动、可单独回滚」——任何一条出问题都能单独退回去，不会连带另一条。
+ */
+describe('隐藏信息：抽牌只看自己的卡名，对手只记张数', () => {
+  /** 双方各一张手牌 —— 对手手里那张是「霜律终裁」（信息量极大的招牌技，正是 #136 的痛点）。 */
+  const foeState = (): GameState =>
+    stateWithHands({
+      p1: [{ uid: 'u1', defId: 'bladeScout' }],
+      p2: [{ uid: 'u2', defId: 'frostFinalJudgment' }],
+    });
+
+  const FOE_DRAWS = { from: 'deck', to: 'hand', uid: 'u2', playerId: 'p2' };
+
+  it('自己抽牌仍然显示卡名', () => {
+    const line = describeEvent(
+      ev('card:moved', { from: 'deck', to: 'hand', uid: 'u1', playerId: 'p1' }),
+      NAMES,
+      foeState(),
+      'p1',
+    );
+    expect(line).toBe('Era 抽到 炎刃斥候');
+  });
+
+  it('对手抽牌只记「抽了 1 张」，不再念卡名', () => {
+    const line = describeEvent(ev('card:moved', FOE_DRAWS), NAMES, foeState(), 'p1');
+    expect(line).toBe('Guest 抽了 1 张');
+    // 显式否认卡名 —— 只断言整行等值，将来有人把卡名拼回去时仍能被这条抓住
+    expect(line).not.toContain('霜律终裁');
+  });
+
+  it('不知道视角时按「看不到对手手牌」处理（fail-closed，不传第 4 参）', () => {
+    // 新增调用点忘记传 viewer 时，宁可少显示，也不能泄露对手手牌
+    const line = describeEvent(ev('card:moved', FOE_DRAWS), NAMES, foeState());
+    expect(line).toBe('Guest 抽了 1 张');
+    expect(line).not.toContain('霜律终裁');
+  });
+
+  it('对手打出（手牌 → 场面）仍然念卡名 —— 公开区不变', () => {
+    const line = describeEvent(
+      ev('card:moved', { from: 'hand', to: 'board', uid: 'u2', playerId: 'p2' }),
+      NAMES,
+      foeState(),
+      'p1',
+    );
+    expect(line).toContain('霜律终裁');
+  });
+
+  it('对手展示仍然念卡名 —— card:revealed 是「本来就要给所有人看」的', () => {
+    const line = describeEvent(
+      ev('card:revealed', { uid: 'u2', playerId: 'p2' }),
+      NAMES,
+      foeState(),
+      'p1',
+    );
+    expect(line).toBe('展示：霜律终裁');
+  });
+
+  it('对手随从被破坏仍然念卡名 —— 进弃牌区是公开信息', () => {
+    const line = describeEvent(
+      ev('card:moved', { from: 'board', to: 'graveyard', uid: 'u2', playerId: 'p2' }),
+      NAMES,
+      foeState(),
+      'p1',
+    );
+    expect(line).toBe('霜律终裁 被破坏');
+  });
+
+  /* ---- 充能：与抽牌**同一个**隐藏信息漏洞（issue #136 评论 / Era 2026-10-21 23:47
+   *      「充能那一行请一并收口」）—— 两者都是「牌库顶 → 私有区」，只修抽牌会留下同款。 ---- */
+
+  it('自己充能（牌库顶 → 费用区）仍显示卡名 —— 原文案不变', () => {
+    // 自己的文案一个字都不改：E2E 与玩家的肌肉记忆都依赖「X 置入费用区」
+    const line = describeEvent(
+      ev('card:moved', { from: 'deck', to: 'cost', uid: 'u1', playerId: 'p1' }),
+      NAMES,
+      foeState(),
+      'p1',
+    );
+    expect(line).toBe('炎刃斥候 置入费用区');
+  });
+
+  it('对手充能只记「充能 1 张」，不再念卡名', () => {
+    const line = describeEvent(
+      ev('card:moved', { from: 'deck', to: 'cost', uid: 'u2', playerId: 'p2' }),
+      NAMES,
+      foeState(),
+      'p1',
+    );
+    expect(line).toBe('Guest 充能 1 张');
+    // 显式否认卡名 —— 将来有人把卡名拼回去时仍能被这条抓住
+    expect(line).not.toContain('霜律终裁');
+  });
+
+  it('不知道视角时对手充能同样不念卡名（fail-closed，不传第 4 参）', () => {
+    const s = foeState();
+    /*
+     * 先证明 `defIdOf` 在**这个状态**上确实查得到对手那张「霜律终裁」——
+     * 否则下面的「不含卡名」会被「查不到卡名」顺手满足，测试假绿。
+     * 展示行是现成的探针：它和充能行走的是同一个 `defIdOf`。
+     */
+    expect(describeEvent(ev('card:revealed', { uid: 'u2', playerId: 'p2' }), NAMES, s, 'p1')).toBe(
+      '展示：霜律终裁',
+    );
+    const line = describeEvent(ev('card:moved', { from: 'deck', to: 'cost', uid: 'u2', playerId: 'p2' }), NAMES, s);
+    expect(line).toBe('Guest 充能 1 张');
+    expect(line).not.toContain('霜律终裁');
+  });
+
+  it('回归护栏：对手从手牌 / 场上充能仍念卡名 —— 隐藏范围止于「牌库顶」', () => {
+    /*
+     * ⚠️ 这条和上面三条一样重要。
+     *
+     * 收口很容易被顺手写成「对手所有进费用区的都不念卡名」，那样会误伤两类**公开**动作：
+     *  - 手牌 → 费用区：玩家**主动**把这张牌置入费用区，属 Era 表格里的「离手即公开」；
+     *  - 场上 → 费用区：随从本来就在桌面上摊着，卡名从来不是秘密。
+     * 只有「牌库顶 → 费用区」是隐藏信息（抽牌的同款漏洞），所以判定条件必须带上 `from === 'deck'`。
+     */
+    const s = foeState();
+    expect(
+      describeEvent(ev('card:moved', { from: 'hand', to: 'cost', uid: 'u2', playerId: 'p2' }), NAMES, s, 'p1'),
+    ).toBe('霜律终裁 置入费用区');
+    expect(
+      describeEvent(ev('card:moved', { from: 'board', to: 'cost', uid: 'u2', playerId: 'p2' }), NAMES, s, 'p1'),
+    ).toBe('霜律终裁 置入费用区');
   });
 });

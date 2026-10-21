@@ -452,7 +452,10 @@ export function useRoom(): RoomSession {
         // 回合边界落地 —— 归属文案恢复成「你的回合 / 对手回合」（D-268）。
         if (e.type === 'turn:changed' && mountedRef.current) setTurnPending(false);
         // 用**reduce 后**的状态翻译：卡刚移动完，才能按 uid 反查到卡名。
-        const text = describeEvent(e, namesRef.current, next);
+        // 第 4 参是视角（`meRef.current`）：用于隐藏**对手抽牌 / 充能的卡名**（issue #136）——
+        // 战报是自动推送，不能把「桌面上要主动点开才看得到」的私有流向直接刷给玩家
+        // （手牌是 count 态完全不可查看；费用区是 float 态、点开浮窗可见）。
+        const text = describeEvent(e, namesRef.current, next, meRef.current);
         if (text) appendLog(text, e.at);
 
         if (e.type === 'combat:resolved') combatTick = e.at;
@@ -635,6 +638,21 @@ export function useRoom(): RoomSession {
     localStorage.setItem(LS.playerId, res.playerId);
     localStorage.setItem(LS.token, res.token);
     setMe(res.playerId);
+    /*
+     * 与下面的 `stateRef.current` **同批同步**（#136 / ADR-0065）。
+     *
+     * `me` 是 state，只在上面的 passive effect（`meRef.current = me`）里同步到 ref，
+     * 比 `setMe` 晚一拍。正常链路（建房 / 加入 / 人机局）在 `setMe` 与开局首个事件批之间
+     * 隔着「用户点准备」一整轮 render + flush，窗口不存在；但 `socket.ts` 有 `polling`
+     * 回退路径，快照 / 增量包可能与本次 ack 落在**同一个 JS 任务**里 ——
+     * 那样 `pump()` 读到的 `meRef.current` 还是 `null`，按 fail-closed 会连**自己**的
+     * 抽牌行也降级成「抽了 1 张」。方向是安全的（多藏不泄露），但那是可见的行为退化，
+     * 所以这里补一行同步，让「视角」与「起点状态」在同一次赋值里一起生效。
+     *
+     * 不为它单独写测试：这个窗口要求 ack 与首个事件批落在同一个 JS 任务，
+     * E2E 里造不稳定（QA 在正常链路上 8/8 未复现），硬造 flaky 用例的代价高于这一行的收益。
+     */
+    meRef.current = res.playerId;
     if (res.room) setRoom(res.room);
     if (res.snapshot) {
       stateRef.current = res.snapshot.state;
@@ -800,6 +818,9 @@ export function useRoom(): RoomSession {
         return;
       }
       setMe(playerId);
+      // 同上（#136 / ADR-0065）：刷新重连这条链路里 ack 与快照 / 增量包最容易落在
+      // 同一个 JS 任务里 —— 少了这行，重连后连**自己**的抽牌行都会退化成「抽了 1 张」。
+      meRef.current = playerId;
       setRoom(res.room);
       if (res.snapshot) {
         stateRef.current = res.snapshot.state;
