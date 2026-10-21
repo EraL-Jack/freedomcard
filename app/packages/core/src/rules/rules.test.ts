@@ -518,6 +518,47 @@ describe('阶段流转 phaseRule', () => {
     expect(s.phase).toBe('main');
   });
 
+  /*
+   * issue #91（Era 2026-10-21 实机截图）：手牌打空、卡组也抽空之后，
+   * 抽牌阶段点卡组「抽不上来牌」。截图上我方弃牌区 15 张、卡组区 0 张。
+   *
+   * 规则本身明确（docs/16 §11：卡组抽空 → 弃牌区洗回卡组，洗回后继续抽），
+   * `takeFromDeck` 的**返回值**也确实是洗回后的牌堆 —— 但事件流里只有
+   * `rng:advance` + `deck:shuffled`，而 reducer 的 `deck:shuffled` 只在
+   * **现有 deck** 里重排，弃牌区的牌一张也没搬进卡组，于是抽出 0 张。
+   *
+   * 这类「纯函数返回值对、事件流对不上」的缺陷不会被任何断返回值单测抓到，
+   * 所以这条用例必须走 `run()`（applyIntent → reduce），断的是**状态**。
+   */
+  it('卡组空、弃牌区有牌：洗回卡组后继续抽（docs/16 §11 / issue #91）', () => {
+    const s = craft({
+      phase: 'draw',
+      turn: 3,
+      zones: {
+        deck: [],
+        hand: [],
+        graveyard: [c('p1#g1', 'm1'), c('p1#g2', 'm2'), c('p1#g3', 'm3')],
+      },
+    });
+    const after = run(s, intent('p1', INTENTS.draw));
+    // 3 张洗回卡组 → 抽 2 张 → 手牌 2 / 卡组 1 / 弃牌区 0
+    expect(after.players['p1']!.zones.hand.length).toBe(2);
+    expect(after.players['p1']!.zones.deck.length).toBe(1);
+    expect(after.players['p1']!.zones.graveyard.length).toBe(0);
+    // 牌不会凭空多出来，也不会凭空消失
+    const z = after.players['p1']!.zones;
+    expect(z.hand.length + z.deck.length + z.graveyard.length).toBe(3);
+  });
+
+  it('卡组与弃牌区都空：静默停止，不崩、不判负（H6 / A9-3 无疲劳）', () => {
+    const s = craft({ phase: 'draw', turn: 3, zones: { deck: [], hand: [], graveyard: [] } });
+    const after = run(s, intent('p1', INTENTS.draw));
+    expect(after.players['p1']!.zones.hand.length).toBe(0);
+    // 抽 0 张同样要走完自动推进，否则会卡死在抽牌阶段
+    expect(after.phase).toBe('main');
+    expect(after.winner).toBeNull();
+  });
+
   it('结束阶段之后进入下一回合：换行动方、回合 +1、最高费用按各自回合数取 1', () => {
     let s = craft({ phase: 'charge', turn: 1, activeSeat: 0 });
     // 重置瞬穿 + 抽完自动推进后，一回合只需 4 次推进：抽牌（抽完自动进主要）→战斗→结束→下一回合充能

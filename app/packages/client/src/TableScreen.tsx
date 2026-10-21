@@ -219,7 +219,17 @@ function CardOf(props: {
     // compact（区域/格子内）：高由格子决定、宽按 5:7 反算，不出框（Era 2026-10-18 截图实测）
     <div
       className={
-        props.compact ? 'flex h-full min-h-0 items-center justify-center' : 'w-16 shrink-0 sm:w-20'
+        /*
+         * D-264（issue #92）：`w-full min-w-0` 不能省。
+         *
+         * 原来这里是 `flex h-full min-h-0`，宽度是 shrink-to-fit —— 于是外层按钮的
+         * `max-w-full` 变成了「相对自身宽度」的循环引用（百分比基准取自被它撑开的父级），
+         * 等于没约束。窄格子里（390px 下五区一格只有 ~63px 内容宽）卡片按高度反算出的
+         * 宽度会超过格子，直接压到隔壁区域上、甚至挤出视口。
+         */
+        props.compact
+          ? 'flex h-full min-h-0 w-full min-w-0 items-center justify-center'
+          : 'w-16 shrink-0 sm:w-20'
       }
       /*
        * D-261（issue #87）：长按看详情的**命中标记**。
@@ -346,7 +356,14 @@ function ZoneBox(props: {
         </button>
       ) : null}
       {shown.length > 0 ? (
-        <div className="mt-1 flex min-h-0 flex-1 flex-wrap content-start gap-0.5">
+        /*
+         * D-264（issue #92）：`overflow-hidden` 是第二道闸。
+         *
+         * 上面那条 `w-full min-w-0` 解决「卡片自己撑宽」，这一条兜住极端情况
+         * （区域窄到连标题都放不下时，卡片仍可能超出一点点）。裁掉一点点边，
+         * 好过压住隔壁区域的标题与数值 —— 后者会让玩家读错信息。
+         */
+        <div className="mt-1 flex min-h-0 flex-1 flex-wrap content-start gap-0.5 overflow-hidden">
           {shown.map((c) => (
             <CardOf
               key={c.uid}

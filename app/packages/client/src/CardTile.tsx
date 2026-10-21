@@ -100,12 +100,34 @@ export default function CardTile(props: CardTileProps): React.JSX.Element {
   return (
     // 休眠横置作用在整个包装层（徽章随卡一起转），transition 让重置阶段「立回来」可见。
     <div
-      className={`relative transition-transform duration-300 ${props.fitHeight ? 'flex h-full min-h-0 justify-center' : ''} ${props.sleeping ? 'rotate-90 opacity-70' : ''}`}
+      className={`relative transition-transform duration-300 ${
+        /*
+         * D-264（issue #92）：`w-full min-w-0` —— 这里才是卡的**直接父级**。
+         *
+         * 卡上有 `w-full`，它取的是这一层宽度的百分比；这一层原来是 shrink-to-fit，
+         * 宽度由卡自己撑出来（81px），于是「100%」等于「自己刚才的宽度」，
+         * 越窄的容器反而越溢出。要让卡真正按容器宽度收敛，必须从这一层开始
+         * 把宽度定下来（CardOf 的外套同理，两处都要有）。
+         */
+        props.fitHeight ? 'flex h-full min-h-0 w-full min-w-0 items-center justify-center' : ''
+      } ${props.sleeping ? 'rotate-90 opacity-70' : ''}`}
     >
       <button
         type="button"
         className={`relative flex flex-col overflow-hidden rounded-lg border-2 p-1 text-left ${
-          props.fitHeight ? 'h-full max-w-full aspect-[5/7]' : 'aspect-[5/7] w-full'
+          /*
+           * D-264（issue #92）：窄屏**宽度驱动**，宽屏才高度驱动。
+           *
+           * 只写 `h-full + aspect`（高度驱动）时，卡片宽度由高度反算 —— 390px 下
+           * 五区一格内容宽只有 63px，卡片却算出 81px，`max-w-full` 压不住它
+           * （flex 子项的 `min-width:auto` + aspect 与 height 同时存在时，浏览器的
+           * 优先级让 max-width 失效），于是压到隔壁区域上、甚至挤出视口。
+           *
+           * `sm:` 以上区域够宽，保持原来的高度驱动（卡片填满格子，视觉更饱满）。
+           */
+          props.fitHeight
+            ? 'h-auto w-full max-h-full max-w-full min-w-0 aspect-[5/7] sm:h-full sm:w-auto'
+            : 'aspect-[5/7] w-full'
         } ${frame} ${state} ${props.frozen ? 'ring-2 ring-sky-300 shadow-[0_0_12px_rgba(125,211,252,0.55)]' : ''} ${props.fxClass ?? ''}`}
         onClick={props.onSelect}
         disabled={greyed}
