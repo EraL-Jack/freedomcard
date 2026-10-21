@@ -72,12 +72,20 @@ const intent = (seq: number, type = 'act', playerId = 'p1'): Intent => ({
   seq,
 });
 
+/*
+ * ⚠️ 下面几条断言写的是「相对初值」（`h.state0.rngCursor + n`），不是写死的 1 / 2。
+ *
+ * 原先它们写死 `1`，隐含假设「初始游标恒为 0」—— 那恰恰是 D-269 的缺陷
+ * （`createInitialState` 把 seed 丢了、游标写死 0）。夹具跟着缺陷一起写死，
+ * 修好之后反而「测试红了、产品对了」，属于把实现细节钉进了断言。
+ * 会话层关心的是「一次接受的 Intent 恰好把游标推进 1 步」，与初值无关。
+ */
 describe('Intent 处理链 · 去重', () => {
   it('首次提交被接受并推进状态', () => {
     const h = harness();
     const r = submitIntent(h.state0, intent(1), h.deps);
     expect(r.out.kind).toBe('accepted');
-    expect(r.state.rngCursor).toBe(1);
+    expect(r.state.rngCursor).toBe(h.state0.rngCursor + 1);
     expect(h.replay.current().intents).toHaveLength(1);
   });
 
@@ -161,13 +169,13 @@ describe('系统 Intent · 与玩家同链路', () => {
     };
     const r2 = submitSystemIntent(r1.state, systemIntent, h.deps);
     expect(r2.out.kind).toBe('accepted');
-    expect(r2.state.rngCursor).toBe(2);
+    expect(r2.state.rngCursor).toBe(h.state0.rngCursor + 2);
 
     const rec = h.replay.current();
     expect(rec.intents).toHaveLength(2);
     expect(rec.intents[1]?.actor).toBe('system');
     expect(rec.intents[1]?.reason).toBe('timeout');
-    expect(rec.hashChain).toEqual(['h1', 'h2']);
+    expect(rec.hashChain).toEqual([`h${h.state0.rngCursor + 1}`, `h${h.state0.rngCursor + 2}`]);
   });
 
   it('系统 Intent 不参与玩家 seq 去重', () => {
@@ -189,6 +197,6 @@ describe('快照', () => {
     const snap = buildSnapshot(r.state, 7, h.guard, ['p1', 'p2'], h.engine);
     expect(snap.serverSeq).toBe(7);
     expect(snap.lastSeqByPlayer).toEqual({ p1: 1, p2: 0 });
-    expect(snap.hash).toBe('h1');
+    expect(snap.hash).toBe(`h${h.state0.rngCursor + 1}`);
   });
 });

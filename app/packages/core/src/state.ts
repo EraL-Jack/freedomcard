@@ -1,6 +1,8 @@
 import type { CardInstance, GameState, PlayerId, PlayerState, Zone } from '@app/shared/types';
 import { INITIAL_COMMANDER_POWER_INDEX, INITIAL_HEALTH, INITIAL_MAX_COST } from '@app/shared/constants';
 
+import { initialRngCursor } from './rng.js';
+
 /**
  * 对局状态的构造与不可变更新 —— 结构见 ADR-0012。
  *
@@ -54,6 +56,15 @@ export function commanderUid(playerId: PlayerId): string {
 
 export interface InitialStateOptions {
   seed: number;
+  /**
+   * 开局随机游标（可选）—— D-269。
+   *
+   * 生产开局不传：由 `seed` 经 `initialRngCursor` 派生。
+   * 传的场景只有一个：**回放重建**。回放文件里记着当时的游标，
+   * 显式用它才能保证「记录怎么写的、就怎么重跑」，把「派生算法」这件事
+   * 与历史文件解耦（换算法不该让旧文件失效）。
+   */
+  rngCursor?: number;
   /** 座位顺序，由调用方给出（先后手在此之后由掷骰决定，见 A2-4）。 */
   seats: readonly PlayerId[];
   /**
@@ -94,7 +105,18 @@ export function createInitialState(opts: InitialStateOptions): GameState {
     };
   }
   return {
-    rngCursor: 0,
+    /*
+     * 初值必须由 seed 派生 —— D-269 / issue #103。
+     *
+     * 这里原来是写死的 `0`，于是 `seed` 只是被存进 state 供回放记录，
+     * **一次都没参与随机**：开局洗牌永远从同一游标出发 → 每局牌序、先后手完全相同。
+     * Era 的原话是「每次进游戏都是固定起手，没洗牌吗」—— 洗了，但洗的是同一副。
+     *
+     * 用 `seedFrom` 而不是直接拿 `seed >>> 0` 当游标：FNV-1a 会把「相邻的种子」
+     * （`Date.now()` 相差几毫秒的那种）打散成彼此无关的游标，避免相邻种子洗出相近牌序；
+     * 同时 seed=0 也不会退化成原来的常量 0。
+     */
+    rngCursor: opts.rngCursor ?? initialRngCursor(opts.seed),
     seed: opts.seed,
     players,
     seats: [...opts.seats],

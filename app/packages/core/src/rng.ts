@@ -77,3 +77,23 @@ export function seedFrom(text: string): number {
   }
   return h >>> 0;
 }
+
+/**
+ * 数值种子 → 开局随机游标（D-269 / issue #103）。
+ *
+ * ## 为什么不用 `seed >>> 0` 直接当游标
+ *
+ * 服务端的种子来自 `Date.now()`，同一台机器上前后两局的种子常常只差几百毫秒。
+ * mulberry32 对**相邻**游标虽然不会退化成同一序列，但 FNV-1a 能把相邻数字彻底打散，
+ * 让「隔一分钟再开一局」与「隔一周再开一局」在统计上看不出差别；
+ * 顺带也让 `seed = 0` 不会退化成游标 0（那正是 D-269 之前写死的坏值）。
+ *
+ * ## 唯一入口
+ *
+ * 「种子怎么变成游标」这条规则**只在这里**。`createInitialState` 与
+ * `seedSetup`（写回放用）都调它 —— 两处各算一遍就会变成「双裁决」，
+ * 哪天改算法必然只改一处，回放立刻分叉（ADR-0056 的教训）。
+ */
+export function initialRngCursor(seed: number): number {
+  return seedFrom(String(seed));
+}

@@ -1,4 +1,4 @@
-export { nextFloat, nextInt, shuffle, seedFrom, advanceCursor, type RngStep } from './rng.js';
+export { nextFloat, nextInt, shuffle, seedFrom, initialRngCursor, advanceCursor, type RngStep } from './rng.js';
 export {
   createInitialState,
   emptyZones,

@@ -70,7 +70,16 @@ function collectRounds(record: Partial<ReplayRecord>): RoundLike[] {
 
 /** 校验一局；返回差异条数（0 = 通过）。 */
 function verifyRound(round: RoundLike, compareEvents: boolean): number {
-  const initial = core.createInitialState(round.setup);
+  /*
+   * 旧文件没有 `rngCursor` 字段 —— D-269 之前 `createInitialState` 把初始游标写死 0
+   * （那正是 issue #103「每局固定起手」的根因），所以「当时真实的游标」就是 0。
+   *
+   * 这是一处**历史兼容**，不是默认行为：新录的文件一律带该字段，
+   * 走的是它自己记录的值。补 0 之后老文件仍然可校验，D-269 的修复不会
+   * 顺带把它们判成损坏。
+   */
+  const legacyCursor = (round.setup as { rngCursor?: number }).rngCursor ?? 0;
+  const initial = core.createInitialState({ ...round.setup, rngCursor: legacyCursor });
   const rebuiltHash = core.stateHash(initial);
   if (round.initialHash && rebuiltHash !== round.initialHash) {
     console.error(`  ✖ 开局哈希不一致：记录 ${round.initialHash} / 重建 ${rebuiltHash}`);
