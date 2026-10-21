@@ -1187,6 +1187,19 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   const canCommanderAttack = a.canCommanderAttack;
   const canRevealAttack = a.canRevealAttack;
 
+  // ⚠️ 客户端时钟与服务端未必同步，这里的倒计时是**示意**；权威判定在服务端（ADR-0017）。
+  const remain = turnDeadline ? Math.max(0, Math.ceil((turnDeadline - now) / 1000)) : null;
+  /**
+   * 换牌阶段的剩余秒数（D-267）。
+   *
+   * 服务端在换牌阶段把 `turnDeadline` 填成**换牌截止时刻**（此前填的是回合计时器的
+   * `deadlineAt`，而换牌时那个计时器是 clear 状态 → 顶栏「计时 —」）。
+   * 到点由服务端替未确认方提交「不换牌」，客户端这里只负责把这句话说清楚。
+   */
+  const mulliganLeft = state.phase === 'mulligan' ? remain : null;
+  /** 换牌窗口已耗尽 —— 界面进入「等开局」状态，按钮置灰（服务端马上会推进）。 */
+  const mulliganExpired = state.phase === 'mulligan' && mulliganLeft !== null && mulliganLeft <= 0;
+
   /**
    * 当前阶段该做什么（D-258）。
    *
@@ -1198,7 +1211,11 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
     ? ''
     : state.phase === 'mulligan'
       ? mulliganOpen
-        ? '开局换牌：选出手牌里不想要的 →「确认换牌」；不想换直接点「不换牌」'
+        ? mulliganExpired
+          ? '换牌时间到，正在开局…'
+          : `开局换牌：选出手牌里不想要的 →「确认换牌」；不想换直接点「不换牌」${
+              mulliganLeft === null ? '' : `（剩余 ${mulliganLeft} 秒，到点自动不换牌开局）`
+            }`
         : '你已确认，等待对手完成换牌…'
       : !myTurn
         ? ''
@@ -1237,8 +1254,6 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
           : '';
   /** 本回合费用使用情况（docs/16 §3.3）—— 只做展示，权威在服务端。 */
   const costText = `${mine.usedCostThisTurn}/${mine.maxCost}`;
-  // ⚠️ 客户端时钟与服务端未必同步，这里的倒计时是**示意**；权威判定在服务端（ADR-0017）。
-  const remain = turnDeadline ? Math.max(0, Math.ceil((turnDeadline - now) / 1000)) : null;
 
   /**
    * 按格子取随从（D-257）。
@@ -1607,7 +1622,10 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
       <header className="flex items-center justify-center gap-3 text-xs sm:text-sm">
         <span data-testid="turn">{state.phase === 'mulligan' ? '开局' : `第 ${state.turn} 回合`}</span>
         <span className="text-slate-400">阶段 {PHASE_LABEL[state.phase]}</span>
-        <span className="text-slate-400">计时 {remain === null ? '—' : `${remain}s`}</span>
+        {/* 计时（D-267）：换牌阶段下发的是**换牌截止时刻**，不再是「—」（issue #99）。 */}
+        <span className="text-slate-400" data-testid="clock">
+          计时 {remain === null ? '—' : `${remain}s`}
+        </span>
         {/*
           血量**不在**这里显示 —— Era 2026-10-14 指定：血量就在指挥官区显示。
           故血量徽标挂在两侧的指挥官区上（见下方 `badge`）。
@@ -2032,7 +2050,14 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
                     selected={mulliganOpen ? mulliganPicks.includes(c.uid) : picked === c.uid}
                     disabled={!canPickHand}
                     glow={mulliganOpen || (canPickHand && picked !== c.uid)}
-                    onClick={() => (mulliganOpen ? toggleMulliganPick(c.uid) : togglePick(c.uid))}
+                    onClick={() => {
+                      if (!mulliganOpen) {
+                        togglePick(c.uid);
+                        return;
+                      }
+                      // 换牌窗口已耗尽：点了也不会有提交（服务端正在替我们跳过），不如不响应
+                      if (!mulliganExpired) toggleMulliganPick(c.uid);
+                    }}
                   />
                 </div>
               ))}
@@ -2120,13 +2145,32 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
             「不换牌」= 提交空数组，不是取消 —— 没有「退出换牌」这条路。 */}
         {mulliganOpen ? (
           <>
-            {mulliganPicks.length > 0 ? (
+            {mulliganExpired ? (
+              /*
+               * 倒计时归零（D-267）：服务端在这一刻替未确认方提交「不换牌」，
+               * 阶段马上会关闭。这里不再给提交入口 —— 玩家点了也只会收到
+               * 「当前已不是开局换牌阶段」，等于用一句拒绝提示换一次困惑。
+               */
+              <span
+                className="rounded bg-slate-800 px-3 py-2 text-xs text-slate-400 sm:text-sm"
+                data-testid="mulligan-expired"
+              >
+                换牌时间到，正在开局…
+              </span>
+            ) : mulliganPicks.length > 0 ? (
               <>
                 <button
                   type="button"
                   className="rounded bg-violet-700 px-3 py-2 text-xs sm:text-sm"
                   onClick={() => {
-                    session.mulligan(mulliganPicks);
+                    /*
+                     * 提交前清洗（D-267）：只允许非空字符串。
+                     *
+                     * `mulliganRule` 的 `strListArg` 对**数组里混入空串 / 非字符串**同样返回 null，
+                     * 报回来的还是那句内部契约文案。界面上的 uid 来自 `c.uid`，正常不会脏，
+                     * 但这里是最靠近网络的一层 —— 在它之前挡掉，比让玩家看引擎报错强。
+                     */
+                    session.mulligan(mulliganPicks.filter((uid) => typeof uid === 'string' && uid.length > 0));
                     setMulliganPicks([]);
                   }}
                   data-testid="mulligan-confirm"

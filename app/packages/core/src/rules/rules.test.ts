@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { BOARD_SLOTS, COST_INCOME_PER_TURN, DECK_SIZE, INITIAL_HAND, INITIAL_HEALTH, KEYWORD_TAUNT, MAIN_DECK_SIZE, MULLIGAN_WINDOW_MS, RULE_ERRORS, SECOND_PLAYER_HAND } from '@app/shared/constants';
+import { BOARD_SLOTS, COST_INCOME_PER_TURN, DECK_SIZE, INITIAL_HAND, INITIAL_HEALTH, KEYWORD_TAUNT, MAIN_DECK_SIZE, RULE_ERRORS, SECOND_PLAYER_HAND } from '@app/shared/constants';
 import type { CardDef, CardInstance, GameEvent, GameState, Intent, Phase, RuleContext, Zone } from '@app/shared/types';
 
 import { applyIntent, createInitialState, reduce, stateHash, INTENTS } from '../index.js';
@@ -342,32 +342,37 @@ describe('起手换牌 mulliganRule', () => {
     }
   });
 
-  it('时间窗（D-259）：窗口内可以换牌，过期后只能跳过、不能再改牌', () => {
-    const s = started(); // game:started at = CTX.now = 1000 → startedAt = 1000
+  /*
+   * D-267：换牌**不再由规则层判时间窗**。
+   *
+   * 原来这里有三条用例钉「30 秒边缘可换 / 过期被拒 / 跳过永远允许」。换牌时长改成
+   * 跟随房间回合时限后，core 拿不到档位（纯函数），窗口只有服务端计时器能裁决 ——
+   * 于是这三条的前提整体消失，改成下面两条：
+   *
+   *  ① 规则层对「多晚提交」都不看表（窗口责任在计时器）；
+   *  ② 但 `returns` 缺失仍然拒 —— D-267 的真凶正是服务端兜底漏了这个参数，
+   *     这条把「调用方必须显式带空数组」钉死，放宽规则就会掩盖同类 bug。
+   */
+  it('D-267：规则层不再按时间拒换牌（窗口由服务端计时器裁决）', () => {
+    const s = started(); // game:started at = CTX.now = 1000
     const active = s.seats[0]!;
     const one = [s.players[active]!.zones.hand[0]!.uid];
 
-    // 窗口边缘（恰好 30s）仍可换
-    const edge = applyIntent(s, intent(active, INTENTS.mulligan, { returns: one }), {
-      ...CTX,
-      now: 1000 + MULLIGAN_WINDOW_MS,
-    });
-    expect(edge.ok).toBe(true);
-
-    // 超过窗口 → 想换牌被拒
+    // 一小时后再换也能成功 —— 说明这里确实不读时间
     const late = applyIntent(s, intent(active, INTENTS.mulligan, { returns: one }), {
       ...CTX,
-      now: 1000 + MULLIGAN_WINDOW_MS + 1,
+      now: 1000 + 60 * 60 * 1000,
     });
-    expect(late.ok).toBe(false);
-    if (!late.ok) expect(late.error.code).toBe(RULE_ERRORS.MULLIGAN_EXPIRED);
+    expect(late.ok).toBe(true);
+  });
 
-    // 但「跳过」永远允许 —— 否则窗口一过双方就关不掉换牌阶段，整局卡死
-    const skip = applyIntent(s, intent(active, INTENTS.mulligan, { returns: [] }), {
-      ...CTX,
-      now: 1000 + MULLIGAN_WINDOW_MS + 1,
-    });
-    expect(skip.ok).toBe(true);
+  it('D-267：换牌 Intent 缺 returns 时被拒（调用方契约，system 也不例外）', () => {
+    const s = started();
+    const active = s.seats[0]!;
+    // 服务端超时兜底曾经就是这个形状：有 type、没 payload
+    const r = applyIntent(s, { ...intent(active, INTENTS.mulligan), actor: 'system', payload: undefined }, CTX);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.CARD_NOT_IN_ZONE);
   });
 
   it('D-259：开局停在换牌阶段 —— start 之后不直接进第一回合', () => {

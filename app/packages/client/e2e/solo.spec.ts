@@ -41,3 +41,24 @@ test('点「不换牌」后进第 1 回合，而不是第 2 回合（D-262 回�
   await expect.poll(() => turnNo(page), { timeout: 15_000 }).toBe(1);
   await expect.poll(() => phaseText(page), { timeout: 15_000 }).toContain('充能');
 });
+
+/**
+ * D-267 / issue #99：换牌阶段的倒计时必须**可见**。
+ *
+ * 原来 `snapshot.turnDeadline` 取的是回合计时器的截止时刻，而换牌阶段那个计时器是
+ * `clear` 状态（值 0）→ 顶栏「计时 —」。Era 的原话：「倒计时要显示在桌面上，
+ * 目前看倒计时是 -」。这条钉两件事：数字要出来，且要说明「到点会自动开局」。
+ *
+ * ⚠️ 只断言「不是 —」是不够的：`remain` 为 0 时也会显示 `0s`。
+ * 所以正则要求 ≥1 位数字且带 `s`，并在文案里确认「到点自动不换牌」——
+ * 后者是玩家得知「我可以什么都不点」的唯一途径。
+ */
+test('换牌阶段桌面有倒计时，并写明到点自动开局（D-267）', async ({ browser }) => {
+  const { page } = await startSoloGame(browser, { skipMulligan: false });
+
+  await expect(page.getByTestId('clock'), '换牌阶段顶栏应显示剩余秒数').toHaveText(/计时 \d+s/, {
+    timeout: 15_000,
+  });
+  await expect(page.getByTestId('phase-hint')).toContainText('剩余');
+  await expect(page.getByTestId('phase-hint')).toContainText('到点自动不换牌开局');
+});
