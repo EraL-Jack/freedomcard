@@ -14,6 +14,50 @@ import { newClient } from './helpers.js';
  * 不组局、不建房，跑得快。
  */
 
+/** 手机竖屏 —— 触控目标 24×20 只在窄屏被投诉（issue #115）。 */
+const PHONE = { viewport: { width: 390, height: 844 }, hasTouch: true } as const;
+
+/**
+ * #115：移动端卡组编辑的 ± 按钮只有 24×20px（`px-2 py-0.5 text-xs`），
+ * 手指点不中 —— Era 的原话是「加减按钮太小，容易点错」。
+ *
+ * 判定标准是**触控目标尺寸**而不是像素级样式：宽高都 ≥40（约 40×40 的通用下限）。
+ * 桌面不要求变大（`sm:` 收回紧凑样式），所以只在移动视口断言；
+ * 已选区 / 待选区两套 ± 都要测 —— 它们是两处独立实现（`deck-sel-*` / `deck-*`），
+ * 只改一处同样会漏。
+ */
+test('390px 竖屏：卡组编辑的 ± 按钮与搜索框都是 ≥40px 的触控目标（issue #115）', async ({
+  browser,
+}) => {
+  const page = await newClient(browser, 'DeckTouch', PHONE);
+  await page.getByTestId('edit-deck').click();
+  await expect(page.getByTestId('deck-total')).toHaveText('30');
+
+  const targets = [
+    // 已选区（`deck-sel-*`）
+    'deck-sel-remove-bladeScout',
+    'deck-sel-add-bladeScout',
+    // 待选区（`deck-*`）
+    'deck-remove-bladeScout',
+    'deck-add-bladeScout',
+  ];
+  for (const id of targets) {
+    const box = await page.getByTestId(id).boundingBox();
+    expect(box, `${id} 应存在（加减按钮是编辑卡组的唯一入口）`).not.toBeNull();
+    expect(box!.width, `${id} 宽度应 ≥40px（实测 ${box!.width}px）`).toBeGreaterThanOrEqual(40);
+    expect(box!.height, `${id} 高度应 ≥40px（实测 ${box!.height}px）`).toBeGreaterThanOrEqual(40);
+  }
+
+  // 搜索框同属「手指要点」的那一类：太扁同样点不准
+  const search = await page.getByTestId('deck-search').boundingBox();
+  expect(search, 'deck-search 应存在').not.toBeNull();
+  expect(search!.height, `deck-search 高度应 ≥40px（实测 ${search!.height}px）`).toBeGreaterThanOrEqual(
+    40,
+  );
+
+  await page.context().close();
+});
+
 test('首次进入预置三套基础卡组，每套 30 张且可直接设为开局', async ({ browser }) => {
   const page = await newClient(browser, 'DeckDefault');
   await page.getByTestId('edit-deck').click();

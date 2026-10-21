@@ -72,16 +72,22 @@ export async function startGame(
     guestDeck?: string;
     /** 默认 `true`：替双方跳过开局换牌。传 `false` 保留换牌阶段给用例自己操作。 */
     skipMulligan?: boolean;
+    /**
+     * 额外 context 选项（视口 / 触屏）—— 移动端布局用例要把**双方**都开成手机。
+     * 不传时沿用 Playwright 项目默认（桌面 1280×720）。
+     */
+    contextOptions?: Parameters<Browser['newContext']>[0];
   } = {},
 ): Promise<{ host: Page; guest: Page; code: string }> {
-  const host = await newClient(browser, 'Host');
+  const ctx = opts.contextOptions ?? {};
+  const host = await newClient(browser, 'Host', ctx);
   // D-132：赛制在**建房**时选（BO1 默认）。
   if (opts.format) await host.getByTestId('format').selectOption(opts.format);
   if (opts.hostDeck) await host.getByTestId('deck-choice').selectOption(opts.hostDeck);
   await host.getByTestId('create').click();
   const code = ((await host.getByTestId('room-code').textContent()) ?? '').trim();
 
-  const guest = await newClient(browser, 'Guest');
+  const guest = await newClient(browser, 'Guest', ctx);
   if (opts.guestDeck) await guest.getByTestId('deck-choice').selectOption(opts.guestDeck);
   await guest.getByTestId('code').fill(code);
   await guest.getByTestId('join').click();
@@ -114,9 +120,14 @@ export async function startGame(
  */
 export async function startSoloGame(
   browser: Browser,
-  opts: { skipMulligan?: boolean; deck?: string } = {},
+  opts: {
+    skipMulligan?: boolean;
+    deck?: string;
+    /** 额外 context 选项（视口 / 触屏）—— 移动端布局用例用它开成手机。 */
+    contextOptions?: Parameters<Browser['newContext']>[0];
+  } = {},
 ): Promise<{ page: Page }> {
-  const page = await newClient(browser, 'Solo');
+  const page = await newClient(browser, 'Solo', opts.contextOptions ?? {});
   if (opts.deck) await page.getByTestId('deck-choice').selectOption(opts.deck);
   await page.getByTestId('create-solo').click();
   await page.getByTestId('ready').click();

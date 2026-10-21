@@ -294,6 +294,20 @@ function CardOf(props: {
    * 所以这里只做一件事 —— `w-full min-w-0`，尺寸交给网格。
    */
   fluid?: boolean;
+  /**
+   * 宽度同样交给容器，但语义是「**跟在兄弟后面均分**」（issue #113）。
+   *
+   * 与 `fluid` 的区别在**来源**，不在结果：
+   * - `fluid`：列宽由浮窗网格的 `grid-cols-N` 决定（堆叠区浮窗）；
+   * - `fluidWidth`：宽度由**父级 flex 行的 `flex-1` 均分**决定（手牌行）。
+   *
+   * 两者最终都落到 `w-full min-w-0`，所以刻意分成两个 prop 而不是合并成一个 ——
+   * 合并之后「改手牌行布局」与「改浮窗网格」就成了同一处，会互相牵连。
+   *
+   * 手牌为什么不能固定宽：390px 下手牌区内容宽约 372px，`w-16`（64px）×6 张 +
+   * 5 个 `gap-1`（4px）= 404px，横溢出 32px，最后一张被裁在滚动区外（issue #113）。
+   */
+  fluidWidth?: boolean;
   onClick?: () => void;
 }): React.JSX.Element {
   const def = CARD_POOL[props.card.defId];
@@ -320,7 +334,7 @@ function CardOf(props: {
          */
         props.compact
           ? 'flex h-full min-h-0 w-full min-w-0 items-center justify-center'
-          : props.fluid
+          : props.fluid || props.fluidWidth
             ? 'w-full min-w-0'
             : 'w-16 shrink-0 sm:w-20'
       }
@@ -1608,6 +1622,28 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
           {phaseHint}
         </p>
       ) : null}
+      {/*
+        提示条（D-256 / issue #114）—— **在流内、独占一行**，排在阶段提示条下方。
+
+        原来是 `fixed left-1/2 top-16`：`top-16` = 64px，正好压在下面的 `<header>`
+        （回合数 / 阶段 / 计时那一行，实测 y 63~83）上，计时被整个盖住。
+        现在改为普通块：出现时把桌面整体往下推约 30px（一条 26px + 根容器 4px 间距，
+        比盖住计时好得多），消失时回弹；仍可点一下手动关掉（`dismiss`），
+        不点的话由客户端的 4s 定时器自动消退（见 `useRoom` 的 notice effect）。
+      */}
+      {notice ? (
+        <div className="flex justify-center">
+          <button
+            type="button"
+            className="rounded-lg border border-amber-500/60 bg-amber-950/95 px-4 py-1 text-xs text-amber-100 shadow-lg"
+            onClick={dismiss}
+            data-testid="notice"
+          >
+            {notice}
+          </button>
+        </div>
+      ) : null}
+
       {/* 卡牌详情浮层 —— 信息查看（任何阶段可用，不受回合/阶段置灰约束）。
           B3-2 的「不要弹窗」约束的是**出牌确认**；详情查看按 docs/11 X-13 默认建议用大卡浮层。 */}
       {showIntro ? (
@@ -1645,14 +1681,23 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
           对方正在选择…
         </div>
       ) : null}
-      {/* 回合数 / 计时居中（B2-5） */}
-      <header className="flex items-center justify-center gap-3 text-xs sm:text-sm">
-        <span data-testid="turn">{state.phase === 'mulligan' ? '开局' : `第 ${state.turn} 回合`}</span>
-        <span className="text-slate-400" data-testid="phase">
+      {/* 回合数 / 计时居中（B2-5）。
+          issue #114：390px 下这一行原来没有折字约束 —— 各 span 被压到**文字内部**折行
+          （「开 局」「阶段 换 / 牌」），读起来像乱码。现在：
+          1. 每段 `whitespace-nowrap`：宁可整块换行，也不把词拆开；
+          2. `flex-wrap` + `gap-x-3 gap-y-0.5`：极端情况（对手断线横幅、BO3 比分）
+             让多出来的段落到第二行，而不是把每个字挤成一条；
+          3. 成长资源 `my-growth` 窄屏隐藏 —— 390px 放不下，资源数在区域与卡面详情里可查。
+          `sm:` 以上三处的**视觉结果不变**（单行布局下 `gap-y` 不起作用、桌面本来也不折行）。 */}
+      <header className="flex flex-wrap items-center justify-center gap-x-3 gap-y-0.5 text-xs sm:text-sm">
+        <span className="whitespace-nowrap" data-testid="turn">
+          {state.phase === 'mulligan' ? '开局' : `第 ${state.turn} 回合`}
+        </span>
+        <span className="whitespace-nowrap text-slate-400" data-testid="phase">
           阶段 {PHASE_LABEL[state.phase]}
         </span>
         {/* 计时（D-267）：换牌阶段下发的是**换牌截止时刻**，不再是「—」（issue #99）。 */}
-        <span className="text-slate-400" data-testid="clock">
+        <span className="whitespace-nowrap text-slate-400" data-testid="clock">
           计时 {remain === null ? '—' : `${remain}s`}
         </span>
         {/*
@@ -1664,7 +1709,7 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
           改为双方各自的确认状态，谁没确认一眼可见。
         */}
         {state.phase === 'mulligan' ? (
-          <span className="text-violet-300" data-testid="mulligan-status">
+          <span className="whitespace-nowrap text-violet-300" data-testid="mulligan-status">
             {mine.mulliganDone ? '你已确认' : '等你换牌'} · {theirs.mulliganDone ? '对手已确认' : '对手换牌中'}
           </span>
         ) : (
@@ -1673,13 +1718,13 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
            * 边界在播时显示「回合切换中…」，避免结束回合的一方先看到「你的回合 · 充能阶段」。
            */
           <span
-            className={
+            className={`whitespace-nowrap ${
               guide.tone === 'mine'
                 ? 'text-emerald-400'
                 : guide.tone === 'pending'
                   ? 'text-amber-300'
                   : 'text-slate-400'
-            }
+            }`}
             data-testid="turn-label"
           >
             {guide.label}
@@ -1688,7 +1733,7 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
         {/* 对手断线（D-233）：宽限期内给明确提示，否则「对面不动」看起来像自己卡了 */}
         {foeOffline ? (
           <span
-            className="rounded bg-amber-900/80 px-2 py-0.5 text-amber-200"
+            className="whitespace-nowrap rounded bg-amber-900/80 px-2 py-0.5 text-amber-200"
             data-testid="foe-offline"
           >
             对手已断线（{graceSeconds} 秒内可重连）
@@ -1697,14 +1742,17 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
         {/* 赛制与比分（D-132）—— 只在 BO3 显示，BO1 显示会占位制造噪音。
             `gameNo` 是**已完成**的小局数，故进行中的是第 `gameNo + 1` 局。 */}
         {room.format === 'bo3' ? (
-          <span className="text-slate-400" data-testid="series">
+          <span className="whitespace-nowrap text-slate-400" data-testid="series">
             第 {room.gameNo + 1} 局 · 比分{' '}
             {room.wins[me] ?? 0} : {Object.entries(room.wins).filter(([id]) => id !== me).reduce((a, [, w]) => Math.max(a, w), 0)}
           </span>
         ) : null}
-        {/* 专属成长资源（D-229 / D-230）—— 玩家每轮都能看到自己在变强 */}
+        {/* 专属成长资源（D-229 / D-230）—— 玩家每轮都能看到自己在变强。
+            issue #114：**窄屏隐藏**。390px 的顶栏放不下这一段（与计时挤在一起就折字），
+            资源数在「区域」与卡面详情里都能查到；桌面（`sm:` 起）照旧显示，
+            `game.spec.ts` 的 `my-growth` 断言跑的是默认桌面视口，不受影响。 */}
         {myGrowth ? (
-          <span className="text-cyan-300" data-testid="my-growth">
+          <span className="hidden whitespace-nowrap text-cyan-300 sm:inline" data-testid="my-growth">
             {myGrowth}
           </span>
         ) : null}
@@ -1812,19 +1860,11 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
         </div>
       ) : null}
 
-      {/* 事件呈现层（横幅/飘字）+ 提示 toast —— Era 2026-10-18：
-          提示要醒目（中央 toast 而非底栏小字），可操作对象发光。 */}
+      {/* 事件呈现层（横幅/飘字）—— Era 2026-10-18：
+          提示要醒目（中央 toast 而非底栏小字），可操作对象发光。
+          ⚠️ 提示条 `notice` **不在这里**（issue #114）—— 它已改为顶栏上方的
+          行内一块，见上方 `phaseHint` 之后；`fixed top-16` 会盖住回合计时。 */}
       <FxOverlay fx={fx} />
-      {notice ? (
-        <button
-          type="button"
-          className="fixed left-1/2 top-16 z-50 -translate-x-1/2 rounded-lg border border-amber-500/60 bg-amber-950/95 px-4 py-2 text-sm text-amber-100 shadow-lg"
-          onClick={dismiss}
-          data-testid="notice"
-        >
-          {notice}
-        </button>
-      ) : null}
 
       <div className="flex min-h-0 flex-1 gap-1">
         {/* 对战桌主体 —— 四排网格各 `flex-1` **平分**剩余高度，格子随之撑满整桌：
@@ -2052,17 +2092,26 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
             />
           </section>
 
-          {/* ⑥ 我方手牌 —— 可横向滚动（B2-2）。
+          {/* ⑥ 我方手牌 —— 卡宽按张数**自适应**（issue #113）。
               Era 2026-10-18 两条：
               1. 非充能/主要阶段手牌**置灰不可点**（不可操作不给高亮）；
               2. 选中**排他**（最多一张高亮），操作按钮**挂在卡的附近**（B3-2），
-                 不再放底部固定操作条。 pt-9 给浮出的按钮组留位。 */}
+                 不再放底部固定操作条。 pt-9 给浮出的按钮组留位。
+
+              卡宽**不再写死 `w-16`**（issue #113）：390px 下手牌区内容宽约 372px，
+              6 张固定宽 = 6×64 + 5×4 = 404，横溢出 32px，最后一张被裁在滚动区外。
+              现在每个卡位是 `flex-1 min-w-0` 的**均分单元**、`max-w-16 sm:max-w-20` 封顶：
+              窄屏 6 张各约 58px（≥ issue 要求的 56px）、8 张各约 43px；
+              桌面以 80px 封顶，与原来视觉一致。
+              `overflow-x-auto` 保留，但只是**兜底**：常态靠自适应宽度不产生滚动，
+              只有手牌多到连均分都不可读时才用得上（手指横滑会被卡上的拖拽判定吃掉，
+              本来也不能当交互手段）。 */}
           <section className="overflow-x-auto rounded border border-slate-700 bg-slate-900/40 p-1 pt-9">
             <div className="flex gap-1" data-testid="hand">
               {mine.zones.hand.map((c) => (
                 <div
                   key={c.uid}
-                  className="relative"
+                  className="relative min-w-0 max-w-16 flex-1 sm:max-w-20"
                   {...(canPickHand && !mulliganOpen ? { 'data-drag-kind': 'hand', 'data-drag-uid': c.uid } : {})}
                 >
                   {picked === c.uid && !mulliganOpen ? (
@@ -2107,6 +2156,7 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
                   <CardOf
                     card={c}
                     state={state}
+                    fluidWidth
                     selected={mulliganOpen ? mulliganPicks.includes(c.uid) : picked === c.uid}
                     disabled={!canPickHand}
                     glow={mulliganOpen || (canPickHand && picked !== c.uid)}

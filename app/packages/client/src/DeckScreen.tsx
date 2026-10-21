@@ -31,8 +31,13 @@ import {
  * ## 布局（Era 2026-10-20 要求，原 h-dvh 固定视口方案已废）
  *
  * 页面**不锁视口高度**（`min-h-dvh`），整体随内容变长、页面级滚动；
- * 已选 / 待选两个框各固定 **5.5 行**高（按各自条目的实际行高换算），
- * 框内各自滚动 —— 已选卡多时不再被压成一两行。
+ * 已选 / 待选两个框各是**固定高度**（`h-44` / `h-[11.4rem]`），框内各自滚动 ——
+ * 已选卡多时不再被压成一两行。
+ *
+ * ⚠️ 固定的是**框高**，不是「行数」（issue #115）：± 按钮在移动端是 40px 的触控目标，
+ * 行比桌面高（桌面靠 `sm:` 收回到 24px），于是同一个框手机少显示一两行、桌面多显示几行，
+ * 两边都能滚到底。原先注释写的「固定 5.5 行」是按桌面行高算的，在手机上并不成立，
+ * 与实现相反 —— 已改为只声明框高，不再写行数。
  * 3. 统计并校验：总数 X/30 + 三类张数（随从 / 法术 / 设置），不合法时给人话提示。
  *
  * ## 详情为什么是浮层而不是行内展开
@@ -392,7 +397,7 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
             </p>
           </section>
 
-          {/* 上：已选 —— 固定 5.5 行（条目 28px + 间距 4px ≈ 176px），框内滚动 */}
+          {/* 上：已选 —— 框高固定 176px（`h-44`），行高由 ± 的触控目标决定，超出框内滚动 */}
           <section className="rounded border border-cyan-900/70">
             <h2 className="flex items-center justify-between border-b border-cyan-900/70 px-3 py-1.5 text-xs text-cyan-200">
               <span>
@@ -412,8 +417,9 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
                   {selected.map(({ def, n }) => (
                     <li
                       key={def.defId}
-                      className="flex items-center gap-2 rounded bg-slate-800/50 px-2 py-1"
+                      className="flex items-center gap-2 rounded bg-slate-800/50 px-2 py-1.5 sm:py-1"
                     >
+                      {/* 行高在移动端由 ± 的 40px 触控目标决定，这里只补纵向内边距（issue #115） */}
                       <button
                         type="button"
                         className="min-w-0 flex-1 truncate text-left text-sm"
@@ -428,16 +434,16 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
                       </span>
                       <button
                         type="button"
-                        className="rounded bg-slate-700 px-2 py-0.5 text-xs"
+                        className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-slate-700 text-base disabled:opacity-40 sm:h-6 sm:w-auto sm:px-2 sm:text-xs"
                         onClick={() => bump(def.defId, -1)}
                         data-testid={`deck-sel-remove-${def.defId}`}
                       >
                         −
                       </button>
-                      <span className="w-5 text-center text-sm tabular-nums">{n}</span>
+                      <span className="w-6 text-center text-sm tabular-nums">{n}</span>
                       <button
                         type="button"
-                        className="rounded bg-slate-700 px-2 py-0.5 text-xs disabled:opacity-40"
+                        className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-slate-700 text-base disabled:opacity-40 sm:h-6 sm:w-auto sm:px-2 sm:text-xs"
                         onClick={() => bump(def.defId, 1)}
                         disabled={plusDisabled(n)}
                         data-testid={`deck-sel-add-${def.defId}`}
@@ -451,7 +457,7 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
             </div>
           </section>
 
-          {/* 下：待选 —— 固定 5.5 行（条目 32px + 边线 1px ≈ 182px），框内滚动 */}
+          {/* 下：待选 —— 框高固定 182.4px（`h-[11.4rem]`），行高同上，超出框内滚动 */}
           <section className="rounded border border-slate-800">
             <h2 className="flex items-center justify-between border-b border-slate-800 px-3 py-1.5 text-xs text-slate-300">
               <span data-testid="deck-pool-count">
@@ -466,7 +472,7 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
               <div className="flex items-center gap-1.5">
                 <input
                   type="text"
-                  className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-sm placeholder:text-slate-500"
+                  className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-2.5 text-sm placeholder:text-slate-500 sm:py-1"
                   placeholder="搜卡名（输入即筛）"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
@@ -476,7 +482,7 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
                 {searching ? (
                   <button
                     type="button"
-                    className="shrink-0 rounded border border-slate-700 px-2 py-1 text-[11px] text-slate-300"
+                    className="flex h-10 shrink-0 items-center justify-center rounded border border-slate-700 px-2 text-[11px] text-slate-300 sm:h-auto sm:py-1"
                     onClick={() => setQuery('')}
                     data-testid="deck-search-clear"
                   >
@@ -515,17 +521,17 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
                     </button>
                     <button
                       type="button"
-                      className="rounded bg-slate-700 px-2 py-0.5 text-xs disabled:opacity-30"
+                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-slate-700 text-base disabled:opacity-40 sm:h-6 sm:w-auto sm:px-2 sm:text-xs"
                       onClick={() => bump(def.defId, -1)}
                       disabled={n === 0}
                       data-testid={`deck-remove-${def.defId}`}
                     >
                       −
                     </button>
-                    <span className="w-5 text-center text-sm tabular-nums">{n}</span>
+                    <span className="w-6 text-center text-sm tabular-nums">{n}</span>
                     <button
                       type="button"
-                      className="rounded bg-slate-700 px-2 py-0.5 text-xs disabled:opacity-30"
+                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-slate-700 text-base disabled:opacity-40 sm:h-6 sm:w-auto sm:px-2 sm:text-xs"
                       onClick={() => bump(def.defId, 1)}
                       disabled={plusDisabled(n)}
                       data-testid={`deck-add-${def.defId}`}
@@ -596,7 +602,7 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
               <div className="mt-2 flex items-center gap-2">
                 <button
                   type="button"
-                  className="rounded bg-slate-700 px-3 py-1 text-sm disabled:opacity-30"
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-slate-700 text-base disabled:opacity-40 sm:h-6 sm:w-auto sm:px-2 sm:text-xs"
                   onClick={() => bump(detailDef.defId, -1)}
                   disabled={detailN === 0}
                   data-testid={`deck-detail-remove-${detailDef.defId}`}
@@ -608,7 +614,7 @@ export default function DeckScreen({ onBack }: { onBack: () => void }): React.JS
                 </span>
                 <button
                   type="button"
-                  className="rounded bg-slate-700 px-3 py-1 text-sm disabled:opacity-30"
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-slate-700 text-base disabled:opacity-40 sm:h-6 sm:w-auto sm:px-2 sm:text-xs"
                   onClick={() => bump(detailDef.defId, 1)}
                   disabled={plusDisabled(detailN)}
                   data-testid={`deck-detail-add-${detailDef.defId}`}
