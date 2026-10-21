@@ -55,10 +55,24 @@ export async function newClient(
  * `hostDeck` / `guestDeck` 是**卡组选择值**（D-184）：`basic-blade|basic-frost|basic-star`
  * 或 localStorage 里的自建卡组 id。建房与加入共用同一个下拉 `deck-choice`，
  * 阵营那套选择已经没有了（ADR-0042）。
+ *
+ * ## 为什么默认把换牌阶段跳过去（D-259）
+ *
+ * 换牌现在是**游戏开始之前**的独立阶段（`phase === 'mulligan'`），开局即停在那里，
+ * 双方都提交才进第一回合。绝大多数用例只关心「进对局之后」的事，卡在换牌阶段
+ * 会让它们全部超时 —— 故默认替双方点「不换牌」。
+ *
+ * 专门测换牌的用例传 `skipMulligan: false`，自己掌控这个阶段。
  */
 export async function startGame(
   browser: Browser,
-  opts: { format?: 'bo1' | 'bo3'; hostDeck?: string; guestDeck?: string } = {},
+  opts: {
+    format?: 'bo1' | 'bo3';
+    hostDeck?: string;
+    guestDeck?: string;
+    /** 默认 `true`：替双方跳过开局换牌。传 `false` 保留换牌阶段给用例自己操作。 */
+    skipMulligan?: boolean;
+  } = {},
 ): Promise<{ host: Page; guest: Page; code: string }> {
   const host = await newClient(browser, 'Host');
   // D-132：赛制在**建房**时选（BO1 默认）。
@@ -79,7 +93,27 @@ export async function startGame(
 
   await expect(host.getByTestId('turn')).toBeVisible({ timeout: WAIT });
   await expect(guest.getByTestId('turn')).toBeVisible({ timeout: WAIT });
+
+  if (opts.skipMulligan !== false) await skipMulligan([host, guest]);
+
   return { host, guest, code };
+}
+
+/**
+ * 替双方点「不换牌」，把开局换牌阶段推过去（D-259）。
+ *
+ * 换牌是**开局前的独立阶段**：双方各自提交一次才进第一回合（服务端发 `mulligan:closed`）。
+ * 所以这里必须两边都点 —— 只点一边，阶段会一直停着，后续所有「你的回合」断言都会超时。
+ *
+ * 只关心「进对局之后」的用例都用它；要测换牌本身的用例传 `skipMulligan: false` 自己操作。
+ */
+export async function skipMulligan(pages: readonly Page[]): Promise<void> {
+  for (const p of pages) {
+    const skip = p.getByTestId('mulligan-skip');
+    await expect(skip, '「不换牌」按钮应可见 —— 开局应停在换牌阶段').toBeVisible({ timeout: WAIT });
+    await skip.click();
+  }
+  await expect.poll(() => phaseText(pages[0]!), { timeout: WAIT }).not.toContain('阶段 换牌');
 }
 
 /**
@@ -213,8 +247,18 @@ export async function zoneCount(page: Page, zone: string, nth = 0): Promise<numb
   return Number(text);
 }
 
-/** 当前回合数（从「第 N 回合」解析）。 */
-export async function turnNo(page: Page): Promise<number> {
+/**
+ * 我方手牌张数（只数节点，不解析内容 —— 比 `readHand` 快，也抗「卡面还在渲染」）。
+ *
+ * 换牌用例要用它做前置判人：起手张数是**先/后攻的唯一界面可见判据**
+ * （先手 5 / 后手 6，docs/16 §1）。`activePage` 在换牌阶段帮不上忙 ——
+ * 那时两个页面都不显示「你的回合」，因为换牌不属于任何回合（D-259）。
+ */
+export async function handCount(page: Page): Promise<number> {
+  return page.getByTestId('hand').locator('[data-testid="card"]').count();
+}
+
+/** 当前回合数（从「第 N 回合」解析）。 */export async function turnNo(page: Page): Promise<number> {
   const text = (await page.getByTestId('turn').innerText()) ?? '';
   return Number(/(\d+)/.exec(text)?.[1] ?? NaN);
 }
@@ -320,11 +364,52 @@ export async function playOneMinion(page: Page): Promise<void> {
   ).toBeDefined();
 
   await pick(page, [chosen!.index]);
-  await page.getByTestId('play').click();
+  await commitPlay(page);
   // 我方随从区在 ④ 排 —— B2 上下镜像，我方是后出现的那个
   await expect(page.getByTestId('slot-0').nth(1).locator('[data-testid="card"]')).toHaveCount(1, {
     timeout: 10_000,
   });
   // 登场效果可能引出待定选择（霜律学徒 / 卫士 / 老兵…）—— 放掉，避免卡住后续推进
   await settleChoices(page);
+}
+
+/**
+ * 若弹出「选费用卡」面板就确认（预选已是旧行为：按费用区顺序取前 N 张）。
+ *
+ * D-257 起费用支付变成**可选**的第二步：费用区比该付的多时弹面板。
+ * 拖拽出牌（`drag.spec`）也走同一条规则 —— 所以这条不能只写在 `commitPlay` 里。
+ *
+ * 1.5s 判定的是「分支存不存在」，不是等慢操作；等久了会把真失败吞成假绿。
+ */
+export async function confirmPay(page: Page): Promise<boolean> {
+  const needPay = await page
+    .getByTestId('pay-confirm')
+    .waitFor({ state: 'visible', timeout: 1500 })
+    .then(() => true)
+    .catch(() => false);
+  if (needPay) await page.getByTestId('pay-confirm').click();
+  return needPay;
+}
+
+/**
+ * 完成一次出牌（D-257 起出牌变成两段/三段）。
+ *
+ * 顺序：点「出牌」→（随从）点我方某一格选位置 →（费用区比该付的多时）确认支付。
+ *
+ * 抽成 helper 的原因：这条链在 `playOneMinion` 与 `turn.spec` 里各写一遍，
+ * 而 D-256 已经证明「同一份逻辑抄两份、只改一处」会静默失效 ——
+ * 漏掉「选位置」的表现是「点了出牌，卡还在手上」，看起来像功能坏了。
+ *
+ * 两处 `waitFor` 的超时都只给 1.5s：它们判断的是**分支存不存在**（是不是随从 /
+ * 费用区有没有多余可选），不是「等某个慢操作完成」。等久了会把真实失败吞成假绿。
+ */
+export async function commitPlay(page: Page, opts: { slot?: number } = {}): Promise<void> {
+  await page.getByTestId('play').click();
+  const placing = await page
+    .getByTestId('placing-hint')
+    .waitFor({ state: 'visible', timeout: 1500 })
+    .then(() => true)
+    .catch(() => false);
+  if (placing) await page.getByTestId(`slot-${opts.slot ?? 0}`).nth(1).click();
+  await confirmPay(page);
 }

@@ -69,31 +69,42 @@ describe('可操作性判定（T-04）', () => {
     expect(actionability(base({ phase: 'draw', drawnThisPhase: true }), ME, NOW).canDraw).toBe(false);
   });
 
-  describe('换牌窗口（A8-3 / X-17 / Era 2026-10-19 时间窗）', () => {
-    /** 处于「己方第一次充能阶段、刚进入」的状态。 */
-    function charging(): GameState {
-      const s = base({ phase: 'charge' });
-      return player(s, ME, { chargeCount: 1, firstChargeAt: NOW, mulliganDone: false });
+  describe('开局换牌（D-259：独立阶段，不属于任何回合）', () => {
+    /** 处于换牌阶段、尚未确认的状态。 */
+    function inMulligan(patch: Partial<PlayerState> = {}): GameState {
+      return player(base({ phase: 'mulligan' }), ME, { mulliganDone: false, ...patch });
     }
 
-    it('首次充能阶段 + 窗口内 + 未换过 → 可以换牌', () => {
-      expect(actionability(charging(), ME, NOW).canMulligan).toBe(true);
+    it('换牌阶段且未确认 → 可以换牌', () => {
+      expect(actionability(inMulligan(), ME, NOW).canMulligan).toBe(true);
     });
 
-    it('过了 30 秒窗口就关（基准是各自 firstChargeAt，不是开局时刻）', () => {
-      const s = charging();
-      expect(actionability(s, ME, NOW + 30_000).canMulligan).toBe(true);
-      expect(actionability(s, ME, NOW + 30_001).canMulligan).toBe(false);
+    it('已经确认过（mulliganDone）→ 不再给', () => {
+      expect(actionability(inMulligan({ mulliganDone: true }), ME, NOW).canMulligan).toBe(false);
     });
 
-    it('第二次充能阶段不再给换牌（chargeCount ≠ 1）', () => {
-      const s = player(charging(), ME, { chargeCount: 2 });
-      expect(actionability(s, ME, NOW).canMulligan).toBe(false);
+    it('不在换牌阶段 → 一律不给（第一回合充能阶段也不再给，X-17 已废弃）', () => {
+      const charging = player(base({ phase: 'charge' }), ME, {
+        chargeCount: 1,
+        firstChargeAt: NOW,
+        mulliganDone: false,
+      });
+      expect(actionability(charging, ME, NOW).canMulligan).toBe(false);
     });
 
-    it('已经换过就不再给（mulliganDone 每人一次）', () => {
-      const s = player(charging(), ME, { mulliganDone: true });
-      expect(actionability(s, ME, NOW).canMulligan).toBe(false);
+    it('换牌是双方同时的，不看轮次：后攻方在手牌上同样可点', () => {
+      // activeSeat = 1（对手先攻），我是 p1 —— 仍然能换牌、能点手牌。
+      const s = { ...inMulligan(), activeSeat: 1 };
+      const a = actionability(s, ME, NOW);
+      expect(a.myTurn).toBe(false);
+      expect(a.canMulligan).toBe(true);
+      expect(a.canPickHand).toBe(true);
+    });
+
+    it('换牌的选择不受时间窗约束（界面不判时间，超时由服务端兜底）', () => {
+      // 服务端 30s 后替未确认方提交；在那之前界面不该自己先关掉，
+      // 否则窗口一过双方都点不动，阶段永远关不掉。
+      expect(actionability(inMulligan(), ME, NOW + 3_600_000).canMulligan).toBe(true);
     });
   });
 

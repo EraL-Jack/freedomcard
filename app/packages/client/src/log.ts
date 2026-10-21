@@ -99,6 +99,9 @@ export function describeEvent(
       if (from === 'reveal') return null;
       const name = cardName(defIdOf(state, str('uid')));
       if (from === 'deck' && to === 'hand') return `${who(names, str('playerId'))} 抽到 ${name}`;
+      // 顶替离场（D-257）：上一行 `unit:replaced` 已经说明「被顶替、进弃牌区」，
+      // 这里再印「被破坏」会让玩家以为是战斗结果。
+      if (p['replaced'] === true) return null;
       if (from === 'board' && to === 'graveyard') return `${name} 被破坏`;
       if (to === 'cost') return `${name} 置入费用区`;
       if (to === 'board') return `${name} 登场`;
@@ -114,6 +117,13 @@ export function describeEvent(
     case 'unit:asleep':
       return `${cardName(defIdOf(state, str('uid')))} 进入休眠`;
 
+    /* D-257：顶替召唤 —— 玩家需要知道「原来那张去哪了」（弃牌区），否则会当成丢失。 */
+    case 'unit:replaced': {
+      const slot = num('slot');
+      const byUid = str('byUid');
+      return `${cardName(defIdOf(state, byUid))} 被顶替出场（第 ${(slot ?? 0) + 1} 格），置入弃牌区`;
+    }
+
     case 'unit:frozen':
       return `${cardName(defIdOf(state, str('uid')))} 被冻结（跳过下次重置）`;
 
@@ -122,6 +132,10 @@ export function describeEvent(
 
     case 'cost:spent':
       return `${who(names, str('playerId'))} 消耗 ${num('amount') ?? 0} 张费用`;
+
+    /* D-258：回合开始的自动充能 —— 与手动充能分开说，否则玩家不知道这两张是白来的。 */
+    case 'cost:income':
+      return `⚡ ${who(names, str('playerId'))} 充能阶段自动 +${num('amount') ?? 0} 张费用`;
 
     case 'commander:damaged':
       return `指挥官受到 ${num('amount') ?? 1} 点伤害`;

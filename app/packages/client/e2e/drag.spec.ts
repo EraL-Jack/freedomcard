@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-import { activePage, advancePhase, chargeMinions, costRemaining, payOf, playOneMinion, readHand, settleChoices, startGame, turnNo, zoneCount } from './helpers.js';
+import { activePage, advancePhase, chargeMinions, confirmPay, costRemaining, payOf, playOneMinion, readHand, settleChoices, startGame, turnNo, zoneCount } from './helpers.js';
 
 /**
  * 拖拽交互端到端验证（B3-1「点选+拖拽都要」/ Era 2026-10-18「模拟现实操作的卡牌」）。
@@ -74,6 +74,8 @@ test('拖拽手牌到费用区 = 充能；拖拽手牌到随从区 = 出牌', as
     p.getByTestId('hand').locator('[data-testid="card"]').nth(chosen!.index),
     p.getByTestId('slot-0').nth(1), // 我方随从区第 1 格（B2 镜像 nth(1)）
   );
+  // D-257：拖到格子 = 选好位置，但「付哪几张」仍要确认一次（费用区通常比该付的多）
+  await confirmPay(p);
   await expect
     .poll(() => p.getByTestId('hand').locator('[data-testid="card"]').count())
     .toBe(handBefore - 1);

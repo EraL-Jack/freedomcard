@@ -119,6 +119,29 @@ describe('decideAiMove · 出牌', () => {
     const s = craft({ own: { hand: [c('h1', 'cheap')], board, cost: [c('c1', 'cheap')] } });
     expect(decideAiMove(s, 'ai', CARDS, 1000)).toEqual({ type: 'phase:advance' });
   });
+
+  /* ---- D-257：满场之后还能顶替 ---- */
+
+  it('满场但手上有更强的随从 → 顶替最弱那一格', () => {
+    const board: CardInstance[] = [
+      { uid: 'b0', defId: 'big', slot: 0 }, // 力 5
+      { uid: 'b1', defId: 'weak', slot: 1 }, // 力 1 ← 最弱
+      { uid: 'b2', defId: 'cheap', slot: 2 }, // 力 2
+    ];
+    const s = craft({
+      own: { hand: [c('h1', 'strong')], board, cost: [c('c1', 'cheap'), c('c2', 'cheap')] },
+    });
+    expect(decideAiMove(s, 'ai', CARDS, 1000)).toEqual({
+      type: 'card:play',
+      payload: { uid: 'h1', slot: 1 },
+    });
+  });
+
+  it('满场且手上的随从不更强 → 不顶替（换弱/换平等于白扔一张牌）', () => {
+    const board = Array.from({ length: 3 }, (_, i) => c(`b${i}`, 'cheap'));
+    const s = craft({ own: { hand: [c('h1', 'weak')], board, cost: [c('c1', 'cheap')] } });
+    expect(decideAiMove(s, 'ai', CARDS, 1000)).toEqual({ type: 'phase:advance' });
+  });
 });
 
 describe('decideAiMove · 战斗', () => {
@@ -213,27 +236,33 @@ describe('decideAiMove · 待定选择（响应）', () => {
   });
 });
 
-describe('decideAiMove · 换牌', () => {  const withFirstCharge = (firstChargeAt: number, mulliganDone = false): GameState => {
-    const s = craft({ phase: 'charge', turn: 2 });
+describe('decideAiMove · 换牌', () => {
+  const inMulligan = (startedAt: number | null, mulliganDone = false): GameState => {
+    const s = craft({ phase: 'mulligan' });
     const ai = s.players['ai']!;
     return {
       ...s,
-      players: { ...s.players, ai: { ...ai, chargeCount: 1, firstChargeAt, mulliganDone } },
+      startedAt,
+      players: { ...s.players, ai: { ...ai, mulliganDone } },
     };
   };
 
-  it('首个充能阶段、窗口内 → 主动提交换牌（不换牌，只为了关掉窗口）', () => {
-    const s = withFirstCharge(1000);
+  it('开局换牌阶段 → 主动提交一次（不换牌，只为关掉阶段）', () => {
+    const s = inMulligan(1000);
     expect(decideAiMove(s, 'ai', CARDS, 2000)).toEqual({ type: 'mulligan', payload: { returns: [] } });
   });
 
-  it('窗口已过 → 不再发换牌（发了必被拒），直接推进', () => {
-    const s = withFirstCharge(1000);
-    expect(decideAiMove(s, 'ai', CARDS, 1000 + 30_000 + 1)).toEqual({ type: 'phase:advance' });
+  it('窗口已过仍要提交 —— 否则换牌阶段永远关不掉（D-259）', () => {
+    // 窗口只约束「换牌」动作，不约束「跳过」；AI 发的正是跳过
+    const s = inMulligan(1000);
+    expect(decideAiMove(s, 'ai', CARDS, 1000 + 30_000 + 1)).toEqual({
+      type: 'mulligan',
+      payload: { returns: [] },
+    });
   });
 
   it('已经换过 → 不再发', () => {
-    const s = withFirstCharge(1000, true);
+    const s = inMulligan(1000, true);
     expect(decideAiMove(s, 'ai', CARDS, 2000)).toEqual({ type: 'phase:advance' });
   });
 });

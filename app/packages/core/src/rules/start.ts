@@ -93,6 +93,9 @@ export const startRule = (
   // ④ 第一回合的充能阶段（docs/16 §1/§2，D-227 修订）：
   //    **先攻首回合自动充能 0 张**（后攻与后续回合仍是 2 张）。
   //    指挥官没有力量值（docs/16 §6.2.1 / D-230），故不再同步任何档位。
+  //
+  //    D-259：`game:started` 只把阶段停在开局换牌（`mulligan`），
+  //    真正的第一回合充能阶段由 `mulligan:closed` 开启 —— 这里不需要额外事件。
   const firstPlayer = seatsOut[0]!;
   const firstDeck = shuffled.get(firstPlayer) ?? [];
 

@@ -19,9 +19,31 @@ export function ev(at: number, type: string, payload?: Record<string, unknown>):
   return payload === undefined ? { type, at } : { type, at, payload };
 }
 
-/** 区域间移动一张卡。**唯一的**改区手段，便于回放与审计。 */
-export const moved = (at: number, playerId: PlayerId, uid: string, from: Zone, to: Zone): GameEvent =>
-  ev(at, 'card:moved', { playerId, uid, from, to });
+/**
+ * 区域间移动一张卡。**唯一的**改区手段，便于回放与审计。
+ *
+ * `slot` 只对「进入随从区」有意义（D-257）：玩家选了第几格就在这里带上，
+ * 不传则由 reducer 分配最小的空槽。区域外的卡忽略该字段。
+ */
+export const moved = (
+  at: number,
+  playerId: PlayerId,
+  uid: string,
+  from: Zone,
+  to: Zone,
+  slot?: number,
+): GameEvent =>
+  ev(at, 'card:moved', { playerId, uid, from, to, ...(slot === undefined ? {} : { slot }) });
+
+/**
+ * 顶替离场（D-257）—— 被新召唤的随从挤掉的旧随从进弃牌区。
+ *
+ * 与「被破坏」共用 `card:moved`（reducer 不需要新分支），但带 `replaced: true`：
+ * 日志据此知道这一行已经由 `unit:replaced` 说清楚了，不再印一句「被破坏」。
+ * 顶替不是战斗结果，玩家在战报里看到「被破坏」会以为是自己打输了。
+ */
+export const replacedOut = (at: number, playerId: PlayerId, uid: string, slot: number): GameEvent =>
+  ev(at, 'card:moved', { playerId, uid, from: 'board', to: 'graveyard', replaced: true, slot });
 
 /** 随机游标推进 `steps` 步。洗牌结果由相邻事件显式携带，reducer 只需对齐游标。 */
 export const rngAdvance = (at: number, steps: number): GameEvent => ev(at, 'rng:advance', { steps });

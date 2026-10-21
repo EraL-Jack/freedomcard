@@ -4,7 +4,9 @@ import {
   activePage,
   advancePhase,
   chargeMinions,
+  commitPlay,
   costRemaining,
+  handCount,
   payOf,
   pick,
   phaseText,
@@ -71,7 +73,8 @@ test('推进阶段 → 充能 → 出牌 → 结束回合', async ({ browser }) 
 
   const before = hand1.length;
   await pick(p, [pc.index]);
-  await p.getByTestId('play').click();
+  // D-257：出牌分两段（选位置 / 选费用），统一走 helper，别在这里重写一遍。
+  await commitPlay(p);
   // 登场效果可能引出待定选择 —— 放掉，避免卡住后续推进
   await settleChoices(p);
 
@@ -97,30 +100,66 @@ test('推进阶段 → 充能 → 出牌 → 结束回合', async ({ browser }) 
   await expect(p.getByText('对手回合')).toBeVisible({ timeout: 10_000 });
 });
 
-test('起手换牌：第一回合充能阶段可换，换完补满 5 张且只能换一次（A8-3 / A10-1）', async ({ browser }) => {
-  const { host, guest } = await startGame(browser);
-  const p = await activePage([host, guest]);
-  await expect.poll(() => phaseText(p)).toContain('阶段 充能');
+/**
+ * 开局换牌（D-259 / A8-3 / A10-1）。
+ *
+ * Era 2026-10-21：「开局换牌有这个阶段吗，好像直接开始了啊，换牌这个动作不是在
+ * 第一回合做，而是在游戏开始之前做。」
+ *
+ * 本用例锁三件事：
+ *  ① 开局**停在换牌阶段**，回合数还没开始走；
+ *  ② **双方各自确认**，只一方确认不关闭阶段（这是「不轮流动手、也不互相卡死」的关键）；
+ *  ③ 换牌**不改手牌张数**（先攻补到 5）。
+ */
+test('开局换牌：独立阶段（游戏开始之前），双方各自确认后才进第一回合（D-259）', async ({ browser }) => {
+  const { host, guest } = await startGame(browser, { skipMulligan: false });
+  const pages: readonly Page[] = [host, guest];
 
-  // 换牌窗口内按钮可见（不可操作的按钮不展示，Era 2026-10-19）；进入换牌模式 → 多选两张 → 确认
-  await expect(p.getByTestId('mulligan')).toBeVisible({ timeout: 10_000 });
-  await p.getByTestId('mulligan').click();
-  const cards = p.getByTestId('hand').locator('[data-testid="card"]');
+  // ① 开局即换牌阶段 —— 六个回合阶段一个都没点亮，单独挂一枚「换牌」标签
+  for (const p of pages) {
+    await expect.poll(() => phaseText(p)).toContain('阶段 换牌');
+    await expect(p.getByTestId('phase-track-mulligan')).toBeVisible();
+    await expect(p.getByTestId('mulligan-status')).toContainText('等你换牌');
+    // 回合还没开始：显示「开局」而不是「第 1 回合」，否则玩家会以为已经在打了
+    await expect(p.getByTestId('turn')).toHaveText('开局');
+  }
+
+  // ② 认人：起手张数先手 5 / 后手 6（docs/16 §1）。
+  //    先等两张页面都发好牌再读，否则会读到「发牌前」的中间态。
+  await expect
+    .poll(async () => [(await handCount(host)), (await handCount(guest))].sort((a, b) => a - b).join(','), {
+      timeout: 15_000,
+    })
+    .toBe('5,6');
+  const first = (await handCount(host)) === 5 ? host : guest;
+  const second = first === host ? guest : host;
+
+  // ③ 先攻方换 2 张 → 手牌仍 5 张（A10-1 补满起手），自己进「已确认」
+  const cards = first.getByTestId('hand').locator('[data-testid="card"]');
   await cards.nth(0).click();
   await cards.nth(1).click();
-  await expect(p.getByTestId('mulligan-confirm')).toContainText('2');
-  await p.getByTestId('mulligan-confirm').click();
+  await expect(first.getByTestId('mulligan-confirm')).toContainText('2');
+  await first.getByTestId('mulligan-confirm').click();
 
-  // 返回 2 张 + 抽满：手牌仍是 5 张（A10-1）；换牌完成横幅经播放队列到达
-  //
-  // ⚠️ 必须先等「完成换牌」进日志，再数手牌 —— 否则断言会在服务端还没回事件时
-  // 就被「换牌前的 5 张」满足，变成一句永远为真的废话（D-231 复盘时踩到）。
-  await expect(p.getByTestId('log')).toContainText('完成换牌', { timeout: 15_000 });
-  await expect(p.getByTestId('hand').locator('[data-testid="card"]')).toHaveCount(5, {
-    timeout: 15_000,
-  });
-  // 每人一次（mulliganDone）—— 按钮直接不再展示（Era 2026-10-19，废止置灰）
-  await expect(p.getByTestId('mulligan')).toHaveCount(0, { timeout: 10_000 });
+  // ⚠️ 先等「完成换牌」进日志，再数手牌 —— 否则断言会被换牌前的 5 张满足（D-231 踩过）
+  await expect(first.getByTestId('log')).toContainText('完成换牌', { timeout: 15_000 });
+  await expect.poll(() => handCount(first), { timeout: 15_000 }).toBe(5);
+  await expect(first.getByTestId('mulligan-status')).toContainText('你已确认');
+  // 自己确认过 → 按钮组消失（不展示不可用的按钮，Era 2026-10-19）
+  await expect(first.getByTestId('mulligan-confirm')).toHaveCount(0);
+  await expect(first.getByTestId('mulligan-skip')).toHaveCount(0);
+
+  // ④ **只一方确认不关闭阶段** —— 对方还在换牌，回合不该开始
+  await expect.poll(() => phaseText(first), { timeout: 15_000 }).toContain('阶段 换牌');
+  await expect(first.getByTestId('turn')).toHaveText('开局');
+
+  // ⑤ 对方点「不换牌」→ 双方都提交 → `mulligan:closed` → 第一回合充能阶段
+  await second.getByTestId('mulligan-skip').click();
+  await expect.poll(() => phaseText(second), { timeout: 15_000 }).toContain('阶段 充能');
+  await expect(second.getByTestId('turn')).toHaveText('第 1 回合');
+  await expect(second.getByTestId('phase-track-mulligan')).toHaveCount(0);
+  // 行动权落在先攻方身上（先攻方就是上面那位 5 张的）
+  await expect(first.getByText('你的回合')).toBeVisible({ timeout: 15_000 });
 });
 
 /**
@@ -129,26 +168,21 @@ test('起手换牌：第一回合充能阶段可换，换完补满 5 张且只�
  * 这里把 6 写成字面量、而不是引用 shared 的 `SECOND_PLAYER_HAND` —— 若哪天引擎又把补牌
  * 张数退回 5，本用例必须变红；跟着常量走就只会一起变绿，等于没测。
  *
- * 时序：后攻方的换牌窗口在**自己的第一个充能阶段**（第 2 回合，X-17），
- * 所以先让先攻方结束回合把行动权交过去。
+ * D-259 起换牌是开局前的独立阶段，双方同时进行，**不用等先攻方结束回合**（X-17 已废弃）。
  */
-test('后攻方换牌：起手 6 张，换 2 张后仍补到 6 张（D-231）', async ({ browser }) => {
-  const { host, guest } = await startGame(browser);
-  const pages = [host, guest];
-  const first = await activePage(pages);
-  const second = pages.find((x) => x !== first)!;
+test('后攻方换牌：起手 6 张，换 2 张后仍补到 6 张（D-231 / D-259）', async ({ browser }) => {
+  const { host, guest } = await startGame(browser, { skipMulligan: false });
 
-  // ① 后攻方开局 6 张（先手 5 / 后手 6，docs/16 §1）
-  await expect(second.getByTestId('hand').locator('[data-testid="card"]')).toHaveCount(6, {
-    timeout: 15_000,
-  });
+  // ① 后攻方 = 起手 6 张的那一位
+  await expect
+    .poll(async () => [(await handCount(host)), (await handCount(guest))].sort((a, b) => a - b).join(','), {
+      timeout: 15_000,
+    })
+    .toBe('5,6');
+  const second = (await handCount(host)) === 6 ? host : guest;
 
-  // ② 交出行动权 → 第 2 回合，后攻方进入自己的首个充能阶段
-  await first.getByTestId('end-turn').click();
-  await expect.poll(() => turnNo(second), { timeout: 15_000 }).toBe(2);
-
-  await expect(second.getByTestId('mulligan')).toBeVisible({ timeout: 10_000 });
-  await second.getByTestId('mulligan').click();
+  // ② 同时换 —— 不等谁先动
+  await expect.poll(() => phaseText(second)).toContain('阶段 换牌');
   const cards = second.getByTestId('hand').locator('[data-testid="card"]');
   await cards.nth(0).click();
   await cards.nth(1).click();
@@ -160,8 +194,6 @@ test('后攻方换牌：起手 6 张，换 2 张后仍补到 6 张（D-231）', 
   // ⚠️ 顺序很重要：先等「完成换牌」进日志（证明服务端真收了这次换牌并回了事件），
   // 再数手牌。否则断言会在事件到达之前就被「换牌前的 6 张」满足 —— 拿坏代码跑也绿。
   await expect(second.getByTestId('log')).toContainText('完成换牌', { timeout: 15_000 });
-  await expect(second.getByTestId('hand').locator('[data-testid="card"]')).toHaveCount(6, {
-    timeout: 15_000,
-  });
-  await expect(second.getByTestId('mulligan')).toHaveCount(0, { timeout: 10_000 });
+  await expect.poll(() => handCount(second), { timeout: 15_000 }).toBe(6);
+  await expect(second.getByTestId('mulligan-confirm')).toHaveCount(0);
 });

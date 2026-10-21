@@ -105,6 +105,17 @@ export function advanceOnce(state: GameState, ctx: RuleContext): GameEvent[] {
         'cost',
       );
       events.push(...income.events);
+      /*
+       * D-258（Era 2026-10-21「过回合时充能阶段显示不明显」）：
+       * 回合开始的自动充能单独记一条汇总事件。
+       *
+       * 为什么不让客户端自己从 `card:moved` 里数：那两行和「玩家手动充能」长得完全一样，
+       * 界面上只能读出一句「X 置入费用区」，读不出「这是回合开始白给的 2 张」。
+       * 汇总进事件流之后，日志、横幅、回放看到的是同一件事。
+       */
+      if (income.events.length > 0) {
+        events.push(ev(at, 'cost:income', { playerId: nextPlayer, amount: income.events.length }));
+      }
     }
     // 指挥官力量值已取消（docs/16 §6.2.1 / D-230）：这里不再同步任何档位。
   }

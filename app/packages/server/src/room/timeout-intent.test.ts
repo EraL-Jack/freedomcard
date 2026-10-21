@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { applyIntent, reduce } from '@app/core';
+import { INTENTS, applyIntent, reduce } from '@app/core';
 
 import { CARD_POOL } from '../cards.js';
 import { seedGameState } from './session.js';
@@ -24,6 +24,7 @@ import { buildTimeoutIntent } from './timeout-intent.js';
 
 const SEATS = ['p1', 'p2'];
 
+/** 开局后的状态：D-259 起停在**换牌阶段**（游戏开始之前）。 */
 function startedState() {
   const state = seedGameState({ seats: SEATS, seed: 7 });
   // 走一遍开局：掷骰 / 洗牌 / 发起手都由引擎产出，超时只能发生在已开局的状态上
@@ -37,6 +38,28 @@ function startedState() {
   return start.value.reduce((s, e) => reduce(s, e), state);
 }
 
+/**
+ * 走过开局换牌、真正进入第一回合的状态。
+ *
+ * 回合超时只可能发生在这一步之后 —— 换牌阶段是双方同时的、不属于任何回合，
+ * 它有自己的兜底（`handleMulliganTimeout`）。
+ */
+function inTurn() {
+  let s = startedState();
+  let seq = 10;
+  for (const id of SEATS) {
+    const out = applyIntent(
+      s,
+      { type: INTENTS.mulligan, actor: 'player', playerId: id, seq: seq++, payload: { returns: [] } },
+      { now: 1_500, cards: CARD_POOL },
+    );
+    if (!out.ok) throw new Error(`换牌被拒：${out.error.code}`);
+    s = out.value.reduce((acc, e) => reduce(acc, e), s);
+  }
+  if (s.phase === 'mulligan') throw new Error('双方都确认后应离开换牌阶段');
+  return s;
+}
+
 describe('超时兜底 Intent（T-05）', () => {
   it('未开局（没有座位）时不给 Intent —— 没有「该超时的人」', () => {
     const empty = seedGameState({ seats: [], seed: 1 });
@@ -44,7 +67,7 @@ describe('超时兜底 Intent（T-05）', () => {
   });
 
   it('已开局：系统 Intent、指向当前行动方、成因 timeout', () => {
-    const s = startedState();
+    const s = inTurn();
     const active = s.seats[s.activeSeat]!;
     const intent = buildTimeoutIntent(s, 41);
     expect(intent).not.toBeNull();
@@ -58,7 +81,7 @@ describe('超时兜底 Intent（T-05）', () => {
   });
 
   it('交给引擎后回合真的推进了（这才是「超时生效」的证据）', () => {
-    const s = startedState();
+    const s = inTurn();
     const turnBefore = s.turn;
     const intent = buildTimeoutIntent(s, 0)!;
     const out = applyIntent(s, intent, { now: 2_000, cards: CARD_POOL });
@@ -74,9 +97,16 @@ describe('超时兜底 Intent（T-05）', () => {
   });
 
   it('已结束的对局不再产生超时 Intent —— 定时器晚一拍也不该把回合推走', () => {
-    const s = startedState();
+    const s = inTurn();
     // 两种结束形态都要挡住：有胜者 / 判和
     expect(buildTimeoutIntent({ ...s, winner: s.seats[0]!, endReason: 'health' }, 0)).toBeNull();
     expect(buildTimeoutIntent({ ...s, draw: true, endReason: 'draw' }, 0)).toBeNull();
+  });
+
+  it('换牌阶段不产生 turn:end Intent（D-259）', () => {
+    const s = startedState();
+    // 开局后停在换牌阶段（游戏开始之前），此时还没有「行动方」可言
+    expect(s.phase).toBe('mulligan');
+    expect(buildTimeoutIntent(s, 0)).toBeNull();
   });
 });

@@ -28,6 +28,14 @@ export function buildTimeoutIntent(state: GameState, serverSeq: number): Intent 
   // 定时器回调可能比它晚一拍（例如结算事件正在播放）。这里自守一层，
   // 免得超时把一局已经结束的对局推到下一回合，日志里凭空多出一条 turn:changed。
   if (state.winner !== null || state.draw) return null;
+  /*
+   * 换牌阶段（D-259）不属于任何回合 —— 它没有「行动方」，超时的正确兜底是
+   * 「替未确认方提交一次不换牌」（`handleMulliganTimeout`），而不是结束回合。
+   *
+   * 这里自守一层：回合定时器与换牌定时器是两套，重建/续期时序上可能晚一拍，
+   * 万一有旧 handle 落到换牌阶段，这条能保证它变成空操作，而不是把开局推进走。
+   */
+  if (state.phase === 'mulligan') return null;
   const active = activePlayer(state);
   if (!active) return null;
   return {

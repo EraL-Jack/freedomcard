@@ -316,6 +316,10 @@ export const RULE_ERRORS = {
   EFFECT_UNAVAILABLE: 'EFFECT_UNAVAILABLE',
   /** 回答的不是待定选择的合法选项。 */
   INVALID_CHOICE: 'INVALID_CHOICE',
+  /** 支付时自选的费用卡不合法（张数不对 / 不在费用区 / 重复）—— D-257。 */
+  INVALID_COST_PICK: 'INVALID_COST_PICK',
+  /** 召唤位置不合法（越界 / 非整数 / 给非随从指定位置）—— D-257。 */
+  INVALID_SLOT: 'INVALID_SLOT',
 } as const;
 
 export type RuleErrorCode = (typeof RULE_ERRORS)[keyof typeof RULE_ERRORS];

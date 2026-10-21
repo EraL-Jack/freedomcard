@@ -45,9 +45,11 @@ function FxOverlay({ fx }: { fx: Fx | null }): React.JSX.Element | null {
       ? 'border-rose-500/70 bg-rose-950/90 text-rose-200'
       : fx.kind === 'ended'
         ? 'border-amber-400/80 bg-amber-950/95 text-amber-100'
-        : fx.kind === 'combat'
-          ? 'border-cyan-500/60 bg-slate-900/95 text-cyan-100'
-          : 'border-slate-500/50 bg-slate-900/95 text-slate-100';
+        : fx.kind === 'income'
+          ? 'border-emerald-400/70 bg-emerald-950/90 text-emerald-100'
+          : fx.kind === 'combat'
+            ? 'border-cyan-500/60 bg-slate-900/95 text-cyan-100'
+            : 'border-slate-500/50 bg-slate-900/95 text-slate-100';
   const size =
     fx.kind === 'damage' ? 'text-4xl font-bold' : fx.kind === 'ended' ? 'text-3xl font-bold' : 'text-2xl';
   return (
@@ -346,6 +348,10 @@ function BoardSlot(props: {
   dragUid?: string;
   /** 拖拽落点（攻击目标，data-drop-uid）。 */
   dropUid?: string;
+  /** 拖拽落点：这一格作为**出牌位置**（D-257，仅我方格子）。 */
+  dropSlot?: number;
+  /** 格子上的小标签 —— 选位时显示「放这里」/「顶替」。 */
+  hint?: string;
   /** 拖拽悬停提示。 */
   highlight?: boolean;
   /** 战斗呈现类名。 */
@@ -355,15 +361,25 @@ function BoardSlot(props: {
   /** 查看卡详情。 */
   onDetail?: (card: CardInstance) => void;
   onClick?: () => void;
+  /**
+   * 整格点击（D-257）。
+   *
+   * 与 `onClick` 的区别很重要：`onClick` 只挂在**格子里的卡**上，空格子根本没有
+   * 可点的节点（原来空格子只有一行「1/2/3」编号）—— 于是「点空位放随从」点了没反应。
+   * 选位置**必须**能点空格子，所以把这条挂在最外层 div 上。
+   */
+  onSlotClick?: () => void;
 }): React.JSX.Element {
   return (
     <div
-      className={`flex h-full min-h-[44px] min-w-0 flex-col items-center justify-center overflow-hidden rounded border border-dashed bg-slate-900/40 p-1 ${
+      className={`relative flex h-full min-h-[44px] min-w-0 flex-col items-center justify-center overflow-hidden rounded border border-dashed bg-slate-900/40 p-1 ${
         props.highlight ? 'border-cyan-400 ring-2 ring-cyan-400/70' : 'border-slate-700'
       }`}
       data-testid={`slot-${props.index}`}
+      {...(props.onSlotClick ? { onClick: props.onSlotClick } : {})}
       {...(props.dragKind && props.dragUid ? { 'data-drag-kind': props.dragKind, 'data-drag-uid': props.dragUid } : {})}
       {...(props.dropUid ? { 'data-drop-uid': props.dropUid } : {})}
+      {...(props.dropSlot === undefined ? {} : { 'data-drop-slot': props.dropSlot })}
     >
       {props.card ? (
         <CardOf
@@ -391,6 +407,14 @@ function BoardSlot(props: {
       ) : (
         <span className="text-[10px] text-slate-500">{props.index + 1}</span>
       )}
+      {props.hint ? (
+        <span
+          className="pointer-events-none absolute inset-x-0 top-0 z-10 mx-auto w-max max-w-full truncate rounded-b bg-cyan-700 px-1 text-[9px] leading-4 text-cyan-50"
+          data-testid={`slot-hint-${props.index}`}
+        >
+          {props.hint}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -808,11 +832,12 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   /** 详情浮层里正在查看的卡（Era 2026-10-18：卡牌携带效果必须可查看）。 */
   const [detailCard, setDetailCard] = useState<CardInstance | null>(null);
   /**
-   * 起手换牌模式（A8-3/A10-1，D-120 补 UI 入口）。
-   * 换牌是**多目标**操作（returns 数组）—— 进入模式后手牌恢复多选，
-   * 不影响非多目标场景的排他纪律（Era 2026-10-18）。
+   * 换牌多选（D-259 之后不再需要「进入换牌模式」这个状态）。
+   *
+   * 开局就停在换牌阶段，手牌默认就是多选题 —— 少一次「点换牌按钮才进模式」的步骤，
+   * 也少一个「模式开着但阶段已过」的失配态。换牌是**多目标**操作（returns 数组），
+   * 这不影响非多目标场景的排他纪律（Era 2026-10-18）。
    */
-  const [mulliganMode, setMulliganMode] = useState(false);
   const [mulliganPicks, setMulliganPicks] = useState<string[]>([]);
   const [now, setNow] = useState(() => Date.now());
 
@@ -838,6 +863,24 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
    * 战报在手机上根本看不到。桌面(≥640px)仍是常驻列，窄屏改为按钮展开的抽屉。
    */
   const [logOpen, setLogOpen] = useState(false);
+
+  /**
+   * 出牌的两段选择（D-257，Era 2026-10-21）。
+   *
+   * `placing`：已选随从、正在选放到第几格（点格子后可能还要选费用）。
+   * `payPicker`：正在选「用哪几张费用卡支付」。
+   *
+   * 为什么是两段而不是一个大面板：绝大多数出牌「费用区正好够付、格子也空着」，
+   * 那种情况必须保持「点出牌 → 点格子」两步；只有真的可挑（费用区多了 / 要顶替）
+   * 才让玩家做决定。
+   */
+  const [placing, setPlacing] = useState<string | null>(null);
+  const [payPicker, setPayPicker] = useState<{
+    uid: string;
+    slot?: number;
+    pay: number;
+    picks: string[];
+  } | null>(null);
 
   /**
    * 拖拽状态（B3-1 / Era 2026-10-18）。
@@ -881,13 +924,17 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   useEffect(() => {
     if (!canBattle) setAttacker(null);
   }, [canBattle]);
-  // 换牌窗口（阶段窗口或时间窗）一过就退出换牌模式。
+  // 换牌阶段一结束（自己确认 / 双方都确认 / 超时兜底）就清掉未提交的选择。
   useEffect(() => {
-    if (!mulliganOpen && mulliganMode) {
-      setMulliganMode(false);
-      setMulliganPicks([]);
+    if (!mulliganOpen && mulliganPicks.length > 0) setMulliganPicks([]);
+  }, [mulliganOpen, mulliganPicks.length]);
+  // 离开主要阶段就取消没做完的出牌选择（D-257）—— 否则过回合后还挂着「选位置」。
+  useEffect(() => {
+    if (state?.phase !== 'main') {
+      setPlacing(null);
+      setPayPicker(null);
     }
-  }, [mulliganOpen, mulliganMode]);
+  }, [state?.phase]);
 
   if (!me || !room) {
     return <p className="p-4 text-slate-400">请从主界面创建或加入房间。</p>;
@@ -936,10 +983,43 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   const a = act as Actionability;
   const myTurn = a.myTurn;
   const choiceOpen = a.choiceOpen;
-  const canMulligan = a.canMulligan;
   const canDraw = a.canDraw;
   const canCommanderAttack = a.canCommanderAttack;
   const canRevealAttack = a.canRevealAttack;
+
+  /**
+   * 当前阶段该做什么（D-258）。
+   *
+   * Era 2026-10-21：「过回合时充能阶段显示好像不太明显」——
+   * 阶段进度条只回答「我在哪」，没有回答「我现在该做什么」。
+   * 六阶段里最容易迷路的就是充能（要主动把随从换进费用区）与抽牌（要点卡组）。
+   */
+  const phaseHint = choiceOpen
+    ? ''
+    : state.phase === 'mulligan'
+      ? mulliganOpen
+        ? '开局换牌：选出手牌里不想要的 →「确认换牌」；不想换直接点「不换牌」'
+        : '你已确认，等待对手完成换牌…'
+      : !myTurn
+        ? ''
+        : state.phase === 'charge'
+          ? '充能阶段：点手牌里的随从 →「充能」放进费用区（每回合开始已自动 +2 张）'
+          : state.phase === 'draw'
+            ? '抽牌阶段：点你的卡组区抽一张'
+            : state.phase === 'main'
+              ? '主要阶段：点手牌 →「出牌」；出随从时点格子选位置，有随从的格子会被顶替'
+              : state.phase === 'battle'
+                ? '战斗阶段：点我方随从（或指挥官）→ 点对方目标'
+                : '';
+
+  /**
+   * 指挥官攻击也走「点自己 → 点目标」（D-258，Era 2026-10-21 明确要求）。
+   *
+   * `attacker` 仍然是 uid，指挥官与随从共用一个变量：两者 uid 不会相同，
+   * 且「选中谁」在界面上是同一件事。点到敌方目标时按 `commanderAttacking` 分派 Intent。
+   */
+  const myCommanderUid = mine.zones.commander[0]?.uid ?? null;
+  const commanderAttacking = attacker !== null && attacker === myCommanderUid;
 
   /**
    * 本方的成长资源（D-229 / D-230）：炎刃看除外区「炎刃」数、霜律看霜痕、星轨看星轨层数。
@@ -959,6 +1039,62 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   const costText = `${mine.usedCostThisTurn}/${mine.maxCost}`;
   // ⚠️ 客户端时钟与服务端未必同步，这里的倒计时是**示意**；权威判定在服务端（ADR-0017）。
   const remain = turnDeadline ? Math.max(0, Math.ceil((turnDeadline - now) / 1000)) : null;
+
+  /**
+   * 按格子取随从（D-257）。
+   *
+   * 优先用卡上的 `slot`，老快照（卡上没有 slot 字段）按数组下标兜底 ——
+   * 两条路径都要对，否则重连到一个旧快照就会两张卡挤在一格。
+   */
+  const atSlot = (zone: readonly CardInstance[], i: number): CardInstance | undefined =>
+    zone.find((c, idx) => (c.slot ?? idx) === i);
+
+  /** 本次出牌要支付几张 —— 与服务端同一口径（随从减 1，再吃「下一张随从减费」）。 */
+  const payFor = (card: CardInstance): number => {
+    const def = CARD_POOL[card.defId];
+    if (!def) return 0;
+    const base = core.costToPay(def);
+    return def.type === 'minion' ? Math.max(0, base - mine.nextMinionDiscount) : base;
+  };
+
+  /**
+   * 出牌第二步：位置已定（法术为 `undefined`）→ 决定要不要让玩家选费用。
+   *
+   * 费用区**正好只有该付的张数**时不弹选择（没得挑，多一次点击只是噪音）；
+   * 只有「费用区比该付的多」时才需要玩家决定牺牲哪几张。
+   */
+  const commitPlay = (uid: string, slot?: number): void => {
+    const card = mine.zones.hand.find((x) => x.uid === uid);
+    if (!card) return;
+    const pay = payFor(card);
+    if (pay > 0 && mine.zones.cost.length > pay) {
+      setPayPicker({
+        uid,
+        ...(slot === undefined ? {} : { slot }),
+        pay,
+        // 预选前 pay 张 = 旧行为；玩家可以直接确认，也可以改成别的组合。
+        picks: mine.zones.cost.slice(0, pay).map((x) => x.uid),
+      });
+      // 位置已经定了 —— 收起「选位置」提示，否则它会和支付面板同时挂在屏幕上。
+      setPlacing(null);
+      return;
+    }
+    session.play(uid, slot === undefined ? undefined : { slot });
+    setPicked(null);
+    setPlacing(null);
+  };
+
+  /** 点「出牌」：随从先选格子（选完再决定费用），法术直接走支付。 */
+  const startPlay = (uid: string): void => {
+    const card = mine.zones.hand.find((x) => x.uid === uid);
+    if (!card) return;
+    if (CARD_POOL[card.defId]?.type === 'minion') {
+      setPlacing(uid);
+      setPicked(null);
+      return;
+    }
+    commitPlay(uid);
+  };
 
   const togglePick = (uid: string): void => {
     // 拖拽落点后的 click 要抑制掉 —— 否则「拖牌上场」会变成「拖上场 + 又选中」
@@ -1047,12 +1183,22 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
     }, 0);
     const hit = document
       .elementFromPoint(e.clientX, e.clientY)
-      ?.closest<HTMLElement>('[data-drop],[data-drop-uid]');
+      ?.closest<HTMLElement>('[data-drop],[data-drop-uid],[data-drop-slot]');
     if (!hit) return; // 拖到无效区域 = 取消（B3-4）
     if (d.kind === 'hand') {
       const drop = hit.dataset['drop'];
-      if (drop === 'board' && state.phase === 'main') session.play(d.uid);
-      else if (drop === 'cost' && state.phase === 'charge') session.charge([d.uid]);
+      // D-257：拖到**具体格子**就等于选了那个位置；拖到整排空白处则不指定。
+      const slotRaw = hit.dataset['dropSlot'];
+      /*
+       * ⚠️ `closest()` 命中的是**最近**的标记节点：拖到格子上时命中的是格子本身
+       * （只有 `data-drop-slot`，没有 `data-drop="board"`），
+       * 只判 `drop === 'board'` 的话这批拖拽会全部静默失效（拖了没反应）。
+       * 两个标记任取其一都算「落在随从区」。
+       */
+      const onBoard = drop === 'board' || slotRaw !== undefined;
+      if (onBoard && state.phase === 'main') {
+        commitPlay(d.uid, slotRaw === undefined ? undefined : Number(slotRaw));
+      } else if (drop === 'cost' && state.phase === 'charge') session.charge([d.uid]);
     } else {
       const targetUid = hit.dataset['dropUid'];
       if (targetUid) session.attack(d.uid, targetUid);
@@ -1101,8 +1247,18 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
         </p>
       ) : null}
       {/* 阶段进度条常显（Era 2026-10-18：过阶段反馈差）—— 六阶段一排，当前阶段高亮。
-          与横幅分工：进度条回答「我在哪」，横幅回答「刚发生了什么」。 */}
+          与横幅分工：进度条回答「我在哪」，横幅回答「刚发生了什么」。
+          换牌（D-259）不属于任何回合、不在 `PHASE_ORDER` 里，单独补一枚前置标签 ——
+          否则开局时六个格全灰，玩家会以为对局没开始。 */}
       <nav className="flex items-center justify-center gap-1" data-testid="phase-track">
+        {state.phase === 'mulligan' ? (
+          <span
+            className="rounded-full bg-violet-500 px-2 py-0.5 text-[10px] font-medium text-slate-950 sm:text-[11px]"
+            data-testid="phase-track-mulligan"
+          >
+            {PHASE_LABEL.mulligan}
+          </span>
+        ) : null}
         {core.PHASE_ORDER.map((ph) => (
           <span
             key={ph}
@@ -1116,6 +1272,21 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
           </span>
         ))}
       </nav>
+      {/* 阶段动作提示（D-258）—— 充能阶段用琥珀底色，因为它最容易被忽略。 */}
+      {phaseHint ? (
+        <p
+          className={`rounded px-2 py-1 text-center text-[11px] ${
+            state.phase === 'charge'
+              ? 'bg-amber-500/15 text-amber-200'
+              : state.phase === 'mulligan'
+                ? 'bg-violet-500/15 text-violet-200'
+                : 'bg-slate-800/60 text-slate-300'
+          }`}
+          data-testid="phase-hint"
+        >
+          {phaseHint}
+        </p>
+      ) : null}
       {/* 卡牌详情浮层 —— 信息查看（任何阶段可用，不受回合/阶段置灰约束）。
           B3-2 的「不要弹窗」约束的是**出牌确认**；详情查看按 docs/11 X-13 默认建议用大卡浮层。 */}
       {showIntro ? (
@@ -1155,16 +1326,26 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
       ) : null}
       {/* 回合数 / 计时居中（B2-5） */}
       <header className="flex items-center justify-center gap-3 text-xs sm:text-sm">
-        <span data-testid="turn">第 {state.turn} 回合</span>
+        <span data-testid="turn">{state.phase === 'mulligan' ? '开局' : `第 ${state.turn} 回合`}</span>
         <span className="text-slate-400">阶段 {PHASE_LABEL[state.phase]}</span>
         <span className="text-slate-400">计时 {remain === null ? '—' : `${remain}s`}</span>
         {/*
           血量**不在**这里显示 —— Era 2026-10-14 指定：血量就在指挥官区显示。
           故血量徽标挂在两侧的指挥官区上（见下方 `badge`）。
         */}
-        <span className={myTurn ? 'text-emerald-400' : 'text-slate-400'}>
-          {myTurn ? '你的回合' : '对手回合'}
-        </span>
+        {/*
+          换牌阶段（D-259）不属于任何回合 —— 显示「你的回合」会误导（先攻方会以为已经开始）。
+          改为双方各自的确认状态，谁没确认一眼可见。
+        */}
+        {state.phase === 'mulligan' ? (
+          <span className="text-violet-300" data-testid="mulligan-status">
+            {mine.mulliganDone ? '你已确认' : '等你换牌'} · {theirs.mulliganDone ? '对手已确认' : '对手换牌中'}
+          </span>
+        ) : (
+          <span className={myTurn ? 'text-emerald-400' : 'text-slate-400'}>
+            {myTurn ? '你的回合' : '对手回合'}
+          </span>
+        )}
         {/* 对手断线（D-233）：宽限期内给明确提示，否则「对面不动」看起来像自己卡了 */}
         {foeOffline ? (
           <span
@@ -1188,29 +1369,109 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
             {myGrowth}
           </span>
         ) : null}
-        {/* 指挥官攻击（docs/16 §6.1）—— 可用时才出现 */}
-        {canCommanderAttack ? (
-          <button
-            type="button"
-            className="animate-pulse rounded bg-rose-700 px-2 py-1 text-[11px] font-medium text-rose-50"
-            onClick={() => session.commanderAttack()}
-            data-testid="commander-attack"
-          >
-            指挥官攻击（{1 + mine.commanderDamageBonus} 点）
-          </button>
-        ) : null}
-        {/* 星轨观测者：攻击时【1】展示（docs/17 §3）—— 先展示、后结算伤害 */}
-        {canRevealAttack ? (
-          <button
-            type="button"
-            className="rounded bg-indigo-700 px-2 py-1 text-[11px] font-medium text-indigo-50"
-            onClick={() => session.commanderAttack(true)}
-            data-testid="commander-reveal-attack"
-          >
-            攻击并展示（1 费）
-          </button>
-        ) : null}
+        {/*
+          指挥官攻击（D-258，Era 2026-10-21）——**不再放固定按钮**。
+          原来这里常驻一个「指挥官攻击（N 点）」，与随从的「点自己 → 点目标」
+          是两套操作；现在统一成同一套：点我方指挥官选中，再点对方指挥官结算。
+          选中后的提示与「攻击并展示」入口在下方操作条里。
+        */}
       </header>
+
+      {/* 选位提示（D-257）—— 必须常显且贴住操作区。
+          否则「点了出牌、卡却还在手上、桌面没变化」又是一次「点了没反应」（D-256 同款坑）。 */}
+      {placing ? (
+        <div
+          className="fixed inset-x-2 bottom-16 z-[62] flex items-center gap-2 rounded-lg border border-cyan-600 bg-slate-900/95 px-3 py-2 text-xs text-cyan-100 shadow-lg"
+          role="status"
+          data-testid="placing-hint"
+        >
+          <span className="flex-1">
+            选择位置：点我方随从区的格子 —— 空位直接放入，有随从则顶替（被顶替者进弃牌区）
+          </span>
+          <button
+            type="button"
+            className="shrink-0 rounded bg-slate-700 px-2 py-1"
+            onClick={() => {
+              setPlacing(null);
+              setPicked(null);
+            }}
+            data-testid="placing-cancel"
+          >
+            取消
+          </button>
+        </div>
+      ) : null}
+
+      {/* 支付选卡（D-257）—— 费用区比「该付的张数」多时才出现，否则没什么可挑的。 */}
+      {payPicker ? (
+        <div
+          className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-950/70 p-3"
+          data-testid="pay-picker"
+        >
+          <div className="w-full max-w-md rounded-xl border border-cyan-700 bg-slate-900 p-3">
+            <p className="text-sm text-cyan-100">
+              选择支付哪 {payPicker.pay} 张费用（已选 {payPicker.picks.length} 张）
+            </p>
+            <p className="mt-1 text-[11px] text-slate-400">点卡切换。哪些卡进弃牌区由你决定。</p>
+            <div className="mt-2 flex max-h-40 flex-wrap gap-1 overflow-y-auto">
+              {mine.zones.cost.map((k) => {
+                const on = payPicker.picks.includes(k.uid);
+                return (
+                  <button
+                    key={k.uid}
+                    type="button"
+                    className={
+                      on
+                        ? 'rounded border border-cyan-400 bg-cyan-900/60 px-2 py-1 text-[11px] text-cyan-100'
+                        : 'rounded border border-slate-700 px-2 py-1 text-[11px] text-slate-300'
+                    }
+                    onClick={() =>
+                      setPayPicker((prev) => {
+                        if (!prev) return prev;
+                        if (prev.picks.includes(k.uid)) {
+                          return { ...prev, picks: prev.picks.filter((x) => x !== k.uid) };
+                        }
+                        // 已选满就不再追加 —— 让「选满」这件事在点第 N+1 张时看得见，而不是静默替换。
+                        if (prev.picks.length >= prev.pay) return prev;
+                        return { ...prev, picks: [...prev.picks, k.uid] };
+                      })
+                    }
+                    data-testid={`pay-card-${k.uid}`}
+                  >
+                    {CARD_POOL[k.defId]?.name ?? k.defId}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mt-3 flex gap-2">
+              <button
+                type="button"
+                className="flex-1 rounded bg-emerald-700 px-3 py-2 text-sm disabled:opacity-40"
+                disabled={payPicker.picks.length !== payPicker.pay}
+                onClick={() => {
+                  const opts: { costUids: string[]; slot?: number } = { costUids: payPicker.picks };
+                  if (payPicker.slot !== undefined) opts.slot = payPicker.slot;
+                  session.play(payPicker.uid, opts);
+                  setPayPicker(null);
+                  setPicked(null);
+                  setPlacing(null);
+                }}
+                data-testid="pay-confirm"
+              >
+                确认出牌
+              </button>
+              <button
+                type="button"
+                className="rounded bg-slate-700 px-3 py-2 text-sm"
+                onClick={() => setPayPicker(null)}
+                data-testid="pay-cancel"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/* 事件呈现层（横幅/飘字）+ 提示 toast —— Era 2026-10-18：
           提示要醒目（中央 toast 而非底栏小字），可操作对象发光。 */}
@@ -1258,7 +1519,9 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
               onCardClick={
                 attacker && myTurn
                   ? (uid) => {
-                      session.attack(attacker, uid);
+                      // D-258：指挥官攻击的目标恒为敌方指挥官，不需要 targetUid。
+                      if (commanderAttacking) session.commanderAttack();
+                      else session.attack(attacker, uid);
                       setAttacker(null);
                     }
                   : undefined
@@ -1273,33 +1536,36 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
               选中攻击方后对方随从发光提示可攻击（嘲讽过滤由引擎裁决，界面不预判）。 */}
           <section className="grid min-h-0 flex-1 auto-rows-fr grid-cols-5 gap-1">
             <ZoneBox label="费用区" zone="cost" cards={theirs.zones.cost} expandable state={state} onCardDetail={openDetail} />
-            {slots.map((i) => (
-              <BoardSlot
-                key={i}
-                index={i}
-                state={state}
-                card={theirs.zones.board[i]}
-                glow={attacker !== null && !!theirs.zones.board[i]}
-                dropUid={theirs.zones.board[i]?.uid}
-                highlight={dragging?.kind === 'minion' && !!theirs.zones.board[i]}
-                fxClass={theirs.zones.board[i] ? combatClass(theirs.zones.board[i]!.uid, 'foe') : undefined}
-                ghost={
-                  destroyGhost && destroyGhost.side === 'foe' && destroyGhost.slotIndex === i
-                    ? destroyGhost.card
-                    : undefined
-                }
-                onDetail={openDetail}
-                onClick={
-                  attacker && myTurn
-                    ? () => {
-                        const uid = theirs.zones.board[i]?.uid;
-                        if (uid) session.attack(attacker, uid);
-                        setAttacker(null);
-                      }
-                    : undefined
-                }
-              />
-            ))}
+            {slots.map((i) => {
+              const fc = atSlot(theirs.zones.board, i);
+              return (
+                <BoardSlot
+                  key={i}
+                  index={i}
+                  state={state}
+                  card={fc}
+                  glow={attacker !== null && !!fc}
+                  dropUid={fc?.uid}
+                  highlight={dragging?.kind === 'minion' && !!fc}
+                  fxClass={fc ? combatClass(fc.uid, 'foe') : undefined}
+                  ghost={
+                    destroyGhost && destroyGhost.side === 'foe' && destroyGhost.slotIndex === i
+                      ? destroyGhost.card
+                      : undefined
+                  }
+                  onDetail={openDetail}
+                  onClick={
+                    // 指挥官只能打指挥官（docs/16 §6.2）—— 指挥官攻击时不把随从格子做成落点。
+                    attacker && myTurn && !commanderAttacking
+                      ? () => {
+                          if (fc) session.attack(attacker, fc.uid);
+                          setAttacker(null);
+                        }
+                      : undefined
+                  }
+                />
+              );
+            })}
             <RevealBox
               cards={revealCards(state, foe, foe ? (revealed[foe] ?? []) : [])}
               state={state}
@@ -1333,18 +1599,27 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
               onCardDetail={openDetail}
             />
             {slots.map((i) => {
-              const mc = mine.zones.board[i];
+              const mc = atSlot(mine.zones.board, i);
               const minionOperable = !!mc && canBattle && !mc.sleeping;
+              /*
+               * 选位模式（D-257）：三格全部高亮，标签说明「放这里」还是「顶替」。
+               * 这一步优先于「选攻击方」—— 出牌流程没走完时点格子只可能是在选位置。
+               */
+              const placingHere = placing !== null;
               return (
                 <BoardSlot
                   key={i}
                   index={i}
                   state={state}
                   card={mc}
-                  selected={attacker === mc?.uid}
+                  selected={!placingHere && attacker === mc?.uid}
                   onDetail={openDetail}
                   disabled={!canBattle || (mc?.sleeping ?? false)}
-                  glow={canBattle && !(mc?.sleeping ?? false) && attacker !== mc?.uid && !!mc}
+                  glow={
+                    placingHere ? true : canBattle && !(mc?.sleeping ?? false) && attacker !== mc?.uid && !!mc
+                  }
+                  hint={placingHere ? (mc ? `顶替 ${CARD_POOL[mc.defId]?.name ?? ''}` : '放这里') : undefined}
+                  dropSlot={placingHere || state.phase === 'main' ? i : undefined}
                   dragKind={minionOperable ? 'minion' : undefined}
                   dragUid={minionOperable ? mc?.uid : undefined}
                   fxClass={mc ? combatClass(mc.uid, 'me') : undefined}
@@ -1353,11 +1628,24 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
                       ? destroyGhost.card
                       : undefined
                   }
-                  onClick={() => {
+                  /*
+                   * 整格点击挂在**最外层**（`onSlotClick`）而不是卡片上：
+                   * 空格子里没有卡片节点，挂在卡片上就等于「空位点不了」——
+                   * 这正是 D-257 首版的实际表现（点了「出牌」卡还在手上）。
+                   * 卡片上的 `onClick` 因此不再传，避免一次点击触发两遍。
+                   */
+                  onSlotClick={() => {
                     if (suppressClickRef.current) {
                       suppressClickRef.current = false;
                       return;
                     }
+                    if (placing !== null) {
+                      commitPlay(placing, i);
+                      return;
+                    }
+                    // 非战斗阶段 / 休眠随从不响应选中 —— 原来靠卡片自身的 `disabled` 挡，
+                    // 现在点击提到了格子上，这条守卫必须显式写回来。
+                    if (!minionOperable) return;
                     const uid = mc?.uid;
                     setAttacker((prev) => (prev === uid ? null : (uid ?? null)));
                   }}
@@ -1388,6 +1676,14 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
               badgeTestId="hp-me"
               onCardDetail={openDetail}
               fxFor={(uid) => combatClass(uid, 'me')}
+              /* D-258：点自己的指挥官 = 选中它作为攻击方（与随从同一套操作）。 */
+              selected={commanderAttacking}
+              glow={canCommanderAttack && !commanderAttacking}
+              onCardClick={
+                canCommanderAttack
+                  ? (uid) => setAttacker((prev) => (prev === uid ? null : uid))
+                  : undefined
+              }
             />
             <ZoneBox label="法术区" zone="spell" cards={mine.zones.spell} expandable state={state} onCardDetail={openDetail} />
             {/* 抽牌阶段未抽时，卡组区变为发光动作「点击抽牌」（Era 2026-10-18 手动抽牌） */}
@@ -1414,19 +1710,16 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
                 <div
                   key={c.uid}
                   className="relative"
-                  {...(canPickHand && !mulliganMode ? { 'data-drag-kind': 'hand', 'data-drag-uid': c.uid } : {})}
+                  {...(canPickHand && !mulliganOpen ? { 'data-drag-kind': 'hand', 'data-drag-uid': c.uid } : {})}
                 >
-                  {picked === c.uid && !mulliganMode ? (
+                  {picked === c.uid && !mulliganOpen ? (
                     <div className="absolute -top-8 left-1/2 z-10 flex -translate-x-1/2 gap-1">
                       {/* 不可操作的按钮不展示（Era 2026-10-19）：出牌只在主要阶段、充能只在充能阶段出现 */}
                       {state.phase === 'main' ? (
                         <button
                           type="button"
                           className="rounded bg-cyan-800 px-2 py-1 text-[11px] whitespace-nowrap"
-                          onClick={() => {
-                            session.play(c.uid);
-                            setPicked(null);
-                          }}
+                          onClick={() => startPlay(c.uid)}
                           data-testid="play"
                         >
                           出牌
@@ -1450,11 +1743,11 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
                   <CardOf
                     card={c}
                     state={state}
-                    selected={mulliganMode ? mulliganPicks.includes(c.uid) : picked === c.uid}
+                    selected={mulliganOpen ? mulliganPicks.includes(c.uid) : picked === c.uid}
                     disabled={!canPickHand}
-                    glow={mulliganMode || (canPickHand && picked !== c.uid)}
+                    glow={mulliganOpen || (canPickHand && picked !== c.uid)}
                     onDetail={() => openDetail(c)}
-                    onClick={() => (mulliganMode ? toggleMulliganPick(c.uid) : togglePick(c.uid))}
+                    onClick={() => (mulliganOpen ? toggleMulliganPick(c.uid) : togglePick(c.uid))}
                   />
                 </div>
               ))}
@@ -1536,52 +1829,67 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
             结束回合
           </button>
         ) : null}
-        {/* 起手换牌（A8-3/A10-1）：第一回合充能阶段 + 时间窗内可用，每人一次。
-            换牌是多目标操作 —— 进入换牌模式后手牌恢复多选（排他纪律不适用）。
-            不可用时不展示（Era 2026-10-19）。 */}
-        {!mulliganMode
-          ? canMulligan && (
-              <button
-                type="button"
-                className="rounded bg-violet-800 px-3 py-2 text-xs sm:text-sm"
-                onClick={() => {
-                  setMulliganMode(true);
-                  setPicked(null);
-                }}
-                data-testid="mulligan"
-              >
-                换牌
-              </button>
-            )
-          : mulliganOpen && (
+        {/* 起手换牌（D-259）：**游戏开始之前**的独立阶段，不属于任何回合。
+            双方同时可选（不看轮次），每人只要提交一次就能推进；
+            双方都提交后服务端发 `mulligan:closed`，才真正进第一回合。
+            「不换牌」= 提交空数组，不是取消 —— 没有「退出换牌」这条路。 */}
+        {mulliganOpen ? (
+          <>
+            {mulliganPicks.length > 0 ? (
               <>
-                {mulliganPicks.length > 0 ? (
-                  <button
-                    type="button"
-                    className="rounded bg-violet-700 px-3 py-2 text-xs sm:text-sm"
-                    onClick={() => {
-                      session.mulligan(mulliganPicks);
-                      setMulliganMode(false);
-                      setMulliganPicks([]);
-                    }}
-                    data-testid="mulligan-confirm"
-                  >
-                    确认换牌（{mulliganPicks.length}）
-                  </button>
-                ) : null}
+                <button
+                  type="button"
+                  className="rounded bg-violet-700 px-3 py-2 text-xs sm:text-sm"
+                  onClick={() => {
+                    session.mulligan(mulliganPicks);
+                    setMulliganPicks([]);
+                  }}
+                  data-testid="mulligan-confirm"
+                >
+                  确认换牌（{mulliganPicks.length}）
+                </button>
                 <button
                   type="button"
                   className="rounded bg-slate-700 px-3 py-2 text-xs sm:text-sm"
-                  onClick={() => {
-                    setMulliganMode(false);
-                    setMulliganPicks([]);
-                  }}
-                  data-testid="mulligan-cancel"
+                  onClick={() => setMulliganPicks([])}
+                  data-testid="mulligan-clear"
                 >
-                  取消换牌
+                  清空选择
                 </button>
               </>
+            ) : (
+              <button
+                type="button"
+                className="rounded bg-violet-800 px-3 py-2 text-xs sm:text-sm"
+                onClick={() => session.mulligan([])}
+                data-testid="mulligan-skip"
+              >
+                不换牌
+              </button>
             )}
+          </>
+        ) : null}
+        {/* 指挥官已选中（D-258）：说明下一步点哪里，以及这次能打几点。 */}
+        {commanderAttacking ? (
+          <span className="rounded bg-rose-900/60 px-2 py-1 text-[11px] text-rose-100" data-testid="commander-selected">
+            已选指挥官（{1 + mine.commanderDamageBonus} 点）→ 点对方指挥官
+          </span>
+        ) : null}
+        {/* 星轨观测者：攻击时【1】展示（docs/17 §3）—— 先展示、后结算伤害。
+            现在只在指挥官被选中时出现，不再常驻头部。 */}
+        {commanderAttacking && canRevealAttack ? (
+          <button
+            type="button"
+            className="rounded bg-indigo-700 px-3 py-2 text-xs text-indigo-50 sm:text-sm"
+            onClick={() => {
+              session.commanderAttack(true);
+              setAttacker(null);
+            }}
+            data-testid="commander-reveal-attack"
+          >
+            攻击并展示（1 费）
+          </button>
+        ) : null}
         {attacker !== null ? (
           <button
             type="button"

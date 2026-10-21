@@ -93,4 +93,29 @@ describe('事件日志文案', () => {
   it('未知事件类型回落成类型名（不吞事件，便于排查新事件漏翻译）', () => {
     expect(describeEvent(ev('some:new-event'), NAMES, null)).toBe('some:new-event');
   });
+
+  /* ---- D-257 / D-258：新增事件必须有中文，且不能退化成英文标识符 ---- */
+
+  it('顶替：说明「被顶替」而不是「被破坏」（顶替不是战斗结果）', () => {
+    const s = stateWithCard('u1', 'bladeScout');
+    const line = describeEvent(ev('unit:replaced', { slot: 1, byUid: 'u1', uid: 'u2' }), NAMES, s);
+    expect(line).toContain('顶替');
+    expect(line).toContain('炎刃斥候');
+    expect(line).toContain('弃牌区');
+    // 第 2 格（slot 1）要说成「第 2 格」，不能直接印 0 基下标
+    expect(line).toContain('第 2 格');
+  });
+
+  it('顶替产生的离场位移不额外印「被破坏」', () => {
+    expect(
+      describeEvent(ev('card:moved', { from: 'board', to: 'graveyard', uid: 'u1', replaced: true }), NAMES, null),
+    ).toBeNull();
+  });
+
+  it('自动充能用独立一行说清「+N 张」，与手动充能区分', () => {
+    const line = describeEvent(ev('cost:income', { playerId: 'p1', amount: 2 }), NAMES, null);
+    expect(line).toContain('2');
+    expect(line).toContain('充能');
+    expect(line).toContain('Era');
+  });
 });

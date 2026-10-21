@@ -341,37 +341,64 @@ describe('起手换牌 mulliganRule', () => {
     }
   });
 
-  it('时间窗（Era 2026-10-19）：窗口内可换，过后拒绝 MULLIGAN_EXPIRED（按各自首个充能阶段起算，X-17）', () => {
-    const s = started(); // game:started at = CTX.now = 1000 → 先攻方 firstChargeAt = 1000
+  it('时间窗（D-259）：窗口内可以换牌，过期后只能跳过、不能再改牌', () => {
+    const s = started(); // game:started at = CTX.now = 1000 → startedAt = 1000
     const active = s.seats[0]!;
+    const one = [s.players[active]!.zones.hand[0]!.uid];
 
-    // 窗口边缘（恰好 30s）仍可用
-    const edge = applyIntent(s, intent(active, INTENTS.mulligan, { returns: [] }), {
+    // 窗口边缘（恰好 30s）仍可换
+    const edge = applyIntent(s, intent(active, INTENTS.mulligan, { returns: one }), {
       ...CTX,
       now: 1000 + MULLIGAN_WINDOW_MS,
     });
     expect(edge.ok).toBe(true);
 
-    // 超过窗口 → 拒绝
-    const late = applyIntent(s, intent(active, INTENTS.mulligan, { returns: [] }), {
+    // 超过窗口 → 想换牌被拒
+    const late = applyIntent(s, intent(active, INTENTS.mulligan, { returns: one }), {
       ...CTX,
       now: 1000 + MULLIGAN_WINDOW_MS + 1,
     });
     expect(late.ok).toBe(false);
     if (!late.ok) expect(late.error.code).toBe(RULE_ERRORS.MULLIGAN_EXPIRED);
+
+    // 但「跳过」永远允许 —— 否则窗口一过双方就关不掉换牌阶段，整局卡死
+    const skip = applyIntent(s, intent(active, INTENTS.mulligan, { returns: [] }), {
+      ...CTX,
+      now: 1000 + MULLIGAN_WINDOW_MS + 1,
+    });
+    expect(skip.ok).toBe(true);
   });
 
-  it('X-17：后攻方在自己的第一个充能阶段（第 2 回合）也能换牌', () => {
-    // 后攻方首次拿到回合：turn 2、activeSeat 1、chargeCount 1、firstChargeAt 已写入
-    const base = craft({ phase: 'charge', turn: 2, activeSeat: 1, foeZones: { hand: HAND_6 } });
-    const p2 = base.players['p2']!;
-    const s: GameState = {
-      ...base,
-      players: { ...base.players, p2: { ...p2, chargeCount: 1, firstChargeAt: CTX.now } },
-    };
-    const after = run(s, intent('p2', INTENTS.mulligan, { returns: [] }));
+  it('D-259：开局停在换牌阶段 —— start 之后不直接进第一回合', () => {
+    const s = started();
+    expect(s.started).toBe(true);
+    expect(s.phase).toBe('mulligan');
+    // 先攻方的充能计数还没开始（旧口径在 game:started 里就写成 1）
+    expect(s.players[s.seats[0]!]!.chargeCount).toBe(0);
+  });
+
+  it('D-259：换牌阶段双方都能换 —— 不用轮到谁', () => {
+    // p2 不是行动方（activeSeat 默认 0 = p1），换牌阶段依然可以操作
+    const base = craft({ phase: 'mulligan', foeZones: { hand: HAND_6 } });
+    const after = run(base, intent('p2', INTENTS.mulligan, { returns: [] }));
     expect(after.players['p2']!.mulliganDone).toBe(true);
     expect(after.players['p2']!.zones.hand.length).toBe(SECOND_PLAYER_HAND);
+  });
+
+  it('D-259：只有一方确认时不关闭阶段，双方都确认才进入第一回合', () => {
+    const s = started();
+    const first = s.seats[0]!;
+    const second = s.seats[1]!;
+
+    const one = runWith(s, intent(first, INTENTS.mulligan, { returns: [] }));
+    expect(one.events.some((e) => e.type === 'mulligan:closed')).toBe(false);
+    expect(one.state.phase).toBe('mulligan');
+
+    const two = runWith(one.state, intent(second, INTENTS.mulligan, { returns: [] }));
+    expect(two.events.some((e) => e.type === 'mulligan:closed')).toBe(true);
+    expect(two.state.phase).toBe('charge');
+    // 先攻方从这一刻起进入自己的第一回合
+    expect(two.state.players[first]!.chargeCount).toBe(1);
   });
 
   /**
@@ -381,12 +408,7 @@ describe('起手换牌 mulliganRule', () => {
    * 会让「补到 5」与「补到 6」两种语义在测试里不可区分，缺陷因此被掩盖过一次。
    */
   it('D-231：后手（起手 6 张）换 1 张 / 换 2 张后手牌仍是 6 张', () => {
-    const base = craft({ phase: 'charge', turn: 2, activeSeat: 1, foeZones: { hand: HAND_6 } });
-    const p2 = base.players['p2']!;
-    const s: GameState = {
-      ...base,
-      players: { ...base.players, p2: { ...p2, chargeCount: 1, firstChargeAt: CTX.now } },
-    };
+    const s = craft({ phase: 'mulligan', foeZones: { hand: HAND_6 } });
     const before = s.players['p2']!.zones.hand.length;
     expect(before).toBe(SECOND_PLAYER_HAND);
 
@@ -403,13 +425,8 @@ describe('起手换牌 mulliganRule', () => {
     }
   });
 
-  it('第二次及以后的充能阶段不可换（每人一次机会，X-17）', () => {
-    const base = craft({ phase: 'charge', turn: 3, activeSeat: 0 });
-    const p1 = base.players['p1']!;
-    const s: GameState = {
-      ...base,
-      players: { ...base.players, p1: { ...p1, chargeCount: 2, firstChargeAt: CTX.now } },
-    };
+  it('进入第一回合（充能阶段）后不能再换 —— 换牌只在开局前（D-259）', () => {
+    const s = craft({ phase: 'charge', turn: 1 });
     const r = applyIntent(s, intent('p1', INTENTS.mulligan, { returns: [] }), CTX);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.WRONG_PHASE);
@@ -615,6 +632,149 @@ describe('出牌 playRule（A5 补充 2：按张数支付）', () => {
     const s = craft({ phase: 'main', zones: { hand: [c('h1', 'cmd')] } });
     const r = applyIntent(s, intent('p1', INTENTS.play, { uid: 'h1' }), CTX);
     expect(r.ok).toBe(false);
+  });
+});
+
+/* -------------------- D-257：自选支付费用卡 / 召唤位置与顶替 -------------------- */
+
+describe('自选支付费用卡（D-257）', () => {
+  const board = (): GameState =>
+    craft({
+      phase: 'main',
+      zones: { hand: [c('h1', 'm2')], cost: [c('k1', 'm4'), c('k2', 'm4'), c('k3', 'm4')] },
+    });
+
+  it('按 costUids 指定的那几张支付，未被选中的留在费用区', () => {
+    const after = run(board(), intent('p1', INTENTS.play, { uid: 'h1', costUids: ['k3'] }));
+    const p = after.players['p1']!;
+    // m2 费用 2 → 随从减 1 = 支付 1 张
+    expect(p.zones.graveyard.map((x) => x.uid)).toContain('k3');
+    expect(p.zones.cost.map((x) => x.uid)).toEqual(['k1', 'k2']);
+  });
+
+  it('多张支付时按给定顺序全部扣除', () => {
+    const s = craft({
+      phase: 'main',
+      zones: { hand: [c('h1', 'd7')], cost: [c('k1', 'm4'), c('k2', 'm4'), c('k3', 'm4')] },
+    });
+    // d7 费用 3 → 随从减 1 = 支付 2 张
+    const after = run(s, intent('p1', INTENTS.play, { uid: 'h1', costUids: ['k2', 'k1'] }));
+    const p = after.players['p1']!;
+    expect(p.zones.cost.map((x) => x.uid)).toEqual(['k3']);
+    expect(p.zones.graveyard.map((x) => x.uid).sort()).toEqual(['k1', 'k2']);
+  });
+
+  it('张数不对 → INVALID_COST_PICK（少给不该白赚、多给不该多丢）', () => {
+    const s = board();
+    const r = applyIntent(s, intent('p1', INTENTS.play, { uid: 'h1', costUids: [] }), CTX);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.INVALID_COST_PICK);
+  });
+
+  it('选了不在费用区的卡 → INVALID_COST_PICK', () => {
+    const s = board();
+    const r = applyIntent(s, intent('p1', INTENTS.play, { uid: 'h1', costUids: ['h1'] }), CTX);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.INVALID_COST_PICK);
+  });
+
+  it('重复选同一张 → INVALID_COST_PICK', () => {
+    const s = craft({
+      phase: 'main',
+      zones: { hand: [c('h1', 'd7')], cost: [c('k1', 'm4'), c('k2', 'm4')] },
+    });
+    const r = applyIntent(s, intent('p1', INTENTS.play, { uid: 'h1', costUids: ['k1', 'k1'] }), CTX);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.INVALID_COST_PICK);
+  });
+
+  it('不传 costUids 时沿用「按顺序取前 N 张」（AI 与老客户端路径）', () => {
+    const after = run(board(), intent('p1', INTENTS.play, { uid: 'h1' }));
+    expect(after.players['p1']!.zones.cost.map((x) => x.uid)).toEqual(['k2', 'k3']);
+  });
+});
+
+describe('召唤位置与顶替（D-257）', () => {
+  // ⚠️ 带 `slot` 的夹具 —— 真实对局里卡都是经 `card:moved` 进随从区的，reducer 会分配格子。
+  // 夹具若省掉 slot，断言就变成「下标兜底」的另一条路径，测不到顶替后格子是否守恒。
+  const three = (): CardInstance[] => [
+    { uid: 'b1', defId: 'm3', slot: 0 },
+    { uid: 'b2', defId: 'm3', slot: 1 },
+    { uid: 'b3', defId: 'm3', slot: 2 },
+  ];
+
+  it('指定空位时随从占该格（由 reducer 分配 slot）', () => {
+    const s = craft({ phase: 'main', zones: { hand: [c('h1', 'm3')], board: [] } });
+    const after = run(s, intent('p1', INTENTS.play, { uid: 'h1', slot: 2 }));
+    const slots = after.players['p1']!.zones.board.map((x) => x.slot);
+    expect(slots).toEqual([2]);
+  });
+
+  it('该位置已有随从 → 直接顶替，被顶替者进弃牌区', () => {
+    const s = craft({ phase: 'main', zones: { hand: [c('h1', 'm3')], board: three() } });
+    const after = run(s, intent('p1', INTENTS.play, { uid: 'h1', slot: 1 }));
+    const p = after.players['p1']!;
+    expect(p.zones.board.length).toBe(BOARD_SLOTS);
+    expect(p.zones.graveyard.map((x) => x.uid)).toEqual(['b2']);
+    const placed = p.zones.board.find((x) => x.uid === 'h1')!;
+    expect(placed.slot).toBe(1);
+    // 另外两张原地不动
+    expect(p.zones.board.filter((x) => x.uid !== 'h1').map((x) => x.slot)).toEqual([0, 2]);
+  });
+
+  it('中间格空着时指定末格 —— 不能因为「有更小的空槽」就把卡挪走', () => {
+    // 这条专抓「分配最小空槽」压过玩家选择的实现错误：
+    // 顶替 slot 2 之后 taken = {0}，最小空槽是 1，但玩家要的是 2。
+    const s = craft({
+      phase: 'main',
+      zones: {
+        hand: [c('h1', 'm3')],
+        board: [
+          { uid: 'b1', defId: 'm3', slot: 0 },
+          { uid: 'b3', defId: 'm3', slot: 2 },
+        ],
+      },
+    });
+    const after = run(s, intent('p1', INTENTS.play, { uid: 'h1', slot: 2 }));
+    expect(after.players['p1']!.zones.board.find((x) => x.uid === 'h1')!.slot).toBe(2);
+    expect(after.players['p1']!.zones.board.find((x) => x.uid === 'b1')!.slot).toBe(0);
+  });
+
+  it('满场 + 指定位置 → 不再报 BOARD_FULL（顶替就是满场的正常操作）', () => {
+    const s = craft({ phase: 'main', zones: { hand: [c('h1', 'm3')], board: three() } });
+    const r = applyIntent(s, intent('p1', INTENTS.play, { uid: 'h1', slot: 0 }), CTX);
+    expect(r.ok).toBe(true);
+  });
+
+  it('位置越界 → INVALID_SLOT', () => {
+    const s = craft({ phase: 'main', zones: { hand: [c('h1', 'm3')], board: [] } });
+    const r = applyIntent(s, intent('p1', INTENTS.play, { uid: 'h1', slot: BOARD_SLOTS }), CTX);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.INVALID_SLOT);
+  });
+
+  it('非整数位置 → INVALID_SLOT', () => {
+    const s = craft({ phase: 'main', zones: { hand: [c('h1', 'm3')], board: [] } });
+    const r = applyIntent(s, intent('p1', INTENTS.play, { uid: 'h1', slot: 1.5 }), CTX);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.INVALID_SLOT);
+  });
+
+  it('给法术指定位置 → INVALID_SLOT（前端接错早报错）', () => {
+    const s = craft({ phase: 'main', zones: { hand: [c('h1', 's1')], cost: [c('k1', 'm4')] } });
+    const r = applyIntent(s, intent('p1', INTENTS.play, { uid: 'h1', slot: 0 }), CTX);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe(RULE_ERRORS.INVALID_SLOT);
+  });
+
+  it('顶替时会产出 unit:replaced（界面据此说明「谁被挤掉」）', () => {
+    const s = craft({ phase: 'main', zones: { hand: [c('h1', 'm3')], board: three() } });
+    const r = applyIntent(s, intent('p1', INTENTS.play, { uid: 'h1', slot: 2 }), CTX);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const replaced = r.value.find((e) => e.type === 'unit:replaced');
+    expect(replaced?.payload?.['slot']).toBe(2);
+    expect(replaced?.payload?.['byUid']).toBe('b3');
   });
 });
 
