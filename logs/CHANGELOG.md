@@ -4258,3 +4258,64 @@ const intent: Intent = { type: INTENTS.mulligan, actor: 'system', playerId: pid,
 - **红绿验证**：
   - 把 `buildMulliganSkipIntent` 的 `payload` 删掉 → 3 条单测红；还原即绿。
   - 把 `snapshotOf` 改回 `rt.timer.deadlineAt` → E2E「倒计时」红；还原即绿。
+
+---
+
+## D-268 · 回合边界的「半批状态」不得当成真局面（issue #101，2026-10-21）
+
+Era 报 issue #101「游戏流程：充能阶段的提示在切换回合之前显示了」——
+点了「结束回合」之后，界面在交棒给对手之前先弹出
+「你的回合 · 充能阶段：点手牌里的随从 →「充能」放进费用区…」。
+
+### 根因：不是引擎错了，是客户端把「还没落地的中间帧」画了出来
+
+回合边界在事件流里本来就是**两条**（`core/rules/phase.ts`）：
+
+```ts
+events.push(phaseChanged(at, state.phase, 'charge'));   // 进入下一回合的充能
+events.push(turnChanged(at, nextTurn, nextSeat));       // 才换席位
+```
+
+而客户端是**逐条 reduce + 按相位停顿**播放的（`useRoom.ts` 的 `pump` / `FX_MS`，
+`phase:changed` 停 750ms）。于是这两条之间出现一帧：
+
+| `phase` | `activeSeat` | 界面读出来的 |
+| --- | --- | --- |
+| `charge` | **还是我** | 「你的回合 · 阶段 充能」+ 琥珀色充能指引 |
+
+**这个局面从来没有真实存在过** —— 我的充能阶段早在第 N 回合开头就用掉了。
+750ms 后才应用 `turn:changed`，界面才改成「对手回合」。Era 看到的正是这一段。
+
+同类问题在 `e2e/helpers.ts` 的 `activePage` 注释里其实早就记过一笔
+（开局事件未播完时「短暂以为轮到我」），当时只在测试侧绕开了，没有修产品。
+
+### 改动
+
+| # | 改动 | 文件 |
+| --- | --- | --- |
+| 1 | 播放队列暴露 `turnPending`：**入队时**就把标签立起来（含 `turn:changed` 的批次），应用该事件后落下 | `client/src/useRoom.ts` |
+| 2 | 兜底：队列播空仍未落下 → 强制清除，绝不让「回合切换中」永久挂住 | 同上 `pump` 的 `finally` |
+| 3 | 阶段提示 + 顶栏归属抽成纯函数 `turnGuidance(state, me, turnChangePending)`，`turnPending` 时**不给指引**、文案改「回合切换中…」 | `client/src/selectors.ts` |
+| 4 | `TableScreen` 只取值：`phaseHint` 的回合内分支交给 `turnGuidance`，换牌阶段仍由组件自己写（那不属于回合） | `client/src/TableScreen.tsx` |
+| 5 | 顶栏与阶段各补 `data-testid`（`turn-label` / `phase`），供不变量测试读取 | 同上 |
+
+**为什么在客户端改，而不是调整引擎的事件顺序**（ADR-0057）：把 `turn:changed` 提到
+`phase:changed` 之前，中间帧会变成「第 N+1 回合 · 阶段 结束」—— 同样是不存在的局面，
+只是没那么误导人。回合边界本该是**一次**转换，事件流为了动画把它拆成两条是合理的，
+不可信的是「拆开之后的那一帧能被当成真」，所以修在消费端：**归属只信已落地的状态**。
+
+### 测试（单测 421 → **425**；E2E 49 → **50**）
+
+- `selectors.test.ts` 新增 4 条（`回合内指引（D-268）`）：边界在播时不给指引且文案为
+  `回合切换中…`、落地后同一份状态才给「充能阶段」、对手回合不给指引、换牌阶段返回
+  `label: null`（交给换牌状态条）、待定选择挂起时只留归属文案。
+- `e2e/solo.spec.ts` 新增 1 条**不变量**用例：结束回合后连续采样 8 秒，定位「阶段离开
+  充能又回到充能」的那一帧，此后到交棒前不得出现「你的回合 + 充能阶段」。
+- **红绿验证**：
+  - 删掉 `turnGuidance` 里的 `turnChangePending` 早退 → 单测报
+    `expected '充能阶段：点手牌里的随从…' to be ''`；还原即绿。
+  - `TableScreen` 把 `turnPending` 写死成 `false`（等价于修复前）→ E2E 捕获到 4 帧违例；
+    还原即绿。
+- **首版 E2E 自己写错过**（记一笔）：最初的不变量是「任何一帧都不得同时出现
+  『你的回合』与『充能阶段』」，结果**绿代码也红** —— 因为**我自己回合的充能阶段本来就长这样**。
+  可见「不变量」必须先确认它在正确实现下恒真，否则测的是措辞而不是行为。

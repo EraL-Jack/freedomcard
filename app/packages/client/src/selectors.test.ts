@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createInitialState } from '@app/core';
 import type { GameState, Phase, PlayerState } from '@app/shared/types';
 
-import { actionability } from './selectors.js';
+import { TURN_SWITCHING_LABEL, actionability, turnGuidance } from './selectors.js';
 
 /**
  * 可操作性判定（T-04）—— client 的第一个真单测。
@@ -184,5 +184,64 @@ describe('可操作性判定（T-04）', () => {
       const noBudget = player(withStar, ME, { usedCostThisTurn: 1, maxCost: 1 });
       expect(actionability(noBudget, ME, NOW).canRevealAttack).toBe(false);
     });
+  });
+});
+
+/**
+ * 回合内指引（D-258 / D-268）。
+ *
+ * D-268 的由来是 Era 的 issue #101：「充能阶段的提示在切换回合之前显示了」。
+ * 根因不在引擎 —— 事件流里回合边界本来就是两条（`phase:changed(… → charge)` +
+ * `turn:changed`），是**客户端逐条播放**把中间那一帧渲染了出来：
+ * 阶段已经是下一回合的充能，`activeSeat` 还是上一家，于是结束回合的人
+ * 看到「你的回合 · 充能阶段：点手牌里的随从…」，停 750ms 才交棒给对手。
+ *
+ * 这个局面从未真实存在过，所以判据加了 `turnChangePending`：边界在播时
+ * 不给指引、也不宣称是谁的回合。下面第一条就是拿它钉住回归 ——
+ * 去掉那个参数（等价于改回「只看 phase」，正是出错前的写法），它会立刻变红。
+ */
+describe('回合内指引（D-268）', () => {
+  it('回合边界播放中：不宣称是谁的回合、也不给「该你操作」的指引', () => {
+    // 中间态：phase 已是下一回合的充能，activeSeat 仍是 ME（旧代码在这里显示「你的回合 · 充能阶段」）
+    const mid = base({ phase: 'charge', activeSeat: 0 });
+    const g = turnGuidance(mid, ME, true);
+    expect(g.hint).toBe('');
+    expect(g.label).toBe(TURN_SWITCHING_LABEL);
+    expect(g.tone).toBe('pending');
+
+    // 边界落地之后，同一份状态才允许给指引
+    const settled = turnGuidance(mid, ME, false);
+    expect(settled.hint).toContain('充能阶段');
+    expect(settled.label).toBe('你的回合');
+  });
+
+  it('对手回合不给指引；换牌阶段交给换牌状态条', () => {
+    const foeTurn = turnGuidance(base({ phase: 'charge', activeSeat: 1 }), ME, false);
+    expect(foeTurn.hint).toBe('');
+    expect(foeTurn.label).toBe('对手回合');
+    expect(foeTurn.tone).toBe('foe');
+
+    const mulligan = turnGuidance(base({ phase: 'mulligan' }), ME, false);
+    expect(mulligan).toEqual({ hint: '', label: null, tone: 'foe' });
+  });
+
+  it('四个可操作阶段各有一句人话；结束/重置阶段不需要指引', () => {
+    const hintOf = (phase: Phase): string => turnGuidance(base({ phase }), ME, false).hint;
+    expect(hintOf('charge')).toContain('充能');
+    expect(hintOf('draw')).toContain('抽一张');
+    expect(hintOf('main')).toContain('出牌');
+    expect(hintOf('battle')).toContain('点对方目标');
+    expect(hintOf('end')).toBe('');
+    expect(hintOf('reset')).toBe('');
+  });
+
+  it('待定选择挂起时只说「你的回合」，不给其他指引（与 D-152 口径一致）', () => {
+    const s: GameState = {
+      ...base({ phase: 'main' }),
+      pendingChoice: { playerId: ME, kind: 'blade-lord-1', sourceUid: 'u1', options: [] },
+    };
+    const g = turnGuidance(s, ME, false);
+    expect(g.hint).toBe('');
+    expect(g.label).toBe('你的回合');
   });
 });
