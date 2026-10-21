@@ -10,7 +10,15 @@
  * （Era 2026-10-19，`drawForPhase` 内接续 `advanceOnce`）。
  */
 
-import { COST_INCOME_PER_TURN, MAX_COST_CURVE, RULE_ERRORS, TURN_LIMIT, TURN_LIMIT_ROUNDS } from '@app/shared/constants';
+import {
+  COST_INCOME_PER_TURN,
+  DRAW_PER_TURN,
+  FIRST_TURN_DRAW,
+  MAX_COST_CURVE,
+  RULE_ERRORS,
+  TURN_LIMIT,
+  TURN_LIMIT_ROUNDS,
+} from '@app/shared/constants';
 import type { GameEvent, GameState, Intent, Phase, PlayerId, Result, Rejection, RuleContext } from '@app/shared/types';
 
 import { ev, maxCostChanged, phaseChanged, takeFromDeck, turnChanged } from '../ops.js';
@@ -28,6 +36,20 @@ export const PHASE_ORDER: readonly Phase[] = ['charge', 'reset', 'draw', 'main',
 export function maxCostForTurn(turn: number): number {
   const idx = Math.min(Math.max(turn, 1), MAX_COST_CURVE.length) - 1;
   return MAX_COST_CURVE[idx] ?? MAX_COST_CURVE[MAX_COST_CURVE.length - 1]!;
+}
+
+/**
+ * 本回合抽牌阶段应抽的张数 —— 与旧自动抽牌口径一致（A9 补充 1 / A10-3）。
+ *
+ * ⚠️ **这个函数必须留在这里（`phase.ts`），不能搬回 `draw.ts`**：
+ * `advanceOnce` 要用它判断「这一拍该不该停」，而 `draw.ts` 已经反向依赖 `phase.ts`
+ * （`drawForPhase` 里接续推进），搬回去就是循环依赖。放在 `maxCostForTurn` 旁边也合适 ——
+ * 两者都是「这个回合的数字」。
+ *
+ * 座位 0 = 先攻（`start.ts` 按掷骰结果重排过 `seats`），故「先攻第一回合」= `turn 1 && seat 0`。
+ */
+export function drawCountFor(state: GameState): number {
+  return state.turn === 1 && state.activeSeat === 0 ? FIRST_TURN_DRAW : DRAW_PER_TURN;
 }
 
 /**
@@ -77,6 +99,25 @@ export function advanceOnce(state: GameState, ctx: RuleContext): GameEvent[] {
     if (to === 'reset') {
       const s2 = events.reduce(reduce, state);
       events.push(...advanceOnce(s2, ctx));
+      return events;
+    }
+
+    /*
+     * issue #109（Era 2026-10-21）：「先攻第一回合不抽牌…直接自动推进阶段就行了。」
+     *
+     * 抽 0 张的抽牌阶段**没有决策点**：手动抽牌是 Era 2026-10-18 定的口径，
+     * 而这里根本没有牌可抽 —— 界面上却照样亮「点击抽牌」，点了什么也不发生，
+     * 玩家还不能自己推进（`phaseRule` 拒绝未抽牌的抽牌阶段），等于逼人点一次空按钮。
+     *
+     * 与 reset 同构的处理：进 draw 后立刻补 `draw:completed` 再继续推进。
+     * **张数知识仍只有 `drawCountFor` 一处**，客户端不需要复制「第一回合不抽」这条规则 ——
+     * 这是选 ① 而不是「前端按张数隐藏按钮」的理由（那会把规则搬到前端，迟早分叉）。
+     */
+    if (to === 'draw' && active && drawCountFor(state) === 0) {
+      events.push(ev(at, 'draw:completed', { playerId: active }));
+      const s2 = events.reduce(reduce, state);
+      events.push(...advanceOnce(s2, ctx));
+      return events;
     }
     return events;
   }

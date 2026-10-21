@@ -101,6 +101,42 @@ test('推进阶段 → 充能 → 出牌 → 结束回合', async ({ browser }) 
 });
 
 /**
+ * 先攻第一回合抽 0 张（issue #109 / D-271）。
+ *
+ * Era 2026-10-21：「先攻开局第一回合不抽牌，不需要展示抽牌按钮，直接自动推进阶段就行了。」
+ *
+ * 这个阶段**没有决策点**，引擎已改成瞬穿（`advanceOnce` 进 draw 后若该抽 0 张就补
+ * `draw:completed` 再继续）。E2E 要钉两件事：
+ *  ① 玩家点一次「推进阶段」就落在主要阶段，不会卡在抽牌；
+ *  ② 连播放中间帧都不出现「点击抽牌」—— 否则玩家会点到一个服务端早已离开的阶段。
+ */
+test('先攻第一回合：推进后直接落在主要阶段，全程不出现「点击抽牌」（issue #109）', async ({ browser }) => {
+  const { host, guest } = await startGame(browser);
+  const p = await activePage([host, guest]);
+  expect(await turnNo(p)).toBe(1);
+  await expect.poll(() => phaseText(p)).toContain('阶段 充能');
+
+  await p.getByTestId('advance').click();
+
+  // ② 采样整段播放（phase:changed 每条停 750ms，三个阶段约 2s），任何一帧都不该有抽牌按钮
+  let sawDrawButton = false;
+  const deadline = Date.now() + 4_000;
+  while (Date.now() < deadline) {
+    if ((await p.getByTestId('draw-deck').count()) > 0) {
+      sawDrawButton = true;
+      break;
+    }
+    await p.waitForTimeout(100);
+    if ((await phaseText(p)).includes('阶段 主要')) break;
+  }
+  expect(sawDrawButton, '抽 0 张的抽牌阶段不该给「点击抽牌」').toBe(false);
+
+  // ① 最终停在主要阶段，而不是抽牌阶段
+  await expect.poll(() => phaseText(p), { timeout: 10_000 }).toContain('阶段 主要');
+  await expect(p.getByTestId('draw-deck')).toHaveCount(0);
+});
+
+/**
  * 开局换牌（D-259 / A8-3 / A10-1）。
  *
  * Era 2026-10-21：「开局换牌有这个阶段吗，好像直接开始了啊，换牌这个动作不是在

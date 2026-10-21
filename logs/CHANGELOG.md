@@ -4415,3 +4415,47 @@ Era 报 issue #105：「他在三个那个阶段选择破坏随从的时候，�
 
 5 档现在会把对手场上的随从一起列出来（力量值 ≤ 除外区炎刃数的那些），
 点一下就破坏对方的；「我方 / 敌方」小字只在候选跨两边时出现。
+
+---
+
+## D-271 · 先攻第一回合的抽牌阶段要玩家点一次空按钮（issue #109，2026-10-21）
+
+Era 报 issue #109：「先攻开局第一回合不抽牌，不需要展示抽牌按钮，直接自动推进阶段就行了。」
+
+### 根因：0 张的抽牌阶段仍走「手动抽牌」这条通用路径
+
+抽牌在 2026-10-18 被改成**玩家点卡组触发**（Era 定），理由是「抽牌要玩家点」。
+但先攻首回合该抽 **0 张**（`FIRST_TURN_DRAW = 0`）—— 这个阶段没有任何决策点，
+却照样亮「点击抽牌」、照样拒绝「推进阶段」（`phaseRule`：未抽牌不许推进）。
+于是玩家唯一出路是点一个什么也不会发生的按钮。
+
+`drawCountFor` 本身是对的，缺的是「该抽 0 张就别停」这条分支。
+
+### 改动
+
+| # | 改动 | 文件 |
+| --- | --- | --- |
+| 1 | `advanceOnce` 进 draw 后若 `drawCountFor(state) === 0`，补 `draw:completed` 再继续推进（与 reset 瞬穿同构） | `core/src/rules/phase.ts` |
+| 2 | `drawCountFor` **搬到 `phase.ts`**（`maxCostForTurn` 旁边）：`advanceOnce` 要用它，而 `draw.ts` 已反向依赖 `phase.ts`，留在原处就是循环依赖 | `core/src/rules/phase.ts` / `draw.ts` |
+| 3 | `core/index.ts` 导出 `drawCountFor`，客户端直接复用 —— **不复制「第一回合不抽」这条规则** | `core/src/index.ts` |
+| 4 | `canDraw` 加 `drawCountFor(state) > 0`：挡住事件播放的中间帧（`phase:changed` 每条停 750ms，瞬穿那批必有一两帧 `phase === 'draw'`），否则玩家会点到服务端早已离开的阶段、换回 `WRONG_PHASE` | `client/src/selectors.ts` |
+| 5 | 抽牌阶段提示同样按张数分支：0 张时不给「点卡组抽一张」 | 同上 |
+| 6 | README §3.4 补一段口径 | `app/README-运行说明.md` |
+
+### 测试（单测 436 → **440**，core 236→237 / client 47→50；E2E 50→**51**）
+
+- `rules.test.ts`：先攻首回合推进 → 事件序列 `charge→reset / reset→draw / draw→main` + `draw:completed`，
+  状态不停在 draw、手牌 0 张；**对照面**：后手首回合仍停在 draw、点卡组抽 2 张。
+  原来那条「第一回合先攻方点击卡组抽 0 张」被这条替换 —— 它写的时候就是照旧行为做的断言。
+- `selectors.test.ts` 新增 3 条：该抽 0 张时 `canDraw === false`、该抽 2 张时仍 `true`、
+  0 张时指引为空（不指路到不存在的动作）。
+- `turn.spec.ts` 新增 E2E：先攻方点一次「推进阶段」→ 落在主要阶段，且**全程采样**任何一帧都不出现
+  `draw-deck`（只断「最终没有按钮」抓不到中间帧，所以按 100ms 采样 ~4 秒）。
+- **红绿验证**：只写测试不修实现 → `expected [ 'charge→reset', 'reset→draw' ] to deeply equal [...]`，一红；
+  修 `advanceOnce` 即绿。
+
+### 为什么不做「前端按张数隐藏按钮」这个方案
+
+那等于把「第一回合不抽」这条规则抄到前端，两处口径迟早分叉（这个项目已经吃过 4 次
+「注释/实现符号相反」的教训）。现在的写法是**前端调用引擎的同一个函数** ——
+既挡掉了中间帧，又没有第二份规则。

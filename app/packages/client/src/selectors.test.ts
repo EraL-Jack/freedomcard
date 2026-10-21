@@ -302,3 +302,28 @@ describe('待定选择的阵营标注（issue #105）', () => {
     expect(labels).toEqual({});
   });
 });
+
+describe('先攻第一回合「零抽牌」的抽牌阶段（issue #109）', () => {
+  /*
+   * 引擎已改成瞬穿，这个局面正常不会停住；客户端这一层是**双保险 + 播放中间帧**：
+   * `phase:changed` 每条停 750ms，瞬穿那一批中间必然出现一两帧 `phase === 'draw'`，
+   * 那时不能给「点击抽牌」（服务端早已在主要阶段，点了只会换回 WRONG_PHASE）。
+   */
+  const zeroDraw = (): GameState => base({ phase: 'draw', turn: 1, activeSeat: 0 });
+  const normalDraw = (): GameState => base({ phase: 'draw', turn: 2, activeSeat: 1 });
+
+  it('该抽 0 张时不给抽牌动作', () => {
+    const a = actionability(zeroDraw(), ME, NOW);
+    expect(a.myTurn).toBe(true);
+    expect(a.canDraw).toBe(false);
+  });
+
+  it('该抽 2 张时照旧给抽牌动作', () => {
+    expect(actionability(normalDraw(), FOE, NOW).canDraw).toBe(true);
+  });
+
+  it('该抽 0 张时也不给「点卡组抽一张」的指引 —— 不指引一个不存在的动作', () => {
+    expect(turnGuidance(zeroDraw(), ME, false).hint).toBe('');
+    expect(turnGuidance(normalDraw(), FOE, false).hint).toContain('抽一张');
+  });
+});
