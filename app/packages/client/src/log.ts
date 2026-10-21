@@ -87,8 +87,18 @@ export function describeEvent(
     case 'commander:revealed':
       return `揭示指挥官：${cardName(str('defId'))}`;
 
-    case 'deck:shuffled':
+    case 'deck:shuffled': {
+      /*
+       * D-263（issue #91）：卡组抽空把弃牌区洗回来时，`reason` 是 `reshuffle`，
+       * `order` 就是这一批洗回的牌。玩家需要看到「牌去哪儿了」——
+       * 否则卡组区显示 0、弃牌区显示 15，点抽牌却什么都没发生。
+       */
+      if (str('reason') === 'reshuffle') {
+        const order = Array.isArray(p['order']) ? p['order'] : [];
+        return `${who(names, str('playerId'))} 把弃牌区 ${order.length} 张洗回卡组`;
+      }
       return `${who(names, str('playerId'))} 洗牌`;
+    }
 
     case 'card:moved': {
       const from = str('from');
@@ -99,6 +109,12 @@ export function describeEvent(
       if (from === 'reveal') return null;
       const name = cardName(defIdOf(state, str('uid')));
       if (from === 'deck' && to === 'hand') return `${who(names, str('playerId'))} 抽到 ${name}`;
+      /*
+       * D-263：洗回的搬移是「实现细节」，一条 `deck:shuffled`（reason=reshuffle）
+       * 已经说清「弃牌区 N 张洗回卡组」。逐张再印 N 行「X：弃牌区 → 卡组」
+       * 会把整页日志刷掉（实测 15 张就够呛）。
+       */
+      if (from === 'graveyard' && to === 'deck') return null;
       // 顶替离场（D-257）：上一行 `unit:replaced` 已经说明「被顶替、进弃牌区」，
       // 这里再印「被破坏」会让玩家以为是战斗结果。
       if (p['replaced'] === true) return null;

@@ -118,4 +118,29 @@ describe('事件日志文案', () => {
     expect(line).toContain('充能');
     expect(line).toContain('Era');
   });
+
+  /* ---- D-263：卡组抽空把弃牌区洗回来（issue #91）---- */
+
+  it('洗回说清「弃牌区 N 张回到卡组」，与常规洗牌区分', () => {
+    const line = describeEvent(
+      ev('deck:shuffled', { playerId: 'p1', order: ['a', 'b', 'c'], reason: 'reshuffle' }),
+      NAMES,
+      null,
+    );
+    expect(line).toBe('Era 把弃牌区 3 张洗回卡组');
+    // 常规洗牌（开局 / 换牌洗回）不能被说成「弃牌区洗回」—— 那时没有弃牌区参与
+    expect(describeEvent(ev('deck:shuffled', { playerId: 'p1', order: ['a', 'b'] }), NAMES, null)).toBe(
+      'Era 洗牌',
+    );
+  });
+
+  it('洗回时逐张的 graveyard→deck 位移不进日志（上面那条已汇总，否则刷 N 行）', () => {
+    expect(
+      describeEvent(ev('card:moved', { from: 'graveyard', to: 'deck', uid: 'u1', playerId: 'p1' }), NAMES, null),
+    ).toBeNull();
+    // 但「弃牌区 → 手牌」这类真实位移仍然要印（不能顺手把整类过滤掉）
+    expect(
+      describeEvent(ev('card:moved', { from: 'graveyard', to: 'hand', uid: 'u1' }), NAMES, null),
+    ).toContain('→');
+  });
 });

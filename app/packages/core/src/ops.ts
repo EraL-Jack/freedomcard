@@ -48,9 +48,21 @@ export const replacedOut = (at: number, playerId: PlayerId, uid: string, slot: n
 /** 随机游标推进 `steps` 步。洗牌结果由相邻事件显式携带，reducer 只需对齐游标。 */
 export const rngAdvance = (at: number, steps: number): GameEvent => ev(at, 'rng:advance', { steps });
 
-/** 卡组重排。`order` 是重排后的 uid 序列。 */
-export const deckShuffled = (at: number, playerId: PlayerId, order: readonly string[]): GameEvent =>
-  ev(at, 'deck:shuffled', { playerId, order: [...order] });
+/**
+ * 卡组重排。`order` 是重排后的 uid 序列。
+ *
+ * `reason`（D-263）只是给客户端日志区分的语义标签：
+ * - `'reshuffle'` = 卡组抽空、把弃牌区洗回来（docs/16 §11）；
+ * - 省略 = 常规洗牌（开局洗牌 / 换牌后洗回）。
+ *
+ * `order.length` 恰好等于「参与这次洗牌的牌数」，所以日志不用另带计数。
+ */
+export const deckShuffled = (
+  at: number,
+  playerId: PlayerId,
+  order: readonly string[],
+  reason?: 'reshuffle',
+): GameEvent => ev(at, 'deck:shuffled', { playerId, order: [...order], ...(reason ? { reason } : {}) });
 
 export const phaseChanged = (at: number, from: string, to: string): GameEvent =>
   ev(at, 'phase:changed', { from, to });
@@ -306,7 +318,26 @@ export function takeFromDeck(
       deck = s.items;
       graveyard = [];
       events.push(rngAdvance(at, steps));
-      events.push(deckShuffled(at, playerId, deck.map((x) => x.uid)));
+      events.push(deckShuffled(at, playerId, deck.map((x) => x.uid), 'reshuffle'));
+      /*
+       * D-263（issue #91）：洗回必须**逐张搬**。
+       *
+       * 原来这里只发 `rng:advance` + `deck:shuffled`，而 reducer 的
+       * `deck:shuffled` 只在**现有 deck** 里重排 —— 弃牌区那 15 张一张也没
+       * 回到卡组，于是紧接着的 `card:moved(deck → hand)` 在空牌堆里找不到卡，
+       * reducer 静默返回：玩家点了抽牌，什么都没发生（Era 实机截图：
+       * 弃牌区 15 / 卡组 0 / 手牌空）。
+       *
+       * `takeFromDeck` 的**返回值**一直是对的（`deck = s.items`），
+       * 错的是「这件事没有写进事件流」—— 而事件流才是状态的唯一真相。
+       *
+       * 顺序：`rng:advance` 与 `deck:shuffled` 必须紧邻（游标与洗牌成对，
+       * 回放才对得上），所以搬牌放在它们**之后**；此时 deck 还是空的，
+       * 逐张 append 的最终顺序恰好就是洗好的顺序，`deck:shuffled` 的 order 一致。
+       */
+      for (const card of deck) {
+        events.push(moved(at, playerId, card.uid, 'graveyard', 'deck'));
+      }
     }
     const card = deck.shift()!;
     taken.push(card);

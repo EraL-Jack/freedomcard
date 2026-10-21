@@ -124,7 +124,7 @@ Windows 需放行 5173 / 3000 端口的入站规则（网络配置文件为 Publ
 | `pnpm dev` | 并行起服务端与客户端 |
 | `pnpm typecheck` | 全量 `tsc --noEmit` |
 | `pnpm lint` | ESLint（flat config） |
-| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层 + `client` 纯逻辑，2026-10-21 时点 **408 passed**（core 227 + server 143 + client 38） |
+| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层 + `client` 纯逻辑，2026-10-21 时点 **412 passed**（core 229 + server 143 + client 40） |
 | `pnpm --filter @app/client run test:coverage` | client 覆盖率（v8）。目前只覆盖 `selectors` / `labels` / `log` 三个纯逻辑模块；组件层由 E2E 兜 |
 | `pnpm build` | 构建客户端到 `packages/client/dist` |
 | `pnpm --filter @app/client test:e2e` | 端到端（Playwright）：**46 条** —— 房间流程 / 视口溢出 / 联机开局 / 回合操作 / 攻击与指挥官伤害 / 卡组编辑 / 人机对战 / 人机房换牌阶段 / 新手引导 / 390px 日志抽屉 / 断线与点击反馈 |
@@ -350,6 +350,12 @@ app/
    「对手手牌 N 张」。toast 约 3 秒后消失，不影响操作；换牌阶段的其它标识
    （进度条紫色「换牌」标签、顶部换牌提示条、底部「不换牌」按钮）都不被遮挡。
    要改属于视觉决策（X-14），暂记为已知观感项。
+20. **390px 下各区之间的高度权重还没定**（D-264 / issue #92 的剩余部分）：
+   已经修掉的是「区域里的卡横向溢出、压到隔壁区」（卡宽不再由自己撑出来的父级反算）；
+   **没有**动的是「哪一排该高、哪一排该矮」以及「五区一行是否该拆成两行」——
+   这两项会改变整桌观感，属于视觉决策，等 Era 定。
+   顺带记一个量出来的事实：390px 下五区一格的内容宽只有 **63px**，
+   缩略卡按 5:7 只能到 63×88，卡名 4 字以上会被截断（`line-clamp-2`）。
 
 ## 11. 本轮验收清单（D-137 ~ D-149）
 

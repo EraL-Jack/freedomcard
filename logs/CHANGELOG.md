@@ -4022,3 +4022,92 @@ if (idx >= 0 && idx + 1 < PHASE_ORDER.length) {}  // false
 
 自查中发现一处**观感项**（未修，记入 README §10 第 19 条）：开局那句 toast 会短暂
 压住顶栏的「阶段 · 换牌」与「对手手牌 N 张」，3 秒后自行消失，不影响操作。
+
+---
+
+## D-263 · 卡组抽空后抽不上来牌 —— 洗回没写进事件流（issue #91，2026-10-21）
+
+**Era 报的原文**：
+
+> 游戏操作:手牌打空后抽牌阶段，抽不上来牌
+
+配图：第 8 回合、我方手牌为空、**卡组区 0 张、弃牌区 15 张**，已在主要阶段。
+
+**根因**：规则本身是明确且已实现的（docs/16 §11：卡组抽空 → 弃牌区洗回卡组，洗回后继续抽）。
+`takeFromDeck` 的**返回值**也一直是对的（`deck = s.items`）。坏的是它**只改了返回值**：
+
+```ts
+deck = s.items; graveyard = [];
+events.push(rngAdvance(at, steps));
+events.push(deckShuffled(at, playerId, deck.map((x) => x.uid)));   // ← 就这两条
+```
+
+而 reducer 的 `deck:shuffled` 只做一件事：**在现有 deck 里按 order 重排**。
+弃牌区那 15 张一张也没回到卡组 —— 于是紧接着的 `card:moved(deck → hand)`
+在空牌堆里找不到卡，reducer 静默返回。
+
+**两个条件同时成立才暴露**：① 洗回（卡组空）；② 没有任何断言跨过「返回值 → 状态」这一层。
+`takeFromDeck` 此前**零测试覆盖**，所以这个缺陷活到了 Era 打空卡组。
+
+**改动**：
+
+| 位置 | 改法 |
+| --- | --- |
+| `core/ops.ts` `takeFromDeck` | 洗回时按洗好顺序补发 `card:moved(graveyard → deck)` × N |
+| `core/ops.ts` `deckShuffled` | payload 加可选 `reason: 'reshuffle'` |
+| `client/log.ts` | `graveyard→deck` 的位移不进日志；`deck:shuffled` 分两文案 |
+
+**事件顺序（有讲究）**：`rng:advance` 与 `deck:shuffled` 必须**紧邻**（游标与洗牌成对，
+回放才对得上），所以搬牌放在它们**之后**。此时 deck 还是空的，逐张 append 的最终顺序
+恰好就是洗好的顺序，与 `deck:shuffled` 的 order 一致。
+
+**日志**：一次洗回 15 张若逐张印「X：弃牌区 → 卡组」，整页日志会被刷掉。
+改为一条汇总 —— **「Era 把弃牌区 15 张洗回卡组」**（`order.length` 就是张数，不用另带字段）。
+
+**测试**：
+- core +2：① 卡组空 + 弃牌区 3 张 → 抽 2 张后手牌 2 / 卡组 1 / 弃牌区 0（且总数守恒）；
+  ② 卡组与弃牌区都空 → 抽 0 张、仍走完自动推进、不判负（H6 / A9-3 无疲劳）。
+- client +2：洗回文案与常规洗牌区分；`graveyard→deck` 不进日志但 `graveyard→hand` 仍要进。
+- **红绿验证**：先写用例 → 手牌 0（期望 2）变红；补事件后即绿。
+
+---
+
+## D-264 · 390px 下区域里的卡压到隔壁区（issue #92，2026-10-21）
+
+**Era 报的原文**：
+
+> 游戏界面：各个堆叠区的显示有问题需要优化
+
+配图：390px 竖屏，区域里的卡横向溢出、压住隔壁区域的标签与数值。
+
+**根因**：`compact` 卡的宽度是**按高度反算**的（`h-full` + `aspect-[5/7]`），
+而它的两层包装都是 shrink-to-fit：
+
+```
+CardOf 外套（flex h-full min-h-0 items-center justify-center）   ← 宽度 = 卡自己撑出来的
+  └ CardTile 内层（relative flex h-full min-h-0 justify-center）  ← 同上
+      └ button（h-full max-w-full aspect-[5/7]）
+```
+
+卡上的 `max-w-full` / `w-full` 取的是**父级宽度**，而父级宽度又是卡撑出来的 ——
+百分比基准成了一个循环，等于没有约束。390px 下一格内容宽 63px，卡按高度反算出
+81px，直接压到隔壁区域上；极端情况挤出视口（Era 截图里那一列卡就跑到屏幕外）。
+
+**改动**（三处缺一不可）：
+
+1. `CardOf` 外套：`+ w-full min-w-0`
+2. `CardTile` 内层：`+ w-full min-w-0 items-center`
+   （`items-center` 是必须的 —— 否则 flex 的 `align-items: stretch` 会把卡高拉满，
+   `aspect-ratio` 推导出的高度被覆盖，卡变成 63×114 的窄条）
+3. button：窄屏**宽度驱动**（`h-auto w-full max-h-full`），`sm:` 以上仍高度驱动
+   （区域够宽时保持原来的「填满格子」，桌面观感不变）
+
+**实测（390px，指挥官区）**：
+
+| | 卡宽×高 | 宽高比 | 相对容器 |
+| --- | --- | --- | --- |
+| 修前 | 81 × 114 | 0.71 | 左 −4.1px / 右 +4.1px（越界） |
+| 修后 | 63 × 88 | 0.716 | 左右各内缩 5px（完全在容器内） |
+
+**没做的（属视觉决策，等 Era）**：各区域之间的**高度权重**（哪一排该高、哪一排该矮）、
+390px 下五区一行是否该改成两行 —— 这会改变整桌观感，按「不发明需求」没有擅自动。
