@@ -88,10 +88,10 @@ Windows 需放行 5173 / 3000 端口的入站规则（网络配置文件为 Publ
 | `pnpm dev` | 并行起服务端与客户端 |
 | `pnpm typecheck` | 全量 `tsc --noEmit` |
 | `pnpm lint` | ESLint（flat config） |
-| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层 + `client` 纯逻辑，2026-10-21 时点 **370 passed**（core 200 + server 142 + client 28） |
+| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层 + `client` 纯逻辑，2026-10-21 时点 **376 passed**（core 200 + server 142 + client 34） |
 | `pnpm --filter @app/client run test:coverage` | client 覆盖率（v8）。目前只覆盖 `selectors` / `labels` / `log` 三个纯逻辑模块；组件层由 E2E 兜 |
 | `pnpm build` | 构建客户端到 `packages/client/dist` |
-| `pnpm --filter @app/client test:e2e` | 端到端（Playwright）：**40 条** —— 房间流程 / 视口溢出 / 联机开局 / 回合操作 / 攻击与指挥官伤害 / 卡组编辑 / 人机对战 / 新手引导 / 390px 日志抽屉 |
+| `pnpm --filter @app/client test:e2e` | 端到端（Playwright）：**44 条** —— 房间流程 / 视口溢出 / 联机开局 / 回合操作 / 攻击与指挥官伤害 / 卡组编辑 / 人机对战 / 新手引导 / 390px 日志抽屉 / 断线与点击反馈 |
 
 > 首次跑 E2E 需先下载浏览器：`pnpm --filter @app/client exec playwright install chromium`（约 197 MiB，慢）。
 > 截图落在 `packages/client/e2e/screenshots/`（已被 `.gitignore` 忽略）。
@@ -291,13 +291,16 @@ app/
     要开放就把 `client/src/features.ts` 的 `REPLAY_VIEW_ENABLED` 改成 `true` 并重新 build
     （客户端改动 `pnpm build` 后**即时生效** —— 静态资源每次请求读盘，不必重启服务）。
 12. 工程内禁止使用 `xl:` / `2xl:` 变体 —— 五档断点已全部覆盖默认值。
-13. **首屏体积**：`pnpm build` 后主 chunk 约 **121 kB gzip**（D-250 / ADR-0046 之后不再含 zod）。
+13. **首屏体积**：`pnpm build` 后主 chunk 约 **122 kB gzip**（D-250 / ADR-0046 之后不再含 zod）。
     想加体积敏感的东西前，先确认它没有被 `@app/shared` 根入口顺带拖进来 ——
     **类型走 `@app/shared/types`、常量走 `@app/shared/constants`**，只有 `@app/shared` 根入口才带 zod。
 14. **`defId` 硬编码与卡组合法性校验仍分散在多处**（T-06，暂缓）：能工作、有测试，但加第三套卡前
     值得先把 `cardFlags` 与共享校验抽出来。暂缓理由：纯结构收益，当前无缺陷、无阻塞。
 15. **窄屏战报是抽屉而不是常驻列**（T-02 / D-251）：390px 竖屏要点「日志」展开；
     抽屉会盖住操作条，收起入口在抽屉底部（层级已确保可点）。
+16. **建房 / 加房等 8 秒没有回应就判超时**（D-256 / `ACK_TIMEOUT_MS`）：正常局域网 100ms 级、
+    公网经隧道 1s 级，8 秒足够；超时后提示「请检查网络后重试；一直不恢复就刷新页面」。
+    提示条**粘在视口顶部**（`sticky`）—— 这是 D-256 的教训：提示画在屏幕外等于没有提示。
 
 ## 11. 本轮验收清单（D-137 ~ D-149）
 

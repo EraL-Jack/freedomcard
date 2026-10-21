@@ -717,12 +717,21 @@ io.on('connection', (socket) => {
     // ⚠️ 校验失败必须给玩家能看懂的话 —— 只回 INVALID_PAYLOAD 错误码，
     // 界面上就是一句天书（Era 2026-10-13 实测：人数填 22 超上限 8，
     // 只看到「操作失败：INVALID_PAYLOAD」，不知道哪里错了）。
-    if (!parsed.success)
+    if (!parsed.success) {
+      /*
+       * 打日志（D-256）：校验失败原本是**静默**的 —— 服务端不留痕，客户端若把提示
+       * 渲染在屏幕外，就成了「玩家说点了没反应、服务端查不到任何记录」。
+       */
+      fastify.log.warn(
+        { socketId: socket.id, issues: parsed.error.issues.slice(0, 3) },
+        '建房参数不合法',
+      );
       return ack?.({
         ok: false,
         error: 'INVALID_PAYLOAD',
-        message: '参数不合法：昵称需 1–24 个字，人数需 1–8 的整数',
+        message: '参数不合法：昵称需 1–24 个字；卡组需正好 30 张、指挥官需有效',
       });
+    }
     // 限流（ADR-0039）：按连接计数，穿透部署下按 IP 会连坐所有玩家。
     const gate = rlCreate.take(socket.id);
     if (!gate.ok) return rateLimited(gate.retryAfterMs, ack);
@@ -736,7 +745,23 @@ io.on('connection', (socket) => {
       });
     }
     const r = roomManager.create(parsed.data);
-    if (!r.ok) return ack?.({ ok: false, error: r.error, message: r.message });
+    if (!r.ok) {
+      fastify.log.warn(
+        { socketId: socket.id, error: r.error, message: r.message },
+        '建房被房间层拒绝',
+      );
+      return ack?.({ ok: false, error: r.error, message: r.message });
+    }
+    fastify.log.info(
+      {
+        socketId: socket.id,
+        code: r.value.room.code,
+        solo: parsed.data.solo === true,
+        deckCards: parsed.data.deck?.length ?? 0,
+        turnTimeoutMs: r.value.room.turnTimeoutMs,
+      },
+      '建房成功',
+    );
     // 先放掉旧席位再挂新的（D-181）：否则旧房间永不释放。
     releaseSeatOf(socket);
     socket.data.playerId = r.value.seat.playerId;
@@ -755,17 +780,28 @@ io.on('connection', (socket) => {
 
   socket.on(SOCKET_EVENTS.roomJoin, (raw: unknown, ack?: (res: unknown) => void) => {
     const parsed = RoomJoinSchema.safeParse(raw);
-    if (!parsed.success)
+    if (!parsed.success) {
+      fastify.log.warn(
+        { socketId: socket.id, issues: parsed.error.issues.slice(0, 3) },
+        '加入房间参数不合法',
+      );
       return ack?.({
         ok: false,
         error: 'INVALID_PAYLOAD',
         message: '参数不合法：房间码不能为空，昵称需 1–24 个字',
       });
+    }
     // 阈值比建房宽松：输错房码重试是正常行为（ADR-0039）。
     const gate = rlJoin.take(socket.id);
     if (!gate.ok) return rateLimited(gate.retryAfterMs, ack);
     const r = roomManager.join(parsed.data);
-    if (!r.ok) return ack?.({ ok: false, error: r.error, message: r.message });
+    if (!r.ok) {
+      fastify.log.warn(
+        { socketId: socket.id, code: parsed.data.code, error: r.error },
+        '加入房间被拒绝',
+      );
+      return ack?.({ ok: false, error: r.error, message: r.message });
+    }
     // 先加入成功再放旧席位（D-181）：反过来一旦加入失败，玩家会连原来那间也没了。
     releaseSeatOf(socket);
     socket.data.playerId = r.value.seat.playerId;

@@ -18,8 +18,16 @@ import { expect, type Browser, type Page } from '@playwright/test';
 const WAIT = Number(process.env.E2E_WAIT_MS ?? 15_000);
 
 /** 开一个已连上服务端的客户端页面。 */
-export async function newClient(browser: Browser, nickname: string): Promise<Page> {
-  const context = await browser.newContext();
+export async function newClient(
+  browser: Browser,
+  nickname: string,
+  /**
+   * 额外的 context 选项 —— 目前只有视口用得上（D-256 的「提示是否在首屏内」必须窄屏才测得出来）。
+   * 放在这里而不是让 spec 自己 `newContext`：引导预置那段逻辑抄第二份就会漏（D-255 踩过）。
+   */
+  contextOptions: Parameters<Browser['newContext']>[0] = {},
+): Promise<Page> {
+  const context = await browser.newContext(contextOptions);
   const page = await context.newPage();
   /*
    * 新手引导（P-03）默认标记为「已看」。

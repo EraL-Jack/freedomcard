@@ -115,3 +115,14 @@ export function linkBannerText(link: 'connecting' | 'online' | 'offline'): strin
   if (link === 'connecting') return '正在连接服务器… —— 连上后可继续操作';
   return '与服务器断开，操作已暂停 —— 正在自动重连';
 }
+
+/**
+ * 建房 / 加房「等不到服务端回应」的提示（D-256）。
+ *
+ * 8 秒没有 ack 基本可以判定这次请求回不来（正常局域网 100ms 级、公网经隧道 1s 级）。
+ * 说清「可以重试」和「一直不恢复就刷新」两件具体的事，
+ * 而不是丢一句「请求超时」让玩家自己猜。
+ */
+export function ackTimeoutText(seconds: number): string {
+  return `服务器 ${seconds} 秒没有回应 —— 请检查网络后重试；一直不恢复就刷新页面`;
+}
