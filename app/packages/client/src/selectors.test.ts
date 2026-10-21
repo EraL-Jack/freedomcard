@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { createInitialState } from '@app/core';
-import type { GameState, Phase, PlayerState } from '@app/shared/types';
+import type { CardInstance, GameState, Phase, PlayerState } from '@app/shared/types';
 
-import { TURN_SWITCHING_LABEL, actionability, turnGuidance } from './selectors.js';
+import { TURN_SWITCHING_LABEL, actionability, choiceSideLabels, turnGuidance } from './selectors.js';
 
 /**
  * 可操作性判定（T-04）—— client 的第一个真单测。
@@ -243,5 +243,62 @@ describe('回合内指引（D-268）', () => {
     const g = turnGuidance(s, ME, false);
     expect(g.hint).toBe('');
     expect(g.label).toBe('你的回合');
+  });
+});
+
+describe('待定选择的阵营标注（issue #105）', () => {
+  const card = (uid: string, defId = 'bladeRecruit'): CardInstance => ({ uid, defId });
+
+  /** 给某个玩家的随从区塞几张卡（保持其它区域不变）。 */
+  function withBoard(s: GameState, id: string, board: CardInstance[]): GameState {
+    const p = s.players[id]!;
+    return player(s, id, { zones: { ...p.zones, board } });
+  }
+
+  it('候选跨双方才标注：己方「我方」、对手「敌方」', () => {
+    let s = base({ phase: 'main' });
+    s = withBoard(s, ME, [card('mine1')]);
+    s = withBoard(s, FOE, [card('foe1')]);
+    const labels = choiceSideLabels(s, {
+      playerId: ME,
+      kind: 'blade-lord-1-target',
+      sourceUid: 'lord1',
+      options: ['mine1', 'foe1'],
+    });
+    expect(labels).toEqual({ mine1: '我方', foe1: '敌方' });
+  });
+
+  it('只有单边候选时一律不标注（冻结敌方、检视己方这些不该挂噪声）', () => {
+    let s = base({ phase: 'main' });
+    s = withBoard(s, ME, [card('mine1'), card('mine2')]);
+    s = withBoard(s, FOE, [card('foe1')]);
+    const onlyMine = choiceSideLabels(s, {
+      playerId: ME,
+      kind: 'blade-lord-1-target',
+      sourceUid: 'lord1',
+      options: ['mine1', 'mine2'],
+    });
+    expect(onlyMine).toEqual({});
+
+    const onlyFoe = choiceSideLabels(s, {
+      playerId: ME,
+      kind: 'frost-edict-freeze',
+      sourceUid: 'f1',
+      options: ['foe1'],
+    });
+    expect(onlyFoe).toEqual({});
+  });
+
+  it('子效果档位（不是卡 uid）不参与阵营判定，也不影响跨边判断', () => {
+    let s = base({ phase: 'main' });
+    s = withBoard(s, ME, [card('mine1')]);
+    s = withBoard(s, FOE, [card('foe1')]);
+    const labels = choiceSideLabels(s, {
+      playerId: ME,
+      kind: 'blade-lord-1',
+      sourceUid: 'lord1',
+      options: ['l1', 'l3'],
+    });
+    expect(labels).toEqual({});
   });
 });

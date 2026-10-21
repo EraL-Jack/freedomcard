@@ -14,7 +14,8 @@
  *  - 【2】 = 从费用区支付 2 张卡（与出牌支付同路径）；
  *  - 「每回合一次」在自己回合开始时重置（reducer 在进入己方充能阶段清 `effectsUsed`）；
  *  - 「选择一个随从」需要目标选择 → `pendingChoice`；
- *  - 「选择一个随从」**限己方**（H22，Era 2026-10-19 拍板）；
+ *  - 「选择一个随从」：增益类（3/7/9 档）**限己方**（H22）；破坏类（5 档）**双方场上**
+ *    （Era 2026-10-21 issue #105 修订 —— 破坏只给己方等于只能自杀）；
  *  - 9 档「攻击后重置」**一回合一次**，生效一次即消耗（H23，Era 2026-10-19 拍板）。
  */
 
@@ -22,6 +23,7 @@ import { BOARD_SLOTS, RULE_ERRORS } from '@app/shared/constants';
 import type { GameEvent, GameState, PendingChoice, RuleContext } from '@app/shared/types';
 
 import { baseGuard, ev, firstRejection, locate, moved, playerOf, reject, strArg } from '../ops.js';
+import { enemyBoard } from './primitives.js';
 
 import {
   bladeExileCount,
@@ -269,8 +271,16 @@ function targetCandidates(
 ): string[] {
   const p = playerOf(state, me);
   if (!p) return [];
-  // H22（Era 2026-10-19 拍板）：统领Ⅰ的「选择一个随从」**限己方**，对方随从一律不可选。
+  // H22（Era 2026-10-19 拍板，2026-10-21 按 issue #105 修订）：
+  // 「选择一个随从」中**增益类**（3/7/9 档）限己方；**破坏类**（5 档）候选是双方场上。
   const ownBoard = p.zones.board.map((c) => ({ uid: c.uid, defId: c.defId }));
+  const withinBlade = (list: readonly { uid: string; defId: string }[]): string[] =>
+    list
+      .filter((c) => {
+        const def = ctx.cards[c.defId];
+        return def !== undefined && def.power <= bladeCount;
+      })
+      .map((c) => c.uid);
   switch (sub) {
     case 'l1':
       // 弃牌区里的随从，力量值 ≤ 除外区炎刃数（弃牌区卡无临时修正，取卡面值）
@@ -281,17 +291,16 @@ function targetCandidates(
         })
         .map((c) => c.uid);
     case 'l5':
-      // 己方场上随从，力量值 ≤ 炎刃数（H22：限己方）
-      return ownBoard
-        .filter((c) => {
-          const def = ctx.cards[c.defId];
-          return def !== undefined && def.power <= bladeCount;
-        })
-        .map((c) => c.uid);
+      // issue #105（Era 2026-10-21）：破坏**能给对手**，只给己方等于只能自杀。
+      // 候选顺序：先己方后对手，力量值一律按卡面值 ≤ 炎刃数（与 1 档 / 号令同口径）。
+      return [
+        ...withinBlade(ownBoard),
+        ...withinBlade(enemyBoard(state, me).map((c) => ({ uid: c.uid, defId: c.defId }))),
+      ];
     case 'l3':
     case 'l7':
     case 'l9':
-      // 己方任一随从（H22）
+      // 增益类：己方任一随从（H22 未变）
       return ownBoard.map((c) => c.uid);
   }
 }
