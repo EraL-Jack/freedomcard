@@ -9,24 +9,17 @@
  * 超时系统链路（`turn-end.ts`）走同一个函数，两条路径副作用一致（ADR-0011）。
  *
  * 阶段闭环：`phase.ts` 拒绝玩家在「未抽牌的抽牌阶段」推进（提示先点卡组）；
+ * 抽 0 张的回合（先攻首回合，issue #109）由 `phase.ts` 直接瞬穿，不会走到这里；
  * 超时链路走 `drawForPhase` **自动兜底抽牌** —— 否则超时会卡死在抽牌阶段。
  */
 
-import { DRAW_PER_TURN, FIRST_TURN_DRAW, RULE_ERRORS } from '@app/shared/constants';
+import { RULE_ERRORS } from '@app/shared/constants';
 import type { GameEvent, GameState, Intent, Result, Rejection, RuleContext } from '@app/shared/types';
 
 import { baseGuard, drawCards, ev, firstRejection } from '../ops.js';
 import { reduce } from '../reducer.js';
 import { activePlayer } from '../state.js';
-import { advanceOnce } from './phase.js';
-
-/**
- * 本阶段应抽的张数 —— 与旧自动抽牌口径完全一致（A9 补充 1 / A10-3）。
- * 单独导出是为了让「抽几张」只有一处定义（`phase.ts` 不再持有这份知识）。
- */
-export function drawCountFor(state: GameState): number {
-  return state.turn === 1 && state.activeSeat === 0 ? FIRST_TURN_DRAW : DRAW_PER_TURN;
-}
+import { advanceOnce, drawCountFor } from './phase.js';
 
 /**
  * 产出「本阶段抽牌」的完整事件批 —— 供两个调用方复用：

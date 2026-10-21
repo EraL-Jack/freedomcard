@@ -15,5 +15,6 @@ export { replay, isDeterministic, type ReplayDeps, type ReplayOutcome } from './
 export { checkDeck } from './deck.js';
 export { decideAiMove, type AiMove } from './ai.js';
 export { INTENTS, type IntentType } from './rules/index.js';
-export { PHASE_ORDER, maxCostForTurn } from './rules/phase.js';
+// issue #109：`drawCountFor` 也导出给客户端做「该抽几张」的可见性判定（同一个函数，不分叉）
+export { PHASE_ORDER, maxCostForTurn, drawCountFor } from './rules/phase.js';
 export * from './ops.js';

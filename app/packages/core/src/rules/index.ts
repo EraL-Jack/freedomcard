@@ -57,5 +57,6 @@ register(INTENTS.turnEnd, turnEndRule);
 register(INTENTS.concede, concedeRule);
 
 export { attackRule, chargeRule, commanderAttackRule, concedeRule, drawRule, mulliganRule, phaseRule, playRule, startRule, turnEndRule };
-export { drawCountFor, drawForPhase } from './draw.js';
+export { drawForPhase } from './draw.js';
+export { drawCountFor } from './phase.js'; // issue #109：定义搬去 phase，避免与 draw 循环依赖
 export { PHASE_ORDER, maxCostForTurn } from './phase.js';

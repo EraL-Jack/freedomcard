@@ -106,6 +106,10 @@ pnpm dev          # 同时起 server(3000) 与 client(5173)
 刚结束回合的人会看到「你的回合 · 充能阶段：点手牌里的随从…」，然后才交棒给对手。
 动画落地后归属文案才恢复成「你的回合 / 对手回合」。
 
+**先攻第一回合不抽牌**（D-271 / issue #109）：先攻方第 1 回合的抽牌阶段**该抽 0 张**，
+这个阶段没有任何决策点，所以引擎**直接瞬穿**（补一条 `draw:completed` 事件后立刻进主要阶段）——
+界面上既不会停住，也不会出现「点击抽牌」。后攻方与之后的回合照旧停在抽牌阶段、点卡组抽 2 张。
+
 ### 3.5 查看卡牌详情（D-261）
 
 原来卡面右上角那个 16×16 的小「?」已经删掉（Era 反馈「太难点了」）。现在三条入口：
@@ -150,7 +154,7 @@ Windows 需放行 5173 / 3000 端口的入站规则（网络配置文件为 Publ
 | `pnpm dev` | 并行起服务端与客户端 |
 | `pnpm typecheck` | 全量 `tsc --noEmit` |
 | `pnpm lint` | ESLint（flat config） |
-| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层 + `client` 纯逻辑，2026-10-21 时点 **436 passed**（core 236 + server 153 + client 47） |
+| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层 + `client` 纯逻辑，2026-10-21 时点 **440 passed**（core 237 + server 153 + client 50） |
 | `pnpm --filter @app/client run test:coverage` | client 覆盖率（v8）。目前只覆盖 `selectors` / `labels` / `log` 三个纯逻辑模块；组件层由 E2E 兜 |
 | `pnpm build` | 构建客户端到 `packages/client/dist` |
 | `pnpm --filter @app/client test:e2e` | 端到端（Playwright）：**50 条** —— 房间流程 / 视口溢出 / 联机开局 / 回合操作 / 攻击与指挥官伤害 / 卡组编辑 / 人机对战 / 人机房换牌阶段与倒计时 / 回合边界的指引不变量 / 堆叠区浮窗 / 新手引导 / 390px 日志抽屉 / 断线与点击反馈 |
