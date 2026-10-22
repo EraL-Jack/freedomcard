@@ -2244,11 +2244,16 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
         </div>
 
         {/*
-          右侧一列：日志框 + 对话框分开展示（B2-5）。
+          右侧一列：只放战报（B2-5 原为「日志框 + 对话框分开展示」）。
 
           T-02：窄屏（<640px）不再整列隐藏 —— 原来 `hidden sm:flex` 让 390px 竖屏下
           战报彻底消失，玩家看不到「谁打了谁」。现在窄屏改为「日志」按钮展开的浮层抽屉
           （`fixed inset-x-2 bottom-2 top-16`），桌面仍是常驻右列。
+
+          issue #122 / D-307：对话框那块「占位」**整块删掉了**，不是加说明。
+          `docs/22` N-09 已定第一版不做好友/私聊，而空面板对玩家没有任何信息价值 ——
+          它只会让人以为「有消息没加载出来」或「聊天坏了」。所以从玩家视角直接不存在。
+          真要加聊天时，这一列再加回来（`aside` 已是 `flex-col`，塞进去即可）。
         */}
         <aside
           className={`${
@@ -2268,9 +2273,6 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
                 {l.text}
               </p>
             ))}
-          </div>
-          <div className="h-20 rounded border border-slate-700 bg-slate-900/60 p-1 text-[11px] text-slate-500">
-            对话框（占位）
           </div>
           {/* 抽屉的关闭入口只在窄屏出现（桌面没有抽屉这回事） */}
           <button
