@@ -47,6 +47,29 @@ function zoneText(zone: unknown): string {
   return ZONE_LABEL[zone as Zone] ?? zone;
 }
 
+/**
+ * 区域可见性表 —— `docs/16 §7.5`（Era 2026-10-22 拍板 C-06）：
+ * 一张牌对对手可见与否**只取决于它当时所在的区**，与「怎么进来的」无关。
+ *
+ * | 分类 | 区域 | 对手可见 |
+ * | --- | --- | --- |
+ * | 隐藏区 | 手牌、牌库 | 不可见（连牌名都不可见） |
+ * | 公开区 | 场上 / **费用区** / 弃牌区 / 除外区 / 指挥官区 / 展示区 | 可见（含牌名） |
+ *
+ * ## 为什么不再逐事件枚举
+ *
+ * 旧实现是两条 `if`：`deck → hand` 一条、`deck → cost` 一条。第二条判断错了
+ * ——把「回合充能」也当成隐藏信息（#136 收口过头，而这个「收口」本身是我越权加的，
+ * Era 从未批过），于是 #143 又要改回来。两次返工都发生在「这条流向算不算公开」上。
+ * 改成查表后，新增动作（弃置 / 洗回 / 置底）不用再改分支：看终点在哪就行。
+ */
+const HIDDEN_ZONES: ReadonlySet<string> = new Set(['hand', 'deck']);
+
+/** 这张牌「现在 / 刚才」待在公开区吗（任一端点公开即可见，见 `card:moved` 的注释）。 */
+function isPublicZone(zone: string | undefined): boolean {
+  return zone !== undefined && !HIDDEN_ZONES.has(zone);
+}
+
 function phaseText(phase: unknown): string {
   if (typeof phase !== 'string') return '?';
   return PHASE_LABEL[phase as keyof typeof PHASE_LABEL] ?? phase;
@@ -117,23 +140,33 @@ export function describeEvent(
       if (from === 'reveal') return null;
       const name = cardName(defIdOf(state, str('uid')));
       /*
-       * 抽牌是**私有信息**（issue #136 / Era 2026-10-22 拍板「对手只记『抽了 1 张』，
-       * 自己抽牌仍显示卡名」）。
+       * 可见性**查表**（`docs/16 §7.5`，Era 2026-10-22 拍板 C-06）—— 见文件头的
+       * `HIDDEN_ZONES`。判定只看区域，不看「怎么进来的」：
        *
-       * 桌面上的对手手牌区只写「对方手牌 N 张」，战报却在逐张念卡名 ——
-       * 同一份信息一半隐藏一半公开，玩家没法判断哪条规则是真的。而卡池只有 45 张、
-       * 同名上限 3，知道对手刚抽到「霜律终裁」就等于知道下回合不能让他铺满冻结随从。
-       * 一句话：**战报不能比桌面更公开**。
+       *  - 两端都在隐藏区（手牌 / 牌库之间）→ 对手只知道「有 1 张牌动了」。
+       *    抽牌就是这一类（`deck → hand`），所以对手只记「抽了 1 张」；
+       *    **自己**看得见自己的手牌，所以自己的抽牌照旧念卡名。
+       *  - 任一端点是公开区 → 念卡名。`deck → cost`（回合强制充能）属这一条：
+       *    终点是**费用区**，费用区是公开区，所以对手看得见是哪张牌（#143）。
+       *    这条**不看 `viewer`** —— 公开信息不该因为少传视角就消失。
        *
-       * `viewer` 为 `null`（未知视角）时走对手分支（fail-closed）：新增调用点忘记传
-       * 视角时，宁可少显示，也不要泄露对手手牌。
+       * `viewer` 为 `null`（未知视角）时按「看不到对手手牌」处理（fail-closed）：
+       * 新增调用点忘记传视角时，宁可少显示，也不要泄露对手手牌。
+       *
+       * ⚠️ 「任一端点公开即可见」是刻意的：`board → hand`（回手）时对手早就在
+       * 桌面上看见过这张牌，把卡名抹掉不会更安全，只会让战报比桌面更封闭
+       * （§7.5.3「战报不得比桌面更公开」的另一半）。
        */
-      if (from === 'deck' && to === 'hand') {
-        const ownerId = str('playerId');
+      const ownerId = str('playerId');
+      if (!isPublicZone(from) && !isPublicZone(to)) {
         if (ownerId !== undefined && ownerId === viewer) {
-          return `${who(names, ownerId)} 抽到 ${name}`;
+          return from === 'deck' && to === 'hand'
+            ? `${who(names, ownerId)} 抽到 ${name}`
+            : `${name}：${zoneText(from)} → ${zoneText(to)}`;
         }
-        return `${who(names, ownerId)} 抽了 1 张`;
+        return from === 'deck' && to === 'hand'
+          ? `${who(names, ownerId)} 抽了 1 张`
+          : `${who(names, ownerId)} 移动了 1 张牌（${zoneText(from)} → ${zoneText(to)}）`;
       }
       /*
        * D-263：洗回的搬移是「实现细节」，一条 `deck:shuffled`（reason=reshuffle）
@@ -146,47 +179,18 @@ export function describeEvent(
       if (p['replaced'] === true) return null;
       if (from === 'board' && to === 'graveyard') return `${name} 被破坏`;
       /*
-       * 充能：**和抽牌是同一个隐藏信息漏洞**（issue #136 评论 / Era 2026-10-21 23:47
-       * 「充能那一行请一并收口」）—— 两者都是「牌库顶 → 桌面不会自动展示内容的地方」
-       * （手牌 / 费用区），牌在**被公开之前**就流向了那里。
-       * 原来这里对双方一律念卡名，于是对手一进充能阶段，战报就逐张报出他牌库顶的两张。
+       * 进费用区（回合强制充能 / 手牌充能 / 场上充能）统一一句话 —— 费用区是公开区，
+       * 谁的牌都念卡名（#143 / `docs/16 §7.5.1`）。
        *
-       * ⚠️ 这里的理由**不是**「桌面上看不到对手的费用区」—— 看得到：对手费用区是
-       * `ZoneBox content='float'`（`TableScreen.tsx:1916`），框里只留区名与张数，
-       * 但**点开浮窗就能看到卡面**（`TableScreen.tsx:434` 的 `inspectable`）。
-       * 真正的区别是**推送方式**，不是「能看 / 不能看」：
-       *  · 浮窗要玩家**主动点**才出现，不点就没有；
-       *  · 战报是自动逐条刷出来的 —— 不点也能被动知道对手这个回合充了哪两张。
-       * 本条的依据也不靠「谁更公开」这个类比，而是 Era 的明写口径
-       * （`deck → cost` 时对手「只记『充能 N 张』」）。
-       *
-       * 「主动点开浮窗仍能看到卡面」是**已知限制**，与「服务端未脱敏、DevTools 里
-       * 能看到对手手牌」同一类，已由 ADR-0065 记录 —— 这里**不是**把信息彻底藏住，
-       * 只是不再白送。
-       *
-       * 两条子项（抽牌 / 充能）**共用同一个 `viewer` 参数**（`useRoom` 传 `meRef.current`），
-       * 口径只有一处；`viewer` 为 `null` 时同样走对手分支（fail-closed）。
-       *
-       * ⚠️ 判定条件必须带 `from === 'deck'`：手牌 / 场上 → 费用区是玩家**主动**充能，
-       * 按 Era 的表格属「离手即公开 / 场上本就公开」，仍要念卡名。
-       * 把隐藏扩大到「对手所有进费用区的都不念」会误伤这两类公开动作。
-       *
-       * 顺带说明：指挥官受伤那类「先展示再进费用区」（`takeFromDeck(reveal=true)`）
-       * 的卡名已经在上一行「展示：X」里公开过，这里换成张数不会丢信息。
+       * 自己的文案一个字都不改：E2E、肌肉记忆与「充能 = 置入费用区」的说法都依赖它。
+       * 对手的加归属前缀 —— 双方共用一列战报，只写「霜律终裁 置入费用区」
+       * 会让人分不清是你充的还是他充的。
        */
-      if (from === 'deck' && to === 'cost') {
-        const ownerId = str('playerId');
-        // 自己的文案一个字都不改：E2E、肌肉记忆与「充能 = 置入费用区」的说法都依赖它。
-        if (ownerId !== undefined && ownerId === viewer) return `${name} 置入费用区`;
-        /*
-         * 「1 张」不是暂时写死：引擎在 `phase.ts` 里按张 `takeFromDeck`
-         * （`COST_INCOME_PER_TURN = 2` 会产出两条 `card:moved`），所以逐条事件恒为 1 张。
-         * 将来若要合并成「充能 N 张」，得给事件加 `count` 字段（协议变更），本轮不做。
-         */
-        return `${who(names, ownerId)} 充能 1 张`;
+      if (to === 'cost') {
+        return ownerId !== undefined && ownerId !== viewer
+          ? `${who(names, ownerId)} 将 ${name} 置入费用区`
+          : `${name} 置入费用区`;
       }
-      // 其余进费用区的位移（手牌 / 场上 → 费用区）是玩家主动充能，卡名照念。
-      if (to === 'cost') return `${name} 置入费用区`;
       if (to === 'board') return `${name} 登场`;
       return `${name}：${zoneText(from)} → ${zoneText(to)}`;
     }
