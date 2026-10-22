@@ -5645,3 +5645,61 @@ issue #154 的现象是「打完看不到战报」，但根因不是缺一块 UI
 - 未做 #125「再来一局」—— 它仍待 Era 拍板，本轮结算卡片里没有该入口。
 - 移动端（<640px）没有常驻战报列（战报是抽屉），所以那里仍是全屏遮罩；
   收起后从底部小条「查看本局结算」回来。
+
+## 2026-10-22 · 结算页「再来一局」：同房间原地重开（#125 / D-309）
+
+| ID | 改动 |
+| --- | --- |
+| D-309-a | `shared/src/constants.ts`：新增事件 `room:rematch`（与 BO3 的 `room:next-game` 明确分开）与两个错误码 `NO_REMATCH` / `OPPONENT_LEFT`（含中文文案） |
+| D-309-b | `server/src/room/types.ts` + `room.ts`：`Room` 新增 `rematchVotes`；新增 `voteRematch()`（单票只记票、双票才开、人机房单票即开、对手离开 / 掉线回 `OPPONENT_LEFT`）与 `resetForRematch()`（比分与局数归零、席位 / 卡组 / 指挥官保留） |
+| D-309-c | `server/src/room/room.ts`：`publicView` 增加 `rematchVotes` 与 `solo`；`leave` / `prune` / `recordGameResult` 三处清空旧票（席位变了或又打完一局，旧意愿不再成立） |
+| D-309-d | `server/src/index.ts`：`resetRuntimeForRematch()` —— **销毁并重建**对局运行时，房间不删；旧回放先 `flushReplay` 落盘（这是「两份独立回放」的实现基础）；新增 `room:rematch` 处理器 |
+| D-309-e | `client/src/useRoom.ts`：`rematch()`；服务端回 `waiting` 时提示「已请求再来一局，等待对手确认…」 |
+| D-309-f | `client/src/TableScreen.tsx`：结算卡片新增主按钮「再来一局」（实心 + 加粗，压过「返回主界面」），并区分四种形态：可点 / 等对手 / 对手在等你 / 对手已离开（禁用 + 原因） |
+| D-309-g | 测试：`server/src/room/room.test.ts` +7 条；`e2e/rematch.spec.ts`（新，3 条） |
+| D-309-h | 决策留痕：`logs/DECISIONS.md` 新增 **ADR-0076**（再来一局是房间级重开，不是 BO3 的下一局） |
+
+### 为什么不是「复用 room:next-game」
+
+两者在界面上都像是「再打一局」，但语义完全相反：
+
+| | `room:next-game`（BO3 局间） | `room:rematch`（本 issue） |
+| --- | --- | --- |
+| 触发时机 | 系列赛**未**分胜负 | 系列赛**已**结束 |
+| 比分 | 继续累计（1:0 → 2:0） | 归零（重新 0:0） |
+| 先后手 | 按 H33 轮换（谁输了谁先攻） | 重新掷骰 |
+| 谁说了算 | 房主一个人 | **双方都得点** |
+
+复用会带来两个真问题：① 系列赛已经结束的房间里 `awaitingNext` 是 `false`，
+`next-game` 的守卫会直接拒绝；② 就算绕开守卫，比分也不会归零 —— 玩家会在
+「已经 2:0 结束」的比分上继续打，界面说的和实际发生的又不一致。
+
+### 为什么「销毁运行时」而不是「就地重置」
+
+回放只在**房间销毁**时落盘（`sweepRuntimes`）。就地重置 `rt.state` 会让上一局的
+`ReplayRecorder` 直接消失 —— 而 #125 验收 6 要求「连打两局是两份独立回放」。
+所以重开时做与销毁相同的事（清计时器、拔 AI 定时器、落盘回放），**只不删房间**。
+
+实测取证（临时 spec，用完即删）：
+
+```
+eea1b60a-…-1792666095249.json   intents: 3   rounds: 0
+eea1b60a-…-1792666101336.json   intents: 7   rounds: 0
+```
+
+同一个房间 id、两份独立文件、`rounds` 为空（不是 BO3 式的多局归档）。
+
+### 红绿证据
+
+| 断言 | 注入的坏实现 | 结果 |
+| --- | --- | --- |
+| 联机必须双方都点（单测） | `shouldStart: waiting === null` → `true` | 红：`expected true to be false` |
+| 重开时比分归零（单测） | 删掉 `wins` 归零两行 | 红：`expected { p1: 1, p5: +0 } to deeply equal { p1: 0, p5: 0 }` |
+| 联机必须双方都点（E2E） | 同上，改成服务端恒开 | 红：`Expected: "等待对手确认…"` |
+| 对手离开后不可点（E2E） | `foeReady` 恒 `true` | 红：`Expected: disabled / Received: enabled` |
+
+### 边界（明确没做）
+
+- 不做「再来一局时换卡组 / 改赛制 / 改时限」（#125 边界 + `docs/22` N-03）；
+- BO3 局间仍走原来的「开始第 N 局」（房主独裁），两种入口不会同时出现；
+- 联机双方「同时点」不需要信号量：`voteRematch` 是同步函数，Node 单线程内两票必然串行落地。

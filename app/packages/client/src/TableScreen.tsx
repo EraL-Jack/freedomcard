@@ -676,6 +676,13 @@ function GameOverPanel(props: {
   onBack: () => void;
   onNextGame: () => void;
   /**
+   * 再来一局（D-309 / #125）—— 系列赛打完后的原地重开。
+   *
+   * 与 `onNextGame` 并列但不合并：`onNextGame` 只在 BO3 局间出现（比分继续算），
+   * 这个只在**整场结束**后出现（比分归零、双方都得点）。两者不会同时在场。
+   */
+  onRematch: () => void;
+  /**
    * 收起态（issue #154）—— 结算现在是**覆盖层**，让玩家能把它收起去看战报，
    * 收起时保留「查看本局结算 / 返回主界面」两个出口。
    */
@@ -699,6 +706,25 @@ function GameOverPanel(props: {
     : 0;
   const isHost = room?.hostId === props.me;
   const nextGameNo = (room?.gameNo ?? 0) + 1;
+  /*
+   * 「再来一局」的三种形态（D-309 / #125）：
+   *  - 只在**系列赛打完**（`phase === 'ended'`）出现 —— BO3 局间仍走上面那颗「开始第 N 局」，
+   *    两个动作语义不同（那个比分继续算，这个比分归零）；
+   *  - 人机房的 AI 不会点按钮，玩家点一次即开；
+   *  - 联机必须双方都点，所以要能分辨「我点了在等」与「对手点了在等我」两种中间态。
+   */
+  const solo = room?.solo === true;
+  const rematchVotes = room?.rematchVotes ?? [];
+  const iVoted = rematchVotes.includes(props.me);
+  const foeVoted = rematchVotes.some((id) => id !== props.me);
+  const foeSeat = room?.seats.find((s) => s !== null && s.playerId !== props.me) ?? null;
+  const canRematch = room?.phase === 'ended';
+  /*
+   * 对手还在不在 —— AI 恒在；联机看席位是否存在且未断线。
+   * 席位为 `null`（已离开 / 宽限期满被回收）与 `connected === false`（掉线中）
+   * 对玩家是同一件事：此刻开不了局，按钮就该是灰的并说明原因。
+   */
+  const foeReady = solo || (foeSeat !== null && foeSeat.connected);
   /**
    * 成因行（P-02 / D-238）—— 同一句「败北」有四种成因（被打死 / 认输 / 对手掉线 / 40 轮），
    * 不给成因等于让玩家靠自己回忆。`endReason` 已经在状态里，这里只是翻译成视角文案。
@@ -822,6 +848,52 @@ function GameOverPanel(props: {
             <p className="text-xs text-slate-400" data-testid="wait-next">
               等待房主开始第 {nextGameNo} 局…
             </p>
+          )
+        ) : null}
+        {/* 再来一局（D-309 / #125）—— 结算页的主按钮；「返回主界面」退为次按钮。 */}
+        {canRematch ? (
+          foeReady ? (
+            <div className="flex flex-col items-center gap-1">
+              <button
+                type="button"
+                // 已经投过票（且不是人机房）→ 现在只是「等对手」，禁用防连点；
+                // 对手点了任何一下都会把界面推走，不需要本地做「打开中」的中间态。
+                disabled={iVoted && !solo}
+                className={`rounded px-6 py-2 text-sm ${
+                  iVoted && !solo
+                    ? 'cursor-wait bg-slate-700 text-slate-300'
+                    : 'bg-emerald-700 font-semibold text-white hover:bg-emerald-600'
+                }`}
+                onClick={props.onRematch}
+                data-testid="rematch"
+              >
+                {iVoted && !solo ? '等待对手确认…' : '再来一局'}
+              </button>
+              {foeVoted && !iVoted ? (
+                <p className="text-xs text-emerald-300" data-testid="rematch-invite">
+                  对手想再来一局
+                </p>
+              ) : null}
+              {iVoted && !solo ? (
+                <p className="text-xs text-slate-400" data-testid="rematch-wait">
+                  对手点一下就能立刻开局
+                </p>
+              ) : null}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-1">
+              <button
+                type="button"
+                disabled
+                className="cursor-not-allowed rounded border border-slate-700 bg-slate-800/40 px-6 py-2 text-sm text-slate-500"
+                data-testid="rematch"
+              >
+                再来一局
+              </button>
+              <p className="text-xs text-amber-300" data-testid="rematch-hint">
+                对手已离开，无法再来一局
+              </p>
+            </div>
           )
         ) : null}
         <button
@@ -1350,6 +1422,7 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
           room={room}
           onBack={session.leave}
           onNextGame={session.nextGame}
+          onRematch={session.rematch}
           collapsed={resultCollapsed}
           onCollapseChange={setResultCollapsed}
         />
@@ -2657,6 +2730,7 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
           room={room}
           onBack={session.leave}
           onNextGame={session.nextGame}
+          onRematch={session.rematch}
           collapsed={resultCollapsed}
           onCollapseChange={setResultCollapsed}
         />

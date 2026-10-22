@@ -27,6 +27,17 @@ export const SOCKET_EVENTS = {
    */
   roomNextGame: 'room:next-game',
   /**
+   * 再来一局 —— 系列赛打完之后「同样的双方、同样的卡组，立刻开下一局」（D-309 / #125）。
+   *
+   * 与 `room:next-game` 是**两件事**，不要合并：
+   * - `room:next-game` = BO3 的局间（比分继续累计，先手按 H33 轮换，只有房主能点）；
+   * - `room:rematch`   = 系列赛结束后的重开（比分归零、回到掷骰定先后手、**双方都要点**）。
+   *
+   * 之所以要求双方都点：重开会在原地把房间从 `ended` 拉回对局，
+   * 单方面就能拉，等于替对手做了「继续打」的决定。
+   */
+  roomRematch: 'room:rematch',
+  /**
    * 换卡组 —— D-141（Era 2026-10-19：对局前与准备页都能选）。
    *
    * 只在**未开局**时允许；开局后服务端拒 `DECK_LOCKED`。
@@ -124,6 +135,10 @@ export const ROOM_ERRORS = {
   NOT_HOST: 'NOT_HOST',
   /** 当前没有「上一小局已结束、等待开局」的状态。 */
   NO_NEXT_GAME: 'NO_NEXT_GAME',
+  /** 当前不是「一局刚打完、还能再来一局」的状态（D-309 / #125）。 */
+  NO_REMATCH: 'NO_REMATCH',
+  /** 对手已离开，房间只剩自己 —— 再来一局没有对手可打（D-309 / #125）。 */
+  OPPONENT_LEFT: 'OPPONENT_LEFT',
   /** 自建卡组不合法（张数 / 同名上限 / 含指挥官 / 未知卡）。 */
   INVALID_DECK: 'INVALID_DECK',
   /** 只有未开局时才允许换卡组。 */
@@ -150,6 +165,8 @@ export const ROOM_ERROR_TEXT: Readonly<Record<RoomErrorCode, string>> = {
   NOT_IN_ROOM: '你不在任何房间里',
   NOT_HOST: '只有房主能开始下一局',
   NO_NEXT_GAME: '当前没有等待开局的下一局',
+  NO_REMATCH: '当前没有可以再来一局的对局',
+  OPPONENT_LEFT: '对手已离开，无法再来一局',
   INVALID_DECK: '卡组不合法（需 30 张、同名 ≤3、不含指挥官）',
   DECK_LOCKED: '对局已开始，不能再换卡组',
   RATE_LIMITED: '操作太频繁，请稍等几秒再试',

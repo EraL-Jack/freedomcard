@@ -37,6 +37,15 @@ export interface RoomView {
   awaitingNext: boolean;
   /** 系列赛胜者。 */
   seriesWinner: string | null;
+  /**
+   * 已经点了「再来一局」的玩家（D-309 / #125）。
+   *
+   * 只有系列赛结束（`phase === 'ended'`）后才有意义：双方都在这个数组里时服务端才重开。
+   * 人机房另有芯片 `solo` —— AI 不会投票，服务端在 solo 房间里单票即开。
+   */
+  rematchVotes?: string[];
+  /** 人机房（D-242）—— 决定「再来一局」要不要等对手一起点。 */
+  solo?: boolean;
   seats: (RoomSeatView | null)[];
 }
 
@@ -64,6 +73,13 @@ export interface Ack {
   seat?: number;
   snapshot?: SnapshotView;
   out?: { kind: string; error?: { code: string; message: string } };
+  /**
+   * 「再来一局」只走到一半（D-309 / #125）—— 自己这一票已记下，还在等对手点。
+   *
+   * 服务端在这条回包里 `ok: true`，所以只能靠这个字段区分「开了」与「等着」，
+   * 否则玩家点完看到界面没变，会以为按钮坏了。
+   */
+  waiting?: boolean;
 }
 
 /** 房间错误提示文案 —— 传输层错误码 → 人话。 */

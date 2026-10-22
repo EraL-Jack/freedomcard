@@ -88,6 +88,15 @@ export interface Room {
    * 判和（`winner === null`）时无败者，置 `null`，第 3 小局回落到重新掷骰。
    */
   lastLoser: PlayerId | null;
+  /**
+   * 已经点了「再来一局」的玩家（D-309 / #125）。
+   *
+   * 系列赛结束（`phase === 'ended'`）后，双方都点才重开 —— 单方面重开等于
+   * 替对手决定「接着打」。人机房不靠这张表：AI 不会点按钮，服务端按 `solo` 直接开。
+   *
+   * 席位变动（离开 / 断线回收）时必须清空：上一批意愿只对**原来那两个人**成立。
+   */
+  rematchVotes: PlayerId[];
 }
 
 export type Outcome<T> =

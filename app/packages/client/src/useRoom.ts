@@ -167,6 +167,13 @@ export interface RoomSession {
   setDeck(deck: string[], commander?: string): void;
   /** 开始下一小局（仅房主可用，BO3）。 */
   nextGame(): void;
+  /**
+   * 再来一局（D-309 / #125）—— 系列赛打完后与对手一起原地重开。
+   *
+   * 与 `nextGame` 不是同一个动作：`nextGame` 是 BO3 的局间（比分继续算、房主说了算），
+   * 这个是把整场重开（比分归零、双方都得点）。人机房里 AI 不会点，玩家点一次即开。
+   */
+  rematch(): void;
   leave(): void;
   ready(): void;
   /** 推进一个阶段 —— 六阶段不可跳过（A4-2），故没有「跳到战斗」这类操作。 */
@@ -792,6 +799,22 @@ export function useRoom(): RoomSession {
     });
   }, []);
 
+  /**
+   * 再来一局（D-309 / #125）。
+   *
+   * 三种结果都要有可见差异，否则玩家分不清「点上了」和「没点上」：
+   * ① 开了 → 新局的快照/事件会把界面推走，不需要额外提示；
+   * ② 只记了自己一票 → 必须说「在等对手」，否则界面毫无变化；
+   * ③ 对手走了 → 用人话说明，不要让按钮静默失败。
+   */
+  const rematch = useCallback((): void => {
+    socket.emit(SOCKET_EVENTS.roomRematch, {}, (res: Ack) => {
+      if (!res.ok) return setNotice(failText(res));
+      if (res.room) setRoom(res.room);
+      if (res.waiting) setNotice('已请求再来一局，等待对手确认…');
+    });
+  }, []);
+
   const leave = useCallback((): void => {
     socket.emit(SOCKET_EVENTS.roomLeave, {}, (res: Ack) => {
       localStorage.removeItem(LS.playerId);
@@ -866,6 +889,7 @@ export function useRoom(): RoomSession {
     join,
     setDeck,
     nextGame,
+    rematch,
     leave,
     ready,
     advance: () => send(core.INTENTS.phaseAdvance),

@@ -839,6 +839,44 @@ function sweepRuntimes(): void {
 }
 
 /**
+ * 重开前清掉旧对局的运行时（D-309 / #125）。
+ *
+ * 为什么是「销毁 + 重建」而不是「就地重置」：
+ * ① **回放必须分成两份独立文件**（#125 验收 6）。回放只在房间销毁时落盘
+ *    （`sweepRuntimes`），就地重置会让上一局的记录凭空消失；
+ * ② `SeqGuard` / `serverSeq` / 计时器都描述「这一局进行到第几步」，跨局复用会让
+ *    「第几步」失去意义，也让回放里的序号对不上。
+ *
+ * 与 `sweepRuntimes` 的区别只有一条：**房间不删**（席位、卡组、房间码都留着）。
+ */
+function resetRuntimeForRematch(roomId: string): RoomRuntime {
+  const rt = runtimes.get(roomId);
+  if (rt) {
+    // 先拔定时器：AI 那一拍和回合超时都会对着「已经不存在的这一局」继续动作。
+    const pending = aiTimers.get(roomId);
+    if (pending) {
+      clearTimeout(pending);
+      aiTimers.delete(roomId);
+    }
+    rt.timer.clear();
+    clearMulliganTimer(rt);
+    runtimes.delete(roomId);
+    // 与 `sweepRuntimes` 同一条取舍（D-176）：`void` 一个会 reject 的 Promise
+    // 在 Node 22 上等于 unhandled rejection → 终止进程。回放丢了可以重打，服务不能挂。
+    if (rt.replay.hasContent()) {
+      void flushReplay(roomId, rt.replay.finish()).catch((err: unknown) => {
+        fastify.log.error({ err, roomId }, '回放落盘失败（不影响重开）');
+      });
+    }
+  }
+  /*
+   * 惰性建一份全新的：`startGame` 取的是 `runtimes.get`，这里必须先把它放回去，
+   * 否则它会以「运行时不存在」直接返回 —— 表现为点了「再来一局」毫无反应。
+   */
+  return runtimeOf(roomId);
+}
+
+/**
  * 定期回收超出保留窗口的断线席位；频率取窗口的一半，够用且开销可忽略。
  *
  * D-233（Era 2026-10-21「掉线等 60s」）：宽限到期 = 该玩家已离开 ——
@@ -1093,6 +1131,38 @@ io.on('connection', (socket) => {
     }
 
     startGame(room.id, { firstPlayerId: roomManager.nextFirstPlayer(room.id) ?? undefined });
+    ack?.({ ok: true, room: roomManager.publicView(room) });
+  });
+
+  /**
+   * 再来一局（D-309 / #125）—— 系列赛打完原地重开。
+   *
+   * 与 `room:next-game` 分开：那个是 BO3 局间（房主独裁、比分累计、先手轮换），
+   * 这个是整场打完之后的重开（**双方都同意**、比分归零、重新掷骰定先后手）。
+   * 人机房 AI 不会点按钮，`voteRematch` 对 solo 房间单票即开。
+   */
+  socket.on(SOCKET_EVENTS.roomRematch, (_raw: unknown, ack?: (res: unknown) => void) => {
+    const playerId = socket.data.playerId as string | undefined;
+    if (!playerId) return ack?.({ ok: false, error: ROOM_ERRORS.NOT_IN_ROOM, message: '不在房间内' });
+
+    const vote = roomManager.voteRematch(playerId);
+    if (!vote.ok) return ack?.({ ok: false, error: vote.error, message: vote.message });
+    const room = vote.value.room;
+
+    if (!vote.value.shouldStart) {
+      /*
+       * 只差对手那一票：把他的票数广播出去，对手的结算卡片上会出现「对手想再来一局」——
+       * 否则点过的人只能干等，看不出「是我在等」还是「对面根本没看见」。
+       */
+      broadcastRoom(room.id);
+      return ack?.({ ok: true, room: roomManager.publicView(room), waiting: true });
+    }
+
+    // 双方都同意 → 旧对局收尾（回放落盘）→ 用**首次开局**的同一条路径重建。
+    resetRuntimeForRematch(room.id);
+    roomManager.resetForRematch(room.id);
+    startGame(room.id);
+    broadcastRoom(room.id);
     ack?.({ ok: true, room: roomManager.publicView(room) });
   });
 
