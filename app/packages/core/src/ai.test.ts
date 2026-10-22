@@ -32,13 +32,15 @@ function craft(patch: {
   turn?: number;
   activeSeat?: number;
   /** **AI（'ai' 席）**自己的区域 —— 决策的主体。 */
-  own?: Partial<Record<'hand' | 'board' | 'cost' | 'commander' | 'deck', CardInstance[]>>;
+  own?: Partial<Record<'hand' | 'board' | 'cost' | 'commander' | 'deck' | 'graveyard' | 'exile', CardInstance[]>>;
   /** **对手（'me' 席）**的区域 —— 攻击目标从这里挑。 */
   foe?: Partial<Record<'board' | 'commander' | 'deck', CardInstance[]>>;
   maxCost?: number;
   usedCost?: number;
   commanderAttacked?: boolean;
   pendingChoice?: GameState['pendingChoice'];
+  /** AI 的指挥官 defId —— 技能用例要按真实指挥官判定（默认 `cmd`，没有技能）。 */
+  aiCommander?: string;
 }): GameState {
   const base = createInitialState({
     seed: 7,
@@ -66,7 +68,7 @@ function craft(patch: {
         zones: {
           ...ai.zones,
           // 指挥官默认已揭示，攻击用例才不用每个都摆一遍
-          commander: [c('ai#commander', 'cmd')],
+          commander: [c('ai#commander', patch.aiCommander ?? 'cmd')],
           ...patch.own,
         },
       },
@@ -296,6 +298,204 @@ describe('decideAiMove · 换牌', () => {
  * 用系统 Intent（`actor: 'system'`）提交，与真实服务端链路一致；
  * 决策被拒时同样走服务端那条兜底（推进阶段），保证「不卡死」的口径一致。
  */
+/* ------------------------------------------------------------------------- *
+ * 技能与手牌充能（issue #137 / D-288）
+ *
+ * 背景：这两个动作 AI 以前**一次都不做** —— 人机局里只能看随从互撞，
+ * 炎刃「除外 → 兑现」、霜律「冻结 → 霜痕」、星轨「展示 → 层数」三套引擎全空转。
+ * 这批用例钉的是「什么时候问」与「门槛由谁判定」：
+ * 门槛一律来自效果模块的 `aiCouldUse`，AI 侧不复制任何档位数字。
+ * ------------------------------------------------------------------------- */
+
+const SKILL_CARDS: Record<string, CardDef> = {
+  ...CARDS,
+  bladeLord: { defId: 'bladeLord', name: '炎刃军统领', type: 'commander', cost: 0, power: 0 },
+  frostAdjudicator: { defId: 'frostAdjudicator', name: '霜律裁决官', type: 'commander', cost: 0, power: 0 },
+  starWatcher: { defId: 'starWatcher', name: '星轨观测者', type: 'commander', cost: 0, power: 0 },
+  // 除外区档位按**卡名**含「炎刃」计数（`isBladeCard`），与 defId 无关
+  bladeShell: { defId: 'bladeShell', name: '炎刃余烬', type: 'minion', cost: 1, power: 1 },
+};
+
+const SKILL_NOW = 1000;
+
+describe('decideAiMove · 指挥官技能', () => {
+  it('统领Ⅰ：除外区有炎刃、弃牌区有可召唤的随从、2 费够 → 发动', () => {
+    const s = craft({
+      aiCommander: 'bladeLord',
+      own: {
+        exile: [c('x1', 'bladeShell')],
+        graveyard: [c('g1', 'weak')],
+        cost: [c('k1', 'cheap'), c('k2', 'cheap')],
+      },
+    });
+    expect(decideAiMove(s, 'ai', SKILL_CARDS, SKILL_NOW)).toEqual({
+      type: INTENTS.effectActivate,
+      payload: { uid: 'ai#commander', effect: '1' },
+    });
+  });
+
+  it('统领Ⅰ：除外区没有炎刃（档位为 0）→ 不发动', () => {
+    const s = craft({
+      aiCommander: 'bladeLord',
+      own: {
+        graveyard: [c('g1', 'weak')],
+        cost: [c('k1', 'cheap'), c('k2', 'cheap')],
+      },
+    });
+    expect(decideAiMove(s, 'ai', SKILL_CARDS, SKILL_NOW)).toEqual({ type: INTENTS.phaseAdvance });
+  });
+
+  it('统领Ⅰ：弃牌区没有达标随从 → 不发动（付了 2 费什么也拿不回来）', () => {
+    const s = craft({
+      aiCommander: 'bladeLord',
+      own: {
+        exile: [c('x1', 'bladeShell')],
+        graveyard: [c('g1', 'big')], // 力量 5 > 炎刃数 1
+        cost: [c('k1', 'cheap'), c('k2', 'cheap')],
+      },
+    });
+    expect(decideAiMove(s, 'ai', SKILL_CARDS, SKILL_NOW)).toEqual({ type: INTENTS.phaseAdvance });
+  });
+
+  it('统领Ⅰ：费用区只有 1 张（2 费付不起）→ 不发动', () => {
+    const s = craft({
+      aiCommander: 'bladeLord',
+      own: {
+        exile: [c('x1', 'bladeShell')],
+        graveyard: [c('g1', 'weak')],
+        cost: [c('k1', 'cheap')],
+      },
+    });
+    expect(decideAiMove(s, 'ai', SKILL_CARDS, SKILL_NOW)).toEqual({ type: INTENTS.phaseAdvance });
+  });
+
+  it('裁决官Ⅰ：敌方有未冻结随从、2 费够 → 发动（霜痕 0 层也有一档收益）', () => {
+    const s = craft({
+      aiCommander: 'frostAdjudicator',
+      own: { cost: [c('k1', 'cheap'), c('k2', 'cheap')] },
+      foe: { board: [c('e1', 'cheap')] },
+    });
+    expect(decideAiMove(s, 'ai', SKILL_CARDS, SKILL_NOW)).toEqual({
+      type: INTENTS.effectActivate,
+      payload: { uid: 'ai#commander', effect: '1' },
+    });
+  });
+
+  it('裁决官Ⅰ：敌方场上没有随从 → 不发动（没有冻结目标）', () => {
+    const s = craft({
+      aiCommander: 'frostAdjudicator',
+      own: { cost: [c('k1', 'cheap'), c('k2', 'cheap')] },
+    });
+    expect(decideAiMove(s, 'ai', SKILL_CARDS, SKILL_NOW)).toEqual({ type: INTENTS.phaseAdvance });
+  });
+
+  it('裁决官Ⅰ：敌方随从已全部冻结 → 不发动（H31：再冻结是空操作）', () => {
+    const s = craft({
+      aiCommander: 'frostAdjudicator',
+      own: { cost: [c('k1', 'cheap'), c('k2', 'cheap')] },
+      foe: { board: [{ uid: 'e1', defId: 'cheap', frozen: true }] },
+    });
+    expect(decideAiMove(s, 'ai', SKILL_CARDS, SKILL_NOW)).toEqual({ type: INTENTS.phaseAdvance });
+  });
+
+  it('主要阶段：技能与出牌抢同一份额度时，先付技能', () => {
+    /*
+     * 首版把技能放在「出牌出到没得出」之后，实测发动率 0 —— `maxCost` 是
+     * 「本回合所有支付的总张数上限」，技能与出牌共用，等牌出完额度也见底了。
+     * 所以顺序是「先技能、后出牌」。
+     */
+    const s = craft({
+      aiCommander: 'bladeLord',
+      own: {
+        hand: [c('h1', 'cheap')],
+        exile: [c('x1', 'bladeShell')],
+        graveyard: [c('g1', 'weak')],
+        cost: [c('k1', 'cheap'), c('k2', 'cheap')],
+      },
+    });
+    expect(decideAiMove(s, 'ai', SKILL_CARDS, SKILL_NOW)?.type).toBe(INTENTS.effectActivate);
+  });
+
+  it('主要阶段：额度不够付技能（只剩 1）→ 先出牌', () => {
+    const s = craft({
+      aiCommander: 'bladeLord',
+      maxCost: 3,
+      usedCost: 2, // 只剩 1 张额度，2 费技能付不起
+      own: {
+        hand: [c('h1', 'cheap')],
+        exile: [c('x1', 'bladeShell')],
+        graveyard: [c('g1', 'weak')],
+        cost: [c('k1', 'cheap'), c('k2', 'cheap')],
+      },
+    });
+    expect(decideAiMove(s, 'ai', SKILL_CARDS, SKILL_NOW)?.type).toBe(INTENTS.play);
+  });
+
+  it('观测者Ⅰ：指挥官攻击时付得起 1 费 → 带 reveal', () => {
+    const s = craft({
+      phase: 'battle',
+      aiCommander: 'starWatcher',
+      own: { cost: [c('k1', 'cheap')] },
+    });
+    expect(decideAiMove(s, 'ai', SKILL_CARDS, SKILL_NOW)).toEqual({
+      type: INTENTS.commanderAttack,
+      payload: { reveal: true },
+    });
+  });
+
+  it('观测者Ⅰ：费用区空（付不起 1 费）→ 攻击但不展示', () => {
+    const s = craft({
+      phase: 'battle',
+      aiCommander: 'starWatcher',
+      own: { cost: [] },
+    });
+    expect(decideAiMove(s, 'ai', SKILL_CARDS, SKILL_NOW)).toEqual({
+      type: INTENTS.commanderAttack,
+    });
+  });
+});
+
+describe('decideAiMove · 手牌充能', () => {
+  it('本回合打不出的高费随从 → 充能，便宜的留着打', () => {
+    const s = craft({
+      phase: 'charge',
+      maxCost: 1,
+      own: { hand: [c('h1', 'big'), c('h2', 'cheap')] },
+    });
+    expect(decideAiMove(s, 'ai', SKILL_CARDS, SKILL_NOW)).toEqual({
+      type: INTENTS.charge,
+      payload: { uids: ['h1'] },
+    });
+  });
+
+  it('手牌都付得起 → 不充能，直接推进', () => {
+    const s = craft({
+      phase: 'charge',
+      maxCost: 10,
+      own: { hand: [c('h1', 'big')] },
+    });
+    expect(decideAiMove(s, 'ai', SKILL_CARDS, SKILL_NOW)).toEqual({ type: INTENTS.phaseAdvance });
+  });
+
+  it('法术不能充能（X-2 限随从）→ 推进', () => {
+    const s = craft({
+      phase: 'charge',
+      maxCost: 1,
+      own: { hand: [c('h1', 'spell')] },
+    });
+    expect(decideAiMove(s, 'ai', SKILL_CARDS, SKILL_NOW)).toEqual({ type: INTENTS.phaseAdvance });
+  });
+
+  it('费用区已够一个回合的量 → 不再充能（避免同一阶段把手牌冲空）', () => {
+    const s = craft({
+      phase: 'charge',
+      maxCost: 1,
+      own: { hand: [c('h1', 'big')], cost: [c('k1', 'cheap')] },
+    });
+    expect(decideAiMove(s, 'ai', SKILL_CARDS, SKILL_NOW)).toEqual({ type: INTENTS.phaseAdvance });
+  });
+});
+
 describe('AI 自对弈：一局能打完', () => {
   // 合法卡组：10 种卡 × 3 张 = 30（`MAX_COPIES` = 3，所以不能只用一种卡刷 30 张）
   const DECK_CARDS: Record<string, CardDef> = {};

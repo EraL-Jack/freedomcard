@@ -22,7 +22,10 @@ import type { GameEvent, Result, Rejection } from '@app/shared/types';
 
 import { playerOf, reject } from '../ops.js';
 
-import { payCostCards, starRevealEvents, type EffectModule } from './index.js';
+import { canPayCost, payCostCards, starRevealEvents, type EffectModule } from './index.js';
+
+/** Ⅰ 的付费（卡面【1】，与出牌共用 `maxCost` 记帐）—— 发动与 AI 预判共用同一个数。 */
+const REVEAL_COST = 1;
 
 /** 这次展示几张（docs/17 §2.2 档位表）。 */
 export function revealCountFor(starTrack: number): number {
@@ -33,13 +36,30 @@ export function revealCountFor(starTrack: number): number {
 }
 
 export const starWatcherEffect: EffectModule = {
+  /**
+   * AI 要不要在指挥官攻击时付费展示（issue #137 / D-288）。
+   *
+   * 门槛只有一条：`REVEAL_COST` 付得起（与出牌共用 `maxCost` 记帐）。
+   * **不设星轨层数门槛** —— 0 层也有基础的 `STAR_TRACK_BASE_REVEAL` 张，
+   * 而且展示本身就是星轨的唯一入口：不展示就永远涨不到 3 / 6 层。
+   *
+   * 「每回合一次」由 `commander:attack` 本身保证（`commanderAttacked`），这里不必再判。
+   */
+  aiCouldUse(state, _ctx, owner) {
+    const p = playerOf(state, owner);
+    const cmd = p?.zones.commander[0];
+    if (!p || !cmd) return null;
+    if (!canPayCost(p, REVEAL_COST)) return null;
+    return { via: 'attack-reveal' };
+  },
+
   onCommanderAttack(state, intent, ctx): Result<GameEvent[], Rejection> {
     const me = intent.playerId;
     const p = playerOf(state, me);
     if (!p) return reject(RULE_ERRORS.NOT_STARTED, '玩家不在本局');
 
     // 【1】：与出牌共用 maxCost 记帐（docs/16 §3.3）。
-    const pay = payCostCards(ctx.now, me, p, 1);
+    const pay = payCostCards(ctx.now, me, p, REVEAL_COST);
     if (!Array.isArray(pay)) return { ok: false, error: pay };
 
     const count = revealCountFor(p.starTrack);

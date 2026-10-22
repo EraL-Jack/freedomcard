@@ -20,13 +20,25 @@
  *
  * 目前是「能完整打完一局」的启发式，不是博弈 AI：
  * 铺场优先出贵的随从、攻击优先打掉最弱的敌方随从、前排挡不住时打脸。
- * 不做的：算斩杀、留牌、技能时机、为下回合铺路。
+ * 不做的：算斩杀、留牌、为下回合铺路。
  * 强度可调，但**先保证不卡死** —— 调度器在 AI 操作被拒时会兜底推进阶段。
+ *
+ * ## 技能与充能（issue #137 / D-288）
+ *
+ * 早期版本**从不发动指挥官技能、从不用手牌充能**，结果是：
+ * 人机局里只能看到随从互撞（炎刃「除外 → 兑现」、霜律「冻结 → 霜痕」两套核心卖点
+ * 完全体验不到），而先攻首回合「0 充能 + 不可攻击」对 AI 等于整回合空过。
+ * 现在补两条：
+ *  - **技能**：主要阶段末尾（出牌机会用尽后）问一次「现在发动有意义吗」，
+ *    门槛由各效果模块的 `aiCouldUse` 给（`effects/index.ts` 的 `AiUseHint`），
+ *    **AI 不复制任何档位数字** —— #138 会把档位整体前移，抄一份必然滞后；
+ *  - **充能**：充能阶段把手牌里「本回合付费超出剩余额度」的随从置入费用区。
  */
 
 import { BOARD_SLOTS, KEYWORD_TAUNT } from '@app/shared/constants';
-import type { CardDef, CardInstance, GameState, PlayerId } from '@app/shared/types';
+import type { CardDef, CardInstance, GameState, PlayerId, PlayerState } from '@app/shared/types';
 
+import { EFFECTS } from './effects/index.js';
 import { costToPay, defOf, hasKeyword, unitPower } from './ops.js';
 import { INTENTS } from './rules/index.js';
 import { commanderUid, opponentOf } from './state.js';
@@ -35,6 +47,20 @@ import { commanderUid, opponentOf } from './state.js';
 export interface AiMove {
   type: string;
   payload?: Record<string, unknown>;
+}
+
+/** 一个充能阶段最多把几张手牌换成费用（issue #137 的建议口径）。 */
+const CHARGE_MAX_PER_TURN = 2;
+
+/**
+ * 这张牌实际要付几张（随从吃 `nextMinionDiscount`，法术不吃）。
+ *
+ * 抽成函数给两处共用：出牌可行性与「充能候选」都要算这个数，
+ * 抄两遍必然分叉。
+ */
+function payToPlay(me: PlayerState, def: CardDef): number {
+  const base = costToPay(def);
+  return def.type === 'minion' ? Math.max(0, base - me.nextMinionDiscount) : base;
 }
 
 /**
@@ -48,8 +74,7 @@ function affordable(
   me: GameState['players'][string],
   def: CardDef,
 ): boolean {
-  const base = costToPay(def);
-  const pay = def.type === 'minion' ? Math.max(0, base - me.nextMinionDiscount) : base;
+  const pay = payToPlay(me, def);
   if (me.zones.cost.length < pay) return false;
   // 0 费不占额度（docs/16 §9 第 5 条）
   const budget = Math.max(0, me.maxCost - me.usedCostThisTurn);
@@ -104,9 +129,77 @@ function weakestSlot(
 }
 
 /**
+ * 问一次「我这个指挥官现在能发动什么」（issue #137）。
+ *
+ * 门槛全部来自效果模块的 `aiCouldUse` —— 这里只负责找到指挥官实例、
+ * 把 `cards` 包成 `RuleContext` 递进去。**没有任何档位数字**。
+ */
+function commanderHint(
+  state: GameState,
+  aiId: PlayerId,
+  cards: Record<string, CardDef>,
+  now: number,
+) {
+  const cmd = state.players[aiId]?.zones.commander[0];
+  if (!cmd) return null;
+  return EFFECTS[cmd.defId]?.aiCouldUse?.(state, { now, cards }, aiId) ?? null;
+}
+
+/** 主要阶段末尾：能发动就发一次 `effect:activate`。 */
+function commanderSkillMove(
+  state: GameState,
+  aiId: PlayerId,
+  cards: Record<string, CardDef>,
+  now: number,
+): AiMove | null {
+  const cmd = state.players[aiId]?.zones.commander[0];
+  const hint = commanderHint(state, aiId, cards, now);
+  if (!cmd || hint?.via !== 'activate') return null;
+  return { type: INTENTS.effectActivate, payload: { uid: cmd.uid, effect: hint.effectId } };
+}
+
+/**
+ * 充能阶段该把哪些手牌充能（issue #137）。
+ *
+ * 只充**本回合付费超出剩余额度**的随从（即「这回合怎么都打不出来」），
+ * 从最贵的开始，一次最多 `CHARGE_MAX_PER_TURN` 张。
+ *
+ * ## 为什么还要看费用区张数
+ *
+ * `charge:put` 是一次性提交一串 uid，而调度器每拍都会重新问一次 AI ——
+ * 只按「打不出来」筛的话，AI 会在同一个充能阶段反复提交，直到把手里
+ * 打不出的随从全冲光（等于「把半个手牌换成费」）。加一条「先把费用区补到
+ * 一个回合的量（`maxCost`）就停」，既给了上限，又天然幂等：
+ * 充能只会让费用区变长，补满即止，不会同一个阶段无限充。
+ *
+ * X-2：只有随从能充能，法术不行。
+ */
+function chargeCandidates(
+  state: GameState,
+  aiId: PlayerId,
+  cards: Record<string, CardDef>,
+): string[] {
+  const me = state.players[aiId];
+  if (!me) return [];
+  const budget = Math.max(0, me.maxCost - me.usedCostThisTurn);
+  const room = Math.max(0, me.maxCost - me.zones.cost.length);
+  const cap = Math.min(CHARGE_MAX_PER_TURN, room);
+  if (cap <= 0) return [];
+  return me.zones.hand
+    .filter((c) => {
+      const def = defOf(cards, c.defId);
+      if (!def || def.type !== 'minion') return false;
+      return payToPlay(me, def) > budget;
+    })
+    .sort((a, b) => (defOf(cards, b.defId)?.cost ?? 0) - (defOf(cards, a.defId)?.cost ?? 0))
+    .slice(0, cap)
+    .map((c) => c.uid);
+}
+
+/**
  * 决定 AI 的下一手。返回 `null` = 「现在没我事」（不是我的回合 / 对局已结束）。
  *
- * @param _now 服务端时间戳 —— D-259 之后换牌不再判时间窗（`mulligan` 阶段任何时刻
+ * @param now 服务端时间戳 —— D-259 之后换牌不再判时间窗（`mulligan` 阶段任何时刻
  *             都能提交「跳过」），当前没有用到；保留参数是为了**调用方签名稳定**，
  *             且未来任何「看时间」的决策都必须从这里取而不许读时钟（core 禁止 IO）。
  */
@@ -114,7 +207,7 @@ export function decideAiMove(
   state: GameState,
   aiId: PlayerId,
   cards: Record<string, CardDef>,
-  _now: number,
+  now: number,
 ): AiMove | null {
   const me = state.players[aiId];
   if (!me || !state.started) return null;
@@ -161,8 +254,22 @@ export function decideAiMove(
     return { type: INTENTS.draw };
   }
 
-  // ④ 主要阶段：出一张付得起的牌；没有就推进。
+  // ④ 主要阶段：先问技能，再出牌，都没有就推进。
   if (state.phase === 'main') {
+    /*
+     * 技能**排在出牌之前**（#137 首轮实测修正）。
+     *
+     * 起初按 issue 的建议放在「主要阶段末尾」，跑 120 局出来发动率是 **0**：
+     * `maxCost` 是「本回合所有支付的总张数上限」，技能与出牌**共用**这份额度
+     * （`payCostCards` 与 `playRule` 记同一笔 `usedCostThisTurn`）——
+     * 等牌出到没得出了，额度也基本见底，2 费技能永远付不起。
+     *
+     * 所以改成先付技能、再用剩下的额度出牌。`effectsUsed` 保证每回合只发动一次，
+     * 付完后再问会立刻返回 null，不会重复扣费。
+     */
+    const skill = commanderSkillMove(state, aiId, cards, now);
+    if (skill) return skill;
+
     const full = me.zones.board.length >= BOARD_SLOTS;
     for (const cand of playableHand(me, cards)) {
       const def = defOf(cards, cand.defId);
@@ -207,12 +314,27 @@ export function decideAiMove(
 
       // 随从都动不了（场上空 / 全休眠）→ 指挥官攻击：每战斗阶段一次，不受前排限制（§6.1）。
       if (!me.commanderAttacked && me.zones.commander.length > 0) {
-        return { type: INTENTS.commanderAttack };
+        /*
+         * 星轨观测者Ⅰ：攻击时付 1 费展示（issue #137）。AI 以前从不带 `reveal`，
+         * 于是星轨的引擎永远不转 —— 层数涨不到 3 / 6，档位收益全拿不到。
+         * 付不付得起仍由效果模块判定（`aiCouldUse`），这里只负责把它变成 payload。
+         */
+        const reveal = commanderHint(state, aiId, cards, now)?.via === 'attack-reveal';
+        return reveal
+          ? { type: INTENTS.commanderAttack, payload: { reveal: true } }
+          : { type: INTENTS.commanderAttack };
       }
     }
     return { type: INTENTS.phaseAdvance };
   }
 
-  // ⑥ 充能 / 结束阶段 → 推进（充能是自动收入，手牌充能 AI 不用）。
+  // ⑥ 充能阶段：把本回合打不出的高费随从换费用（#137）。
+  if (state.phase === 'charge') {
+    const uids = chargeCandidates(state, aiId, cards);
+    if (uids.length > 0) return { type: INTENTS.charge, payload: { uids } };
+    return { type: INTENTS.phaseAdvance };
+  }
+
+  // ⑦ 结束阶段 → 推进。
   return { type: INTENTS.phaseAdvance };
 }

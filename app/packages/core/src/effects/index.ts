@@ -67,6 +67,24 @@ import {
   putRevealedBottom,
 } from './primitives.js';
 
+/**
+ * AI 侧「这个技能现在能不能、值不值得发动」的提示（issue #137 / D-288）。
+ *
+ * ## 为什么把门槛留在效果模块里
+ *
+ * 发动条件（除外区炎刃档位、需要未冻结的敌方随从、费用够不够）是**卡面规则**，
+ * 不是 AI 的策略。让 `ai.ts` 抄一份数字，等于把同一条规则写两遍 ——
+ * #137 明确要求「不要抄这里的数字写死」，因为 #138 会把档位整体前移
+ * （霜痕 3→2 等），抄过去的那份必然滞后。
+ *
+ * 所以：效果模块自己回答「现在发动有意义吗」，`ai.ts` 只负责「什么时候问」。
+ */
+export type AiUseHint =
+  /** 走 `effect:activate`（统领Ⅰ / 裁决官Ⅰ）。 */
+  | { via: 'activate'; effectId: string }
+  /** 走 `commander:attack` 的付费前置（星轨观测者Ⅰ：付 1 费展示）。 */
+  | { via: 'attack-reveal' };
+
 /** 效果模块接口。 */
 export interface EffectModule {
   activate?(
@@ -81,6 +99,14 @@ export interface EffectModule {
     ctx: RuleContext,
     pending: PendingChoice,
   ): Result<GameEvent[], Rejection>;
+  /**
+   * AI 用不用这个技能（issue #137）—— 返回 `null` = 现在发动没有意义或付不起。
+   *
+   * **只读**：不产生事件、不改状态。玩家自己点按钮时的权威校验仍由 `activate` /
+   * `onCommanderAttack` 自己做（`usedGuard` + `payCostCards`），这里只是把它们的前提
+   * 用同一份常量复述给 AI。
+   */
+  aiCouldUse?(state: GameState, ctx: RuleContext, owner: PlayerId): AiUseHint | null;
   /** 登场时（含效果召唤）。返回的事件可含 `choice:pending`。 */
   onSummon?(state: GameState, ctx: RuleContext, owner: PlayerId, uid: string): GameEvent[];
   /** 法术 / 设置法术出牌后结算（卡已进入法术区）。 */
@@ -228,6 +254,17 @@ export function payCostCards(
   const moves = p.zones.cost.slice(0, count).map((c) => moved(at, playerId, c.uid, 'cost', 'graveyard'));
   if (count === 0) return moves;
   return [...moves, ev(at, 'cost:spent', { playerId, amount: count })];
+}
+
+/**
+ * 「这笔费用付得起吗」—— 给 AI 的只读预判（issue #137）。
+ *
+ * **故意复用 `payCostCards` 而不是重写一套判断**：费用区张数与 `maxCost` 记帐
+ * 这两条口径若抄第二遍，迟早分叉（这个项目已经踩过 4 次「两处都对的契约拼起来会漏」）。
+ * `payCostCards` 是纯函数，传入 `at = 0` 拿到的事件被丢弃即可。
+ */
+export function canPayCost(p: PlayerState, count: number): boolean {
+  return Array.isArray(payCostCards(0, p.id, p, count));
 }
 
 /** 待定选择事件（进状态必须走事件，ADR-0023 §2）。 */
