@@ -533,7 +533,7 @@ describe('星轨（docs/17 / D-230）', () => {
     });
     let st = run(s, intent('p1', INTENTS.play, { uid: 'h1' }));
     expect(st.players['p1']!.nextMinionDiscount).toBe(1);
-    // bladeKnight 卡面 3 费，随从减 1 = 2；再减 1 = 1
+    // bladeKnight 卡面 2 费（D-313 烘焙后）；再吃「下一张随从 −1」= 1
     const before = st.players['p1']!.zones.cost.length;
     st = run(st, intent('p1', INTENTS.play, { uid: 'h2' }));
     expect(before - st.players['p1']!.zones.cost.length).toBe(1);

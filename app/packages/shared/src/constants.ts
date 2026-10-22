@@ -223,12 +223,6 @@ export const DRAW_PER_TURN = 2;
 export const COST_INCOME_PER_TURN = 2;
 
 /**
- * 随从减费（docs/16 §4）：实际支付 = max(0, 卡面费用 − 1)。
- * 只作用于随从；法术与设置法术按卡面值（§4.1）。
- */
-export const MINION_COST_DISCOUNT = 1;
-
-/**
  * 指挥官攻击的**基础**伤害（docs/16 §6.1）—— 不比较力量、不受前排限制。
  *
  * ⚠️ 它只是基数：实际伤害 = `COMMANDER_ATTACK_DAMAGE + commanderDamageBonus`

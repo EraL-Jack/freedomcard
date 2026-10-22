@@ -373,7 +373,7 @@ function CardOf(props: {
   const power = core.unitPower(props.state, CARD_POOL, props.card.uid) ?? def?.power ?? 0;
   /**
    * 局内卡面显示**实际值**（Era 2026-10-21 拍板，D-232）：
-   *  - 费用 = 实际支付（随从 −1，`costToPay`），不是卡面印的 `cost`；
+   *  - 费用 = 实际支付（`costToPay`，D-313 之后恒等于卡面 `cost`）；
    *  - 伤害 = 打脸实际结算（`faceDamageOf`，按**当前**力量分档），只在随从上有意义。
    * 数值算法一律走 core 的导出函数，不在客户端重写一遍口径。
    */
@@ -676,7 +676,9 @@ function BoardSlot(props: {
         <div className="w-14 sm:w-16">
           <CardTile
             name={CARD_POOL[props.ghost.defId]?.name ?? props.ghost.defId}
-            cost={CARD_POOL[props.ghost.defId]?.cost ?? 0}
+            cost={
+              CARD_POOL[props.ghost.defId] ? core.costToPay(CARD_POOL[props.ghost.defId]!) : 0
+            }
             power={CARD_POOL[props.ghost.defId]?.power ?? 0}
             kind={CARD_POOL[props.ghost.defId]?.type ?? 'minion'}
             fxClass="anim-destroy"
@@ -1563,7 +1565,7 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   const atSlot = (zone: readonly CardInstance[], i: number): CardInstance | undefined =>
     zone.find((c, idx) => (c.slot ?? idx) === i);
 
-  /** 本次出牌要支付几张 —— 与服务端同一口径（随从减 1，再吃「下一张随从减费」）。 */
+  /** 本次出牌要支付几张 —— 与服务端同一口径（卡面费用，再吃「下一张随从减费」）。 */
   const payFor = (card: CardInstance): number => {
     const def = CARD_POOL[card.defId];
     if (!def) return 0;

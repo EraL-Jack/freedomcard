@@ -176,7 +176,7 @@ Windows 需放行 5173 / 3000 端口的入站规则（网络配置文件为 Publ
 | `pnpm dev` | 并行起服务端与客户端 |
 | `pnpm typecheck` | 全量 `tsc --noEmit` |
 | `pnpm lint` | ESLint（flat config） |
-| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层 + `client` 纯逻辑，2026-10-22 时点 **504 passed**（core 257 + server 167 + client 80，另有 1 条 skipped 基线采样） |
+| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层 + `client` 纯逻辑，2026-10-22 时点 **506 passed**（core 259 + server 167 + client 80，另有 1 条 skipped 基线采样） |
 | `pnpm --filter @app/client run test:coverage` | client 覆盖率（v8）。目前只覆盖 `selectors` / `labels` / `log` 三个纯逻辑模块；组件层由 E2E 兜 |
 | `pnpm build` | 构建客户端到 `packages/client/dist` |
 | `pnpm --filter @app/client test:e2e` | 端到端（Playwright）：**79 条** —— 房间流程 / 首页与对战桌布局 / 视口溢出 / 联机开局 / 回合操作 / 攻击与指挥官伤害 / 卡组编辑 / 人机对战 / 人机房换牌阶段与倒计时 / 回合边界的指引不变量 / 堆叠区浮窗 / 新手引导 / 390px 日志抽屉 / 断线与点击反馈 / 危险操作 / 打磨观感 / 结算覆盖层 / 再来一局 / 计时回弹 / 在途反馈 / 确定性守卫 |
@@ -530,6 +530,14 @@ app/
 32. **指挥官区只显示血量，不显示张数**（#159-2 / D-312）：
     它恒有 1 张，那个 `1` 紧跟在「血 10」后面会被读成两位数。张数只在
     看不到卡的区域（弃牌 / 除外 / 费用区）显示。
+
+33. **卡面费用就是实际支付**（#164 / D-313 / ADR-0079）：
+    随从原来的「−1 费」已烘焙进 `cards.ts` 的 `cost`（24 张），
+    `MINION_COST_DISCOUNT` 常量已删除，`costToPay(def)` 恒等于 `def.cost`。
+    卡组编辑 / 局内手牌 / 卡牌详情 / 选择弹窗从此是同一个数字。
+    ⚠️ **不要再加任何全局减费** —— 调价请直接改卡面 `cost`，
+    定价约定写在 `docs/18 §3.6`。效果类临时减费（星轨传令）不受影响。
+    0 费随从因此从 6 张变 12 张（占 40%），这是原来的事实被写到明面上，强度没变。
 
 ## 11. 本轮验收清单（D-137 ~ D-149）
 

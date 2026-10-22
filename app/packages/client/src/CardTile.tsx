@@ -45,7 +45,12 @@ const KIND_TAG: Readonly<Record<CardType, string>> = {
 
 export interface CardTileProps {
   name: string;
-  /** 显示费用。**局内传实际支付值**（`costToPay`，随从 −1），卡组编辑等「构筑视角」传卡面值（D-232）。 */
+  /**
+   * 显示费用。局内传 `costToPay(def)`，卡组编辑传 `def.cost`。
+   *
+   * D-313（#164）之后两者**必然相等**（随从 −1 费已烘焙进卡面），
+   * 所以同一个数字走到哪都是它；保留两个入口只是为了让「实付」仍有单一出口。
+   */
   cost: number;
   power: number;
   /**

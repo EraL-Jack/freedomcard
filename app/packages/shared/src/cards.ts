@@ -15,8 +15,8 @@ import type { CardDef } from './types.js';
  * ## 纪律
  *
  * - `text` 只放**效果描述**，**不写费用 / 力量 / 伤害数值**（D-232）：
- *   数值由 `cost` / `power` / `damage` 字段渲染，局内显示的还是**实际值**
- *   （随从 −1 费、打脸伤害按力量分档）。文本里再抄一份必然与结算不一致 ——
+ *   数值由 `cost` / `power` / `damage` 字段渲染，局内显示的就是**实际值**
+ *   （`cost` 即实付，D-313；打脸伤害按力量分档）。文本里再抄一份必然与结算不一致 ——
  *   这正是「卡面写伤害值1、实际打 2 点」那类问题的根源（PM-02 / AR-22）。
  * - `text` 是**卡面原文**，供 UI 展示与人工核对；效果的可执行实现在
  *   `core/src/effects/*`（一卡一模块），不解析此文本。
@@ -57,7 +57,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     defId: 'bladeVanguard',
     name: '炎刃军先锋',
     type: 'minion',
-    cost: 1,
+    cost: 0,
     power: 2,
   },
 
@@ -77,7 +77,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     defId: 'bladeTactician',
     name: '炎刃军师',
     type: 'minion',
-    cost: 1,
+    cost: 0,
     power: 1,
     // Era 原文不动（docs/12 §7.5 例外清单）
     text: [
@@ -108,7 +108,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     defId: 'bladeGuard',
     name: '炎刃卫士',
     type: 'minion',
-    cost: 2,
+    cost: 1,
     power: 2,
     keywords: [KEYWORD_TAUNT],
     text: [
@@ -120,7 +120,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     defId: 'bladeKnight',
     name: '炎刃骑士',
     type: 'minion',
-    cost: 3,
+    cost: 2,
     power: 4,
     text: [
       '攻击时：你可以将弃牌区 1 张「炎刃」卡除外；若如此做，本回合此卡力量值 +1。',
@@ -131,7 +131,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     defId: 'bladeCaptain',
     name: '炎刃队长',
     type: 'minion',
-    cost: 4,
+    cost: 3,
     power: 5,
     text: [
       '其他己方「炎刃」随从登场时：该随从本回合力量值 +1。',
@@ -142,7 +142,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     defId: 'bladeVeteran',
     name: '炎刃老兵',
     type: 'minion',
-    cost: 5,
+    cost: 4,
     power: 6,
     text: [
       '登场时：你可以将弃牌区 1 张「炎刃」卡除外；若如此做，抽 1 张。',
@@ -153,7 +153,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     defId: 'bladeChampion',
     name: '炎刃勇士',
     type: 'minion',
-    cost: 6,
+    cost: 5,
     power: 7,
     text: [
       '登场时：你的除外区每有 3 张「炎刃」卡，本回合此卡力量值 +1（最多 +3）。',
@@ -194,7 +194,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     defId: 'bladePhoenix',
     name: '炎刃凤凰',
     type: 'minion',
-    cost: 7,
+    cost: 6,
     power: 7,
     damage: 2,
     text: [
@@ -237,7 +237,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     defId: 'frostApprentice',
     name: '霜律学徒',
     type: 'minion',
-    cost: 1,
+    cost: 0,
     power: 1,
     text: '登场时：冻结 1 个未冻结的敌方随从。',
   },
@@ -246,7 +246,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     defId: 'frostWarden',
     name: '霜律戍卫',
     type: 'minion',
-    cost: 1,
+    cost: 0,
     power: 1,
     keywords: [KEYWORD_TAUNT],
     text: [
@@ -258,7 +258,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     defId: 'frostBinder',
     name: '霜律缚锁者',
     type: 'minion',
-    cost: 2,
+    cost: 1,
     power: 2,
     text: [
       '登场时：冻结 1 个敌方随从；若该随从已处于冻结状态，改为抽 1 张。',
@@ -269,7 +269,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     defId: 'frostLancer',
     name: '霜律长枪兵',
     type: 'minion',
-    cost: 2,
+    cost: 1,
     power: 2,
     text: [
       '攻击时：若目标处于冻结状态，本回合此卡力量值 +2。',
@@ -280,7 +280,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     defId: 'frostEnforcer',
     name: '霜律执法者',
     type: 'minion',
-    cost: 3,
+    cost: 2,
     power: 3,
     text: [
       '敌方随从被冻结时：本回合此卡力量值 +1（每回合最多 +2）。',
@@ -291,7 +291,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     defId: 'frostNightwatch',
     name: '霜律守夜人',
     type: 'minion',
-    cost: 4,
+    cost: 3,
     power: 4,
     text: '登场时：冻结至多 2 个未冻结的敌方随从。',
   },
@@ -300,7 +300,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     defId: 'frostJailer',
     name: '霜律典狱长',
     type: 'minion',
-    cost: 5,
+    cost: 4,
     power: 5,
     text: '登场时：冻结所有敌方随从。',
   },
@@ -309,7 +309,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     defId: 'frostWinterblade',
     name: '霜律凛冬之刃',
     type: 'minion',
-    cost: 6,
+    cost: 5,
     power: 6,
     damage: 2,
     text: '登场时：冻结所有敌方随从。',
@@ -395,7 +395,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     defId: 'starAcolyte',
     name: '星轨侍僧',
     type: 'minion',
-    cost: 1,
+    cost: 0,
     power: 1,
     text: '展示时：本回合你的指挥官伤害值 +1（不可叠加）。',
   },
@@ -404,7 +404,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     defId: 'starArcher',
     name: '星轨弓手',
     type: 'minion',
-    cost: 1,
+    cost: 0,
     power: 2,
     text: [
       '展示时：对敌方指挥官造成 1 点伤害（每回合最多触发 1 次）。',
@@ -415,7 +415,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     defId: 'starGuard',
     name: '星轨守卫',
     type: 'minion',
-    cost: 2,
+    cost: 1,
     power: 2,
     keywords: [KEYWORD_TAUNT],
     text: '展示时：抽 1 张。',
@@ -425,7 +425,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     defId: 'starWeaver',
     name: '星轨织者',
     type: 'minion',
-    cost: 2,
+    cost: 1,
     power: 2,
     text: '展示时：召唤 1 个星灵（力量值1 / 伤害值1）。',
   },
@@ -434,7 +434,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     defId: 'starLancer',
     name: '星轨枪手',
     type: 'minion',
-    cost: 3,
+    cost: 2,
     power: 3,
     text: '展示时：本回合此卡力量值 +2。',
   },
@@ -443,7 +443,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     defId: 'starHerald',
     name: '星轨传令',
     type: 'minion',
-    cost: 3,
+    cost: 2,
     power: 3,
     text: '展示时：本回合你打出的下一张随从费用 -1。',
   },
@@ -452,7 +452,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     defId: 'starGiant',
     name: '星轨巨像',
     type: 'minion',
-    cost: 5,
+    cost: 4,
     power: 6,
     text: '展示时：本回合此卡力量值 +1。',
   },
@@ -461,7 +461,7 @@ export const CARD_POOL: Record<string, CardDef> = {
     defId: 'starSovereign',
     name: '星轨君王',
     type: 'minion',
-    cost: 6,
+    cost: 5,
     power: 7,
     damage: 2,
     text: '展示时：召唤 1 个星灵（力量值3 / 伤害值3）。',
