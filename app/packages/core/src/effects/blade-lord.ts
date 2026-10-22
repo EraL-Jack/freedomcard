@@ -1,25 +1,25 @@
 /**
  * 炎刃军统领（bladeLord）的效果 Ⅰ / Ⅱ —— ADR-0023 §5。
  *
- * 卡面原文（docs/10 转录）：
+ * 卡面原文（docs/10 转录，门槛于 D-290 前移 —— docs/16 §15 C-02）：
  *  Ⅰ 【2】每回合一次，可以根据除外区的卡名包含炎刃的卡的数量执行以下最多3个效果，每个效果最多一次：
  *    1个：从弃牌区选择一个力量值在除外区炎刃数量等级以下的随从，召唤
- *    3个：选择一个随从，本回合力量值+1
- *    5个：选择一个力量值在除外区炎刃数量等级以下的随从，破坏
- *    7个：选择一个随从，本回合对指挥官伤害+1
- *    9个：选择一个随从，一回合一次，攻击后重置（Era 2026-10-19 修订描述）
+ *    2个：选择一个随从，本回合力量值+1
+ *    3个：选择一个力量值在除外区炎刃数量等级以下的随从，破坏
+ *    5个：选择一个随从，本回合对指挥官伤害+1
+ *    7个：选择一个随从，一回合一次，攻击后重置（Era 2026-10-19 修订描述）
  *  Ⅱ 每回合一次，可以将一张手牌除外。
  *
  * 口径（Era 2026-10-18 授权时给定，2026-10-19 拍板修订）：
  *  - 【2】 = 从费用区支付 2 张卡（与出牌支付同路径）；
  *  - 「每回合一次」在自己回合开始时重置（reducer 在进入己方充能阶段清 `effectsUsed`）；
  *  - 「选择一个随从」需要目标选择 → `pendingChoice`；
- *  - 「选择一个随从」：增益类（3/7/9 档）**限己方**（H22）；破坏类（5 档）**双方场上**
+ *  - 「选择一个随从」：增益类（第 2 / 4 / 5 档）**限己方**（H22）；破坏类（第 3 档）**双方场上**
  *    （Era 2026-10-21 issue #105 修订 —— 破坏只给己方等于只能自杀）；
- *  - 9 档「攻击后重置」**一回合一次**，生效一次即消耗（H23，Era 2026-10-19 拍板）。
+ *  - 第 5 档「攻击后重置」**一回合一次**，生效一次即消耗（H23，Era 2026-10-19 拍板）。
  */
 
-import { BOARD_SLOTS, RULE_ERRORS } from '@app/shared/constants';
+import { BLADE_EXILE_TIERS, BOARD_SLOTS, RULE_ERRORS } from '@app/shared/constants';
 import type { GameEvent, GameState, PendingChoice, RuleContext } from '@app/shared/types';
 
 import { baseGuard, ev, firstRejection, locate, moved, playerOf, reject, strArg } from '../ops.js';
@@ -38,9 +38,44 @@ import {
   type EffectModule,
 } from './index.js';
 
-/** 子效果编号 → 解锁所需除外区炎刃数。 */
-const LEVELS = { l1: 1, l3: 3, l5: 5, l7: 7, l9: 9 } as const;
+/**
+ * 子效果编号 → 解锁所需除外区炎刃数。
+ *
+ * 键名用**序号**（`tier1`…`tier5`）而不是门槛数字（旧版是 `l1/l3/l5/l7/l9`）：
+ * 门槛会随数值调整前移（#138 就整体前移了一档），键名带数字等于埋一颗
+ * 「符号与实现相反」的雷 —— `l9: 7` 这种写法迟早被当成 bug 或漏洞。
+ * 数字只出现在右侧，且来自 `shared` 的 `BLADE_EXILE_TIERS`（客户端菜单同源）。
+ */
+const LEVELS = {
+  tier1: BLADE_EXILE_TIERS[0],
+  tier2: BLADE_EXILE_TIERS[1],
+  tier3: BLADE_EXILE_TIERS[2],
+  tier4: BLADE_EXILE_TIERS[3],
+  tier5: BLADE_EXILE_TIERS[4],
+} as const;
 type SubId = keyof typeof LEVELS;
+
+/**
+ * 旧编号 → 新编号 —— **入站**兼容层（出站 `options` 一律新编号）。
+ *
+ * 编号是 `pendingChoice.options` 里的契约值，会随回放与重放一起流回来。
+ * 认旧编号的意义是「只改标识符、不改数值」这类重构不需要清库。
+ *
+ * ⚠️ 它**救不了 D-290 之前录的回放**：那一批的开局血量是 8，重算按 10 铺状态，
+ * `replay:verify` 在 `initialHash` 就报「开局哈希不一致」，根本走不到这里
+ * （README §10 第 17 条）。别把这段当成回放迁移方案。
+ */
+const LEGACY_SUB: Readonly<Record<string, SubId>> = {
+  l1: 'tier1',
+  l3: 'tier2',
+  l5: 'tier3',
+  l7: 'tier4',
+  l9: 'tier5',
+};
+
+function normalizeSub(raw: string): string {
+  return LEGACY_SUB[raw] ?? raw;
+}
 
 /** 一次发动最多执行的子效果数（卡面：最多3个）。 */
 const MAX_PICKS = 3;
@@ -73,10 +108,10 @@ function menuChoice(
 ): GameEvent {
   const p = playerOf(state, pendingPlayer(state, sourceUid));
   const bladeCount = p ? bladeExileCount(p, ctx.cards) : 0;
-  // 可选子效果 = 已解锁 ∧ 未选过；1 档还要求弃牌区里有合法随从且随从区有空位
+  // 可选子效果 = 已解锁 ∧ 未选过；第 1 档还要求弃牌区里有合法随从且随从区有空位
   const options = unlocked(bladeCount).filter((id) => {
     if (meta.used.includes(id)) return false;
-    if (id === 'l1' && p) {
+    if (id === 'tier1' && p) {
       return (
         p.zones.board.length < BOARD_SLOTS &&
         p.zones.graveyard.some((c) => {
@@ -108,9 +143,9 @@ export const bladeLordEffect: EffectModule = {
    * AI 何时该发动 Ⅰ（issue #137 / D-288）。
    *
    * 三个条件缺一不可，全部读本文件里的常量与既有助手 —— **不抄数字**：
-   *  - 除外区炎刃数达到 1 档（`LEVELS.l1`，`#138` 调档后自动跟随）；
+   *  - 除外区炎刃数达到第 1 档（`LEVELS.tier1`，门槛前移后自动跟随）；
    *  - 弃牌区里至少有一张力量值达标的随从、且随从区有空位 ——
-   *    否则付掉 2 费什么也拿不回来（1 档就是「从弃牌区召唤」）；
+   *    否则付掉 2 费什么也拿不回来（第 1 档就是「从弃牌区召唤」）；
    *  - 2 费付得起、本回合还没用过（`usedGuard`）。
    *
    * 「值不值得」的判断留给调用方：这里只回答「现在发动会不会打空」。
@@ -124,7 +159,7 @@ export const bladeLordEffect: EffectModule = {
     if (usedGuard(p, cmd.uid, '1')) return null;
     if (!canPayCost(p, commanderSkillCost(p))) return null;
     const bladeCount = bladeExileCount(p, ctx.cards);
-    if (bladeCount < LEVELS.l1) return null;
+    if (bladeCount < LEVELS.tier1) return null;
     if (p.zones.board.length >= BOARD_SLOTS) return null;
     const hasSummonTarget = p.zones.graveyard.some((c) => {
       const def = ctx.cards[c.defId];
@@ -198,7 +233,9 @@ export const bladeLordEffect: EffectModule = {
 
   choose(state, intent, ctx, pending) {
     const at = ctx.now;
-    const choice = strArg(intent.payload?.['choice']) ?? '';
+    // `blade-lord-2` 的选项是卡 uid，`normalizeSub` 对它们原样放行；
+    // 只有 `blade-lord-1` 的旧编号（`l1`…`l9`）需要翻译，见 `LEGACY_SUB`。
+    const choice = normalizeSub(strArg(intent.payload?.['choice']) ?? '');
     const me = intent.playerId;
 
     // Ⅱ：选一张手牌除外
@@ -258,25 +295,25 @@ export const bladeLordEffect: EffectModule = {
 
     const events: GameEvent[] = [];
     switch (sub) {
-      case 'l1': {
+      case 'tier1': {
         // 从弃牌区召唤到随从区
         events.push(moved(at, me, choice, 'graveyard', 'board'));
         // 登场触发器 + 登场效果（H28：需要选择的部分排队，等统领菜单结算完再触发）。
         events.push(...summonEntryEvents(at, state, me, choice, ctx));
         break;
       }
-      case 'l3':
+      case 'tier2':
         events.push(ev(at, 'unit:modified', { playerId: locate(state, choice)!.playerId, uid: choice, tempPower: 1 }));
         break;
-      case 'l5': {
+      case 'tier3': {
         const tgt = locate(state, choice)!;
         events.push(moved(at, tgt.playerId, choice, 'board', 'graveyard'));
         break;
       }
-      case 'l7':
+      case 'tier4':
         events.push(ev(at, 'unit:modified', { playerId: locate(state, choice)!.playerId, uid: choice, tempDamage: 1 }));
         break;
-      case 'l9':
+      case 'tier5':
         events.push(ev(at, 'unit:modified', { playerId: locate(state, choice)!.playerId, uid: choice, attackRefresh: true }));
         break;
     }
@@ -303,7 +340,7 @@ function targetCandidates(
   const p = playerOf(state, me);
   if (!p) return [];
   // H22（Era 2026-10-19 拍板，2026-10-21 按 issue #105 修订）：
-  // 「选择一个随从」中**增益类**（3/7/9 档）限己方；**破坏类**（5 档）候选是双方场上。
+  // 「选择一个随从」中**增益类**（第 2 / 4 / 5 档）限己方；**破坏类**（第 3 档）候选是双方场上。
   const ownBoard = p.zones.board.map((c) => ({ uid: c.uid, defId: c.defId }));
   const withinBlade = (list: readonly { uid: string; defId: string }[]): string[] =>
     list
@@ -313,7 +350,7 @@ function targetCandidates(
       })
       .map((c) => c.uid);
   switch (sub) {
-    case 'l1':
+    case 'tier1':
       // 弃牌区里的随从，力量值 ≤ 除外区炎刃数（弃牌区卡无临时修正，取卡面值）
       return p.zones.graveyard
         .filter((c) => {
@@ -321,16 +358,16 @@ function targetCandidates(
           return def?.type === 'minion' && def.power <= bladeCount;
         })
         .map((c) => c.uid);
-    case 'l5':
+    case 'tier3':
       // issue #105（Era 2026-10-21）：破坏**能给对手**，只给己方等于只能自杀。
-      // 候选顺序：先己方后对手，力量值一律按卡面值 ≤ 炎刃数（与 1 档 / 号令同口径）。
+      // 候选顺序：先己方后对手，力量值一律按卡面值 ≤ 炎刃数（与第 1 档 / 号令同口径）。
       return [
         ...withinBlade(ownBoard),
         ...withinBlade(enemyBoard(state, me).map((c) => ({ uid: c.uid, defId: c.defId }))),
       ];
-    case 'l3':
-    case 'l7':
-    case 'l9':
+    case 'tier2':
+    case 'tier4':
+    case 'tier5':
       // 增益类：己方任一随从（H22 未变）
       return ownBoard.map((c) => c.uid);
   }

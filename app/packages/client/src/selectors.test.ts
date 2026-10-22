@@ -297,7 +297,7 @@ describe('待定选择的阵营标注（issue #105）', () => {
       playerId: ME,
       kind: 'blade-lord-1',
       sourceUid: 'lord1',
-      options: ['l1', 'l3'],
+      options: ['tier1', 'tier2'],
     });
     expect(labels).toEqual({});
   });

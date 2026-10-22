@@ -12,6 +12,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { CardInstance, GameEvent, GameState, Intent, Phase, Zone } from '@app/shared/types';
+import { INITIAL_HEALTH } from '@app/shared/constants';
 import { CARD_POOL } from '@app/shared/cards';
 
 import { applyIntent, createInitialState, reduce, INTENTS } from '../index.js';
@@ -300,7 +301,7 @@ describe('星陨：固定 2 点直伤（不吃指挥官伤害加成）', () => {
       bonus: 5,
     });
     const after = run(s, intent('p1', INTENTS.play, { uid: 'h1' }));
-    expect(after.players['p2']!.health).toBe(6);
+    expect(after.players['p2']!.health).toBe(INITIAL_HEALTH - 2);
   });
 });
 

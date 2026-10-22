@@ -170,9 +170,13 @@ export const MAX_COST_CURVE = [1, 3, 5, 10] as const;
 export const BOARD_SLOTS = 3;
 
 /**
- * 初始血量 —— 8（docs/16 §1，ADR-0024）。9 血与 15 血版的模拟结论见 docs/13~15。
+ * 初始血量 —— **10**（docs/16 §15 C-01，Era 2026-10-22 批准；D-290）。
+ *
+ * 原为 8（ADR-0024 的 8 血版）。改 10 的理由与配套推论（治疗上限、伤害权重）
+ * 见 docs/16 §15.2 —— 那两条是**条文**，不是常量：治疗尚未实现，实现时按 10 走；
+ * 伤害权重按 10 血重估，但**第一版不回调卡池**（P-02 已定不动）。
  */
-export const INITIAL_HEALTH = 8;
+export const INITIAL_HEALTH = 10;
 
 /** 起手：先手 5 张（docs/16 §1）。 */
 export const INITIAL_HAND = 5;
@@ -212,10 +216,23 @@ export const COMMANDER_ATTACK_DAMAGE = 1;
 export const COMMANDER_SKILL_COST = 2;
 
 /**
- * 霜痕档位（docs/16 §6.3.3 / D-229）：霜痕 ≥ 3 → 抽 1；≥ 6 → 冻 2；≥ 9 → 冻 2 + 抽 1。
+ * 霜痕档位（docs/16 §6.3.3 / D-229，门槛于 D-290 前移）：
+ * 霜痕 ≥ 2 → 抽 1；≥ 4 → 冻 2；≥ 6 → 冻 2 + 抽 1。
  * 写成升序阈值，档位判定只需比较最大满足项。
+ *
+ * 原为 3/6/9（`docs/16 §15` C-03）。档位**效果与顺序一个没改**，只前移门槛。
  */
-export const FROST_MARK_TIERS = [3, 6, 9] as const;
+export const FROST_MARK_TIERS = [2, 4, 6] as const;
+
+/**
+ * 炎刃军统领 Ⅰ 的档位门槛（docs/16 §15 C-02，D-290）：
+ * 除外区「炎刃」卡达到 1 / 2 / 3 / 5 / 7 张时，逐档解锁 5 个子效果（效果与顺序不变）。
+ *
+ * 原为 1/3/5/7/9。放在 `shared` 而不是 `core` 的原因：**客户端的效果菜单要显示门槛**。
+ * 两处各写一份数字，迟早出现「菜单写 9、实装 7」——卡面文本第三处同理，
+ * 但卡面是散文（`cards.ts`），无法引用常量，只能在 `docs/16 §15.4` 记一句人工同步。
+ */
+export const BLADE_EXILE_TIERS = [1, 2, 3, 5, 7] as const;
 
 /**
  * 星轨档位（docs/17 §2.2 / D-230）：星轨 ≥ 3 → 展示 3 张；≥ 6 → 展示 4 张。

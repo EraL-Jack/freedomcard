@@ -127,15 +127,15 @@ describe('统领 Ⅰ：按除外区炎刃数分档', () => {
     s = run(s, intent('p1', INTENTS.effectActivate, { uid: 'lord1', effect: '1' }));
     expect(s.players['p1']!.zones.cost.length).toBe(0);
     expect(s.players['p1']!.zones.graveyard.length).toBe(3); // 2 张支付 + 原有 1 张
-    // 除外区 3 张炎刃 → 解锁 1 档与 3 档
+    // 除外区 3 张炎刃 → 解锁第 1/2/3 档（门槛 1/2/3）
     expect(s.pendingChoice?.kind).toBe('blade-lord-1');
-    expect(s.pendingChoice?.options).toEqual(['l1', 'l3']);
+    expect(s.pendingChoice?.options).toEqual(['tier1', 'tier2', 'tier3']);
   });
 
-  it('3 档：选择一个随从本回合力量值 +1（限己方，H22 —— Era 2026-10-19 拍板）', () => {
+  it('第 2 档（≥2 张）：选择一个随从本回合力量值 +1（限己方，H22 —— Era 2026-10-19 拍板）', () => {
     let s = base();
     s = run(s, intent('p1', INTENTS.effectActivate, { uid: 'lord1', effect: '1' }));
-    s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'l3' }));
+    s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'tier2' }));
     expect(s.pendingChoice?.kind).toBe('blade-lord-1-target');
     // H22：对方随从 fb1 不再是合法目标，候选只有己方 b1
     expect(s.pendingChoice?.options).toEqual(['b1']);
@@ -148,7 +148,7 @@ describe('统领 Ⅰ：按除外区炎刃数分档', () => {
     expect(s.pendingChoice).toBeNull();
   });
 
-  it('5 档：破坏力量值 ≤ 炎刃数的随从 —— 候选含对手场上（issue #105 / H22 修订）', () => {
+  it('第 3 档（≥3 张）：破坏力量值 ≤ 炎刃数的随从 —— 候选含对手场上（issue #105 / H22 修订）', () => {
     let s = craft({
       zones: {
         commander: [LORD],
@@ -160,7 +160,7 @@ describe('统领 Ⅰ：按除外区炎刃数分档', () => {
       foeZones: { board: [c('fb1', 'bladeKnight'), c('fb2', 'bladeVeteran')] },
     });
     s = run(s, intent('p1', INTENTS.effectActivate, { uid: 'lord1', effect: '1' }));
-    s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'l5' }));
+    s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'tier3' }));
     expect(s.pendingChoice?.kind).toBe('blade-lord-1-target');
     // 己方在前、对手在后；力量超标的对手随从 fb2 不出现
     expect(s.pendingChoice?.options).toEqual(['b1', 'fb1']);
@@ -173,7 +173,7 @@ describe('统领 Ⅰ：按除外区炎刃数分档', () => {
     expect(s.players['p1']!.zones.board.map((x) => x.uid)).toEqual(['b1']);
   });
 
-  it('5 档：也能破坏己方随从（候选是双方场上，不是只有对手）', () => {
+  it('第 3 档：也能破坏己方随从（候选是双方场上，不是只有对手）', () => {
     let s = craft({
       zones: {
         commander: [LORD],
@@ -184,35 +184,36 @@ describe('统领 Ⅰ：按除外区炎刃数分档', () => {
       foeZones: { board: [c('fb1', 'bladeKnight')] },
     });
     s = run(s, intent('p1', INTENTS.effectActivate, { uid: 'lord1', effect: '1' }));
-    s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'l5' }));
+    s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'tier3' }));
     s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'b1' }));
     expect(s.players['p1']!.zones.board).toHaveLength(0);
     expect(s.players['p1']!.zones.graveyard.map((x) => x.uid)).toContain('b1');
     expect(s.players['p2']!.zones.board.map((x) => x.uid)).toEqual(['fb1']);
   });
 
-  it('9 档：授予「一回合一次，攻击后重置」，候选限己方（H22/H23）', () => {
+  it('第 5 档（≥7 张）：授予「一回合一次，攻击后重置」，候选限己方（H22/H23）', () => {
     let s = craft({
       zones: {
         commander: [LORD],
         cost: [c('k1', 'bladeRecruit'), c('k2', 'bladeRecruit')],
-        exile: Array.from({ length: 9 }, (_, i) => c(`x${i}`, 'bladeVanguard')), // 9 张炎刃
+        // 门槛 1/2/3/5/7（D-290）：7 张是顶档的**下界**，多一张都不该有区别
+        exile: Array.from({ length: 7 }, (_, i) => c(`x${i}`, 'bladeVanguard')),
         board: [c('b1', 'bladeRecruit')],
       },
       foeZones: { board: [c('fb1', 'bladeKnight')] },
     });
     s = run(s, intent('p1', INTENTS.effectActivate, { uid: 'lord1', effect: '1' }));
-    s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'l9' }));
+    s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'tier5' }));
     expect(s.pendingChoice?.options).toEqual(['b1']); // 对方 fb1 不可选
 
     s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'b1' }));
     expect(s.players['p1']!.zones.board[0]!.attackRefresh).toBe(true);
   });
 
-  it('1 档：从弃牌区召唤力量值 ≤ 炎刃数的随从', () => {
+  it('第 1 档（≥1 张）：从弃牌区召唤力量值 ≤ 炎刃数的随从', () => {
     let s = base();
     s = run(s, intent('p1', INTENTS.effectActivate, { uid: 'lord1', effect: '1' }));
-    s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'l1' }));
+    s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'tier1' }));
     // 支付【2】进弃牌区的 k1/k2 也是合法候选（bladeRecruit power 1 ≤ 3）
     expect(s.pendingChoice?.options).toEqual(['g1', 'k1', 'k2']);
     s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'g1' }));
@@ -220,7 +221,7 @@ describe('统领 Ⅰ：按除外区炎刃数分档', () => {
     expect(s.players['p1']!.zones.graveyard.map((x) => x.uid)).not.toContain('g1');
   });
 
-  it('1 档召唤带登场选择的随从：选择排队，统领链结束后才触发（H28）', () => {
+  it('第 1 档召唤带登场选择的随从：选择排队，统领链结束后才触发（H28）', () => {
     // 夹具牌库全为炎刃卡 → 卫士登场磨到的一定是炎刃，必然弹「是否除外」。
     let s = craft({
       zones: {
@@ -232,7 +233,7 @@ describe('统领 Ⅰ：按除外区炎刃数分档', () => {
       },
     });
     s = run(s, intent('p1', INTENTS.effectActivate, { uid: 'lord1', effect: '1' }));
-    s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'l1' }));
+    s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'tier1' }));
     s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'g1' }));
 
     // 关键：卫士的登场选择**没有**覆盖统领菜单，而是入队
@@ -281,7 +282,7 @@ describe('统领 Ⅰ：按除外区炎刃数分档', () => {
   it('回合切换清空临时修正（「本回合」词缀，ADR-0023 §3）', () => {
     let s = base();
     s = run(s, intent('p1', INTENTS.effectActivate, { uid: 'lord1', effect: '1' }));
-    s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'l3' }));
+    s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'tier2' }));
     s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'b1' }));
     s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'pass' }));
     expect(unitPower(s, CARD_POOL, 'b1')).toBe(2);
@@ -292,7 +293,66 @@ describe('统领 Ⅰ：按除外区炎刃数分档', () => {
   });
 });
 
-describe('统领 9 档：「一回合一次，攻击后重置」（H23 —— Era 2026-10-19 拍板）', () => {
+/* -------------------- 档位门槛（D-290 / docs/16 §15 C-02） -------------------- */
+
+describe('统领Ⅰ档位门槛：1 / 2 / 3 / 5 / 7', () => {
+  /** 除外区 n 张炎刃时，发动菜单里能看到哪些档位。 */
+  const optionsAt = (n: number): string[] => {
+    const s = run(
+      craft({
+        zones: {
+          commander: [LORD],
+          cost: [c('k1', 'bladeRecruit'), c('k2', 'bladeRecruit')],
+          exile: Array.from({ length: n }, (_, i) => c(`x${i}`, 'bladeVanguard')),
+          board: [c('b1', 'bladeRecruit')],
+        },
+      }),
+      intent('p1', INTENTS.effectActivate, { uid: 'lord1', effect: '1' }),
+    );
+    return s.pendingChoice?.options ?? [];
+  };
+
+  it('逐张揭示，门槛正好落在 1/2/3/5/7', () => {
+    expect(optionsAt(1)).toEqual(['tier1']);
+    expect(optionsAt(2)).toEqual(['tier1', 'tier2']);
+    expect(optionsAt(3)).toEqual(['tier1', 'tier2', 'tier3']);
+    // 4 张不该多开一档（旧门槛 5 张，前移后是 5 张 —— 这里锁住「不多不少」）
+    expect(optionsAt(4)).toEqual(['tier1', 'tier2', 'tier3']);
+    expect(optionsAt(5)).toEqual(['tier1', 'tier2', 'tier3', 'tier4']);
+    expect(optionsAt(6)).toEqual(['tier1', 'tier2', 'tier3', 'tier4']);
+    expect(optionsAt(7)).toEqual(['tier1', 'tier2', 'tier3', 'tier4', 'tier5']);
+  });
+
+  /*
+   * 编号是 `pendingChoice.options` 里的契约值，会随回放流回来。改成序号之后，
+   * 旧编号仍须能作答 —— 这是「只改标识符、不改数值」这类重构的兜底。
+   * 只做**入站**兼容：出站（`options`）一律新编号。
+   *
+   * ⚠️ 这条不保证 D-290 之前录的回放能跑通：那批局的开局血量是 8，
+   * 重算按 10 铺状态，`initialHash` 第一步就分叉（README §10 第 17 条）。
+   */
+  it('旧编号 l1…l9 仍可作答（存量回放兼容）', () => {
+    let s = craft({
+      zones: {
+        commander: [LORD],
+        cost: [c('k1', 'bladeRecruit'), c('k2', 'bladeRecruit')],
+        exile: [c('x1', 'bladeVanguard'), c('x2', 'bladeScout'), c('x3', 'bladeOrder')],
+        board: [c('b1', 'bladeRecruit')],
+      },
+    });
+    s = run(s, intent('p1', INTENTS.effectActivate, { uid: 'lord1', effect: '1' }));
+    // 旧编号 l3 = 第 2 档（力量 +1）
+    s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'l3' }));
+    expect(s.pendingChoice?.kind).toBe('blade-lord-1-target');
+    expect(s.pendingChoice?.options).toEqual(['b1']);
+    s = run(s, intent('p1', INTENTS.effectChoose, { choice: 'b1' }));
+    expect(unitPower(s, CARD_POOL, 'b1')).toBe(2);
+    // 回到菜单时是**新编号**；已用过的档位不再列出（这里刚用过第 2 档）
+    expect(s.pendingChoice?.options).toEqual(['tier1', 'tier3']);
+  });
+});
+
+describe('统领第 5 档：「一回合一次，攻击后重置」（H23 —— Era 2026-10-19 拍板）', () => {
   const battle = () =>
     craft({
       phase: 'battle',
@@ -433,7 +493,7 @@ describe('回放：H28 排队序列', () => {
     });
     const intents: Intent[] = [
       intent('p1', INTENTS.effectActivate, { uid: 'lord1', effect: '1' }),
-      intent('p1', INTENTS.effectChoose, { choice: 'l1' }),
+      intent('p1', INTENTS.effectChoose, { choice: 'tier1' }),
       intent('p1', INTENTS.effectChoose, { choice: 'g1' }), // 卫士登场 → 选择入队
       intent('p1', INTENTS.effectChoose, { choice: 'pass' }), // 统领链结束 → 出队
       intent('p1', INTENTS.effectChoose, { choice: 'pass' }), // 卫士放弃

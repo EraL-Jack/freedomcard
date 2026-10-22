@@ -21,9 +21,16 @@
  * | 技能发动 | **被接受的** `effect:activate`（统领/裁决官）+ 带 `reveal` 的 `commander:attack`（观测者） |
  * | 手牌充能 | 被接受的 `charge:put` 里提交的随从张数 |
  * | 先手胜率 | `start` 之后 `seats[0]` 的胜场占比（座位由掷骰重排，不能按入参猜） |
+ * | 平均轮数 | `state.turn` ÷ 2 —— `turn` 是**玩家回合**计数，一轮 = 双方各一个回合 |
+ * | 顶档可达率 | 该体系的对局里，「除外区炎刃数」曾达到 `BLADE_EXILE_TIERS` 顶档 / 「霜痕」曾达到 `FROST_MARK_TIERS` 顶档的占比。看**峰值**，不看结算余量 |
+ * | 体系胜率 | 按指挥官反查体系后汇总（`FACTION_BY_COMMANDER`）；镜像局两边各记一场 |
+ * | 空过率 | 玩家回合里没有被接受的 出牌 / 技能 / 攻击 的占比。**充能不算动作** —— 它是强制的，拿来充数会让空过率恒为 0。换牌阶段不计回合 |
  *
- * 三条指标都按「**意图被接受**」计数，不看事件流里的 `effect:used` ——
+ * 前三条按「**意图被接受**」计数，不看事件流里的 `effect:used` ——
  * 后者的键同时被被动触发器（执法者加霜痕、军旗抽牌）使用，按它统计会把被动算成主动。
+ *
+ * 后三条是 **issue #138 的验收线**（`docs/16 §15.4`），原来的骨架只统计前三条，
+ * 导致 §15.4.1 只能写「未测」。这里补齐 —— 指标定义写死在本文件，别在报告里另起口径。
  */
 
 import { describe, expect, it } from 'vitest';
@@ -40,6 +47,9 @@ import {
 import type { GameState } from '@app/shared/types';
 
 import { decideAiMove } from './ai.js';
+import { BLADE_EXILE_TIERS, FROST_MARK_TIERS } from '@app/shared/constants';
+
+import { bladeExileCount } from './effects/index.js';
 import { applyIntent, reduce, INTENTS } from './index.js';
 import { createInitialState } from './state.js';
 
@@ -62,10 +72,33 @@ interface GameStat {
   /** 被接受的充能张数（双方合计）。 */
   charges: number;
   winner: string | null;
+  /** 胜者座位（0 = `seats[0]`）；平局为 `null`。 */
+  winnerSeat: 0 | 1 | null;
   /** 先手方（`start` 之后的 `seats[0]`）。 */
   firstSeat: string;
   turns: number;
+  /** 每个座位**曾经达到**的最大除外区炎刃数（炎刃顶档可达率）。 */
+  maxBlade: [number, number];
+  /** 每个座位**曾经达到**的最大霜痕层数（霜律顶档可达率）。 */
+  maxFrost: [number, number];
+  /** 玩家回合数（不含换牌阶段）。 */
+  playerTurns: number;
+  /** 其中「什么也没做」（无出牌 / 技能 / 攻击）的回合数。 */
+  idleTurns: number;
+  /**
+   * 其中**一张牌都没打出**（`play` 为 0）的回合数 —— 与 `docs/13`「空过玩家回合占比」
+   * 同口径。留着它当交叉验证：若 `idleTurns` 恒为 0 而这里不为 0，说明计数机制在跑，
+   * 只是 AI 确实每回合都有动作（0% 是真的，不是没测）。
+   */
+  idlePlayTurns: number;
 }
+
+/** 指挥官 defId → 体系名 —— 体系胜率 / 顶档可达率按它汇总。 */
+const FACTION_BY_COMMANDER: Readonly<Record<string, string>> = {
+  [DEFAULT_COMMANDER_ID]: '炎刃',
+  [FROST_COMMANDER_ID]: '霜律',
+  [STAR_COMMANDER_ID]: '星轨',
+};
 
 const CTX = { now: 1000, cards: CARD_POOL };
 
@@ -102,6 +135,55 @@ function playOne(seed: number, decks: [string[], string[]], cmds: [string, strin
 
   let skillUses = 0;
   let charges = 0;
+  const maxBlade: [number, number] = [0, 0];
+  const maxFrost: [number, number] = [0, 0];
+  let playerTurns = 0;
+  let idleTurns = 0;
+  let idlePlayTurns = 0;
+
+  /** 采样「体系资源峰值」—— 顶档可达率看的是**曾经达到过**，不是结算时的余量。 */
+  const sample = (st: GameState): void => {
+    for (let i = 0; i < 2; i++) {
+      const id = st.seats[i];
+      const p = id === undefined ? undefined : st.players[id];
+      if (!p) continue;
+      maxBlade[i] = Math.max(maxBlade[i] ?? 0, bladeExileCount(p, CARD_POOL));
+      maxFrost[i] = Math.max(maxFrost[i] ?? 0, p.frostMark);
+    }
+  };
+
+  /*
+   * 回合边界记账（空过率）。一个玩家回合里「什么也没做」= 没有被接受的
+   * 出牌 / 技能 / 攻击。充能**不算**动作（强制动作，算进去空过率恒为 0）。
+   * 换牌阶段不是回合，整段跳过。
+   */
+  let turnKey = `${s.turn}:${s.activeSeat}`;
+  let turnIsMulligan = s.phase === 'mulligan';
+  let turnActed = false;
+  let turnPlayed = false;
+  const closeTurn = (): void => {
+    if (turnIsMulligan) return;
+    playerTurns += 1;
+    if (!turnActed) idleTurns += 1;
+    if (!turnPlayed) idlePlayTurns += 1;
+  };
+  const syncTurn = (st: GameState): void => {
+    const key = `${st.turn}:${st.activeSeat}`;
+    if (key === turnKey) return;
+    closeTurn();
+    turnKey = key;
+    turnIsMulligan = st.phase === 'mulligan';
+    turnActed = false;
+    turnPlayed = false;
+  };
+  const ACTIONS: ReadonlySet<string> = new Set([
+    INTENTS.play,
+    INTENTS.attack,
+    INTENTS.commanderAttack,
+    INTENTS.effectActivate,
+  ]);
+
+  sample(s);
 
   for (let steps = 0; steps < 4000; steps++) {
     if (s.winner !== null || s.draw) break;
@@ -126,16 +208,37 @@ function playOne(seed: number, decks: [string[], string[]], cmds: [string, strin
         const uids = move.payload?.['uids'];
         charges += Array.isArray(uids) ? uids.length : 0;
       }
+      if (ACTIONS.has(move.type)) turnActed = true;
+      if (move.type === INTENTS.play) turnPlayed = true;
       s = next;
+      sample(s);
+      syncTurn(s);
       continue;
     }
     // 与服务器同一条兜底：被拒就推进阶段，绝不原地重试。
     const fallback = fire(s, INTENTS.phaseAdvance, actor);
     if (!fallback) break;
     s = fallback;
+    syncTurn(s);
   }
+  closeTurn();
 
-  return { skillUses, charges, winner: s.winner, firstSeat, turns: s.turn };
+  const winnerSeat: 0 | 1 | null =
+    s.winner === null ? null : s.seats[0] === s.winner ? 0 : 1;
+
+  return {
+    skillUses,
+    charges,
+    winner: s.winner,
+    winnerSeat,
+    firstSeat,
+    turns: s.turn,
+    maxBlade,
+    maxFrost,
+    playerTurns,
+    idleTurns,
+    idlePlayTurns,
+  };
 }
 
 interface PairReport {
@@ -157,60 +260,134 @@ const PAIRS: { name: string; decks: [string[], string[]]; cmds: [string, string]
   { name: '星轨 vs 炎刃', decks: [STAR_MAIN_DECK as string[], DEFAULT_MAIN_DECK as string[]], cmds: [STAR_COMMANDER_ID, DEFAULT_COMMANDER_ID] },
 ];
 
-describe.skipIf(!BASELINE)('AI 基线（issue #137 验收）', () => {
-  it(`${PAIRS.length} 组 × ${GAMES_PER_PAIR} 局：技能有被用起来，先手胜率落在 40–60%`, () => {
-    const reports: PairReport[] = [];
+describe.skipIf(!BASELINE)('AI 基线（issue #137 / #138 验收）', () => {
+  it(
+    `${PAIRS.length} 组 × ${GAMES_PER_PAIR} 局：技能用起来了，轮数 / 体系胜率 / 空过率落在 \u00a715.4`,
+    () => {
+      const reports: PairReport[] = [];
+      /** 体系汇总：出场人次 / 胜场 / 顶档达到人次。 */
+      const faction = new Map<string, { games: number; wins: number; top: number }>();
+      let idleTotal = 0;
+      let idlePlayTotal = 0;
+      let turnTotal = 0;
 
-    for (const pair of PAIRS) {
-      let skill = 0;
-      let charge = 0;
-      let firstWins = 0;
-      let turns = 0;
-      let unfinished = 0;
+      // 顶档门槛只从常量取，不在报告里另写一遍数字
+      const BLADE_TOP: number = BLADE_EXILE_TIERS[BLADE_EXILE_TIERS.length - 1] ?? 1;
+      const FROST_TOP: number = FROST_MARK_TIERS[FROST_MARK_TIERS.length - 1] ?? 1;
 
-      for (let i = 0; i < GAMES_PER_PAIR; i++) {
-        // 固定种子区间：同一份代码重跑结果完全一致，便于对比前后两版本
-        const stat = playOne(20261022 + i, pair.decks, pair.cmds);
-        skill += stat.skillUses;
-        charge += stat.charges;
-        turns += stat.turns;
-        if (stat.winner === null) unfinished += 1;
-        else if (stat.winner === stat.firstSeat) firstWins += 1;
+      for (const pair of PAIRS) {
+        let skill = 0;
+        let charge = 0;
+        let firstWins = 0;
+        let turns = 0;
+        let unfinished = 0;
+        let idle = 0;
+        let idlePlay = 0;
+        let playerTurns = 0;
+
+        for (let i = 0; i < GAMES_PER_PAIR; i++) {
+          // 固定种子区间：同一份代码重跑结果完全一致，便于对比前后两版本
+          const stat = playOne(20261022 + i, pair.decks, pair.cmds);
+          skill += stat.skillUses;
+          charge += stat.charges;
+          turns += stat.turns;
+          idle += stat.idleTurns;
+          idlePlay += stat.idlePlayTurns;
+          playerTurns += stat.playerTurns;
+          if (stat.winner === null) unfinished += 1;
+          else if (stat.winner === stat.firstSeat) firstWins += 1;
+
+          for (let seat = 0; seat < 2; seat++) {
+            const name = FACTION_BY_COMMANDER[pair.cmds[seat] ?? ''] ?? '未知';
+            const agg = faction.get(name) ?? { games: 0, wins: 0, top: 0 };
+            agg.games += 1;
+            if (stat.winnerSeat === seat) agg.wins += 1;
+            // 星轨档位本次不动（C-04），不统计顶档可达率
+            if (name === '炎刃' && (stat.maxBlade[seat] ?? 0) >= BLADE_TOP) agg.top += 1;
+            if (name === '霜律' && (stat.maxFrost[seat] ?? 0) >= FROST_TOP) agg.top += 1;
+            faction.set(name, agg);
+          }
+        }
+
+        idleTotal += idle;
+        idlePlayTotal += idlePlay;
+        turnTotal += playerTurns;
+
+        reports.push({
+          name: pair.name,
+          games: GAMES_PER_PAIR,
+          skillPerGame: skill / GAMES_PER_PAIR,
+          chargePerGame: charge / GAMES_PER_PAIR,
+          firstWinRate: firstWins / GAMES_PER_PAIR,
+          avgTurns: turns / GAMES_PER_PAIR,
+          unfinished,
+        });
       }
 
-      reports.push({
-        name: pair.name,
-        games: GAMES_PER_PAIR,
-        skillPerGame: skill / GAMES_PER_PAIR,
-        chargePerGame: charge / GAMES_PER_PAIR,
-        firstWinRate: firstWins / GAMES_PER_PAIR,
-        avgTurns: turns / GAMES_PER_PAIR,
-        unfinished,
-      });
-    }
+      // core 的 tsconfig 没带 dom / node 的 console 定义，直接写 stdout
+      const lines: string[] = [];
+      lines.push('');
+      lines.push('| 对局 | 局数 | 技能/局 | 充能张/局 | 先手胜率 | 平均回合 | 平均轮数 | 未结束 |');
+      lines.push('| --- | --- | --- | --- | --- | --- | --- | --- |');
+      for (const r of reports) {
+        lines.push(
+          `| ${r.name} | ${r.games} | ${r.skillPerGame.toFixed(2)} | ${r.chargePerGame.toFixed(2)} | ` +
+            `${(r.firstWinRate * 100).toFixed(1)}% | ${r.avgTurns.toFixed(1)} | ` +
+            `${(r.avgTurns / 2).toFixed(2)} | ${r.unfinished} |`,
+        );
+      }
+      lines.push('');
+      lines.push('| 体系 | 出场人次 | 胜率 | 顶档可达率 | 目标 |');
+      lines.push('| --- | --- | --- | --- | --- |');
+      for (const name of ['炎刃', '霜律', '星轨']) {
+        const agg = faction.get(name);
+        if (!agg) continue;
+        const top = name === '星轨' ? '不统计（C-04 档位未动）' : `${((agg.top / agg.games) * 100).toFixed(1)}%`;
+        const goal = name === '星轨' ? '—' : agg.top / agg.games >= 0.6 ? '≥60% ✅' : '≥60% ⚠️';
+        lines.push(
+          `| ${name} | ${agg.games} | ${((agg.wins / agg.games) * 100).toFixed(1)}% | ${top} | ${goal} |`,
+        );
+      }
+      lines.push('');
+      const idleRate = turnTotal === 0 ? 0 : idleTotal / turnTotal;
+      const idlePlayRate = turnTotal === 0 ? 0 : idlePlayTotal / turnTotal;
+      lines.push(
+        `空过率（无动作玩家回合）：${(idleRate * 100).toFixed(2)}%（${idleTotal}/${turnTotal}），目标 < 7%`,
+      );
+      lines.push(
+        `  交叉验证 · 未出牌回合：${(idlePlayRate * 100).toFixed(2)}%（${idlePlayTotal}/${turnTotal}），` +
+          `口径同 docs/13「一张牌都没出」`,
+      );
+      lines.push('');
+      process.stdout.write(lines.join('\n'));
 
-    // core 的 tsconfig 没带 dom / node 的 console 定义，直接写 stdout
-    process.stdout.write(
-      '\n| 对局 | 局数 | 技能/局 | 充能张/局 | 先手胜率 | 平均回合 | 未结束 |\n' +
-        '| --- | --- | --- | --- | --- | --- | --- |\n' +
-        reports
-          .map(
-            (r) =>
-              `| ${r.name} | ${r.games} | ${r.skillPerGame.toFixed(2)} | ${r.chargePerGame.toFixed(2)} | ` +
-              `${(r.firstWinRate * 100).toFixed(1)}% | ${r.avgTurns.toFixed(1)} | ${r.unfinished} |`,
-          )
-          .join('\n') + '\n',
-    );
+      const totalGames = reports.reduce((n, r) => n + r.games, 0);
+      const totalSkill = reports.reduce((n, r) => n + r.skillPerGame * r.games, 0);
+      const totalCharge = reports.reduce((n, r) => n + r.chargePerGame * r.games, 0);
+      const totalTurns = reports.reduce((n, r) => n + r.avgTurns * r.games, 0);
 
-    const totalGames = reports.reduce((n, r) => n + r.games, 0);
-    const totalSkill = reports.reduce((n, r) => n + r.skillPerGame * r.games, 0);
-    const totalCharge = reports.reduce((n, r) => n + r.chargePerGame * r.games, 0);
-
-    // ① 技能必须是「用起来了」，而不是像修复前那样 0 次
-    expect(totalSkill).toBeGreaterThan(0);
-    // ② 手牌充能同理
-    expect(totalCharge).toBeGreaterThan(0);
-    // ③ 每局平均至少发动一次技能（#137 验收第 1 条的人机局口径，这里按 AI 视角取更严的一档）
-    expect(totalSkill / totalGames).toBeGreaterThanOrEqual(1);
-  });
+      // ① 技能必须是「用起来了」，而不是像修复前那样 0 次
+      expect(totalSkill).toBeGreaterThan(0);
+      // ② 手牌充能同理
+      expect(totalCharge).toBeGreaterThan(0);
+      // ③ 每局平均至少发动一次技能（#137 验收第 1 条的人机局口径，这里按 AI 视角取更严的一档）
+      expect(totalSkill / totalGames).toBeGreaterThanOrEqual(1);
+      // ④-⑥ 是 #138 的验收线（docs/16 §15.4）：轮数只看血量这一个旋钮的结果，
+      //     体系胜率与空过率是「AI 能不能把牌打出来」的直接体现。
+      const avgRounds = totalTurns / totalGames / 2;
+      expect(avgRounds).toBeGreaterThanOrEqual(4.5);
+      expect(avgRounds).toBeLessThanOrEqual(5.5);
+      expect(idleRate).toBeLessThan(0.07);
+      for (const [name, agg] of faction) {
+        const rate = agg.wins / agg.games;
+        expect(rate, `${name} 胜率 ${(rate * 100).toFixed(1)}%`).toBeGreaterThanOrEqual(0.4);
+        expect(rate, `${name} 胜率 ${(rate * 100).toFixed(1)}%`).toBeLessThanOrEqual(0.6);
+      }
+      /*
+       * 顶档可达率**不断言** —— #138 明写「目标 ≥60%，达不到就报实际值」，
+       * 且 §15.3 的处置是「该体系档位再降一格」（要 Era 同意，因为 7 是他定的）。
+       * 断言会把「需要拍板」伪装成「测试红」。
+       */
+    },
+  );
 });

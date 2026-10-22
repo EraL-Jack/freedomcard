@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { RULE_ERRORS } from '@app/shared/constants';
+import { INITIAL_HEALTH, RULE_ERRORS } from '@app/shared/constants';
 import type { CardInstance, GameState, Intent, Phase, Zone } from '@app/shared/types';
 import { CARD_POOL } from '@app/shared/cards';
 
@@ -427,7 +427,7 @@ describe('霜律效果（docs/12 §4）', () => {
     });
     const after = run(s, intent('p1', INTENTS.play, { uid: 'h1' }));
     expect(after.players['p2']!.zones.board.map((x) => x.uid)).toEqual(['f3']);
-    expect(after.players['p2']!.health).toBe(6); // 8 - 2
+    expect(after.players['p2']!.health).toBe(INITIAL_HEALTH - 2); // D-290：血量改成 10，伤害不变
   });
 
   it('寒域：敌方霜冻随从 −1 力（下限 0）', () => {
