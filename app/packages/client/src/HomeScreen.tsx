@@ -159,8 +159,11 @@ export default function HomeScreen(props: {
       </div>
 
       {/*
-        连接状态 + 房间状态并成一行（issue #116）：两句话各占一行时纯属浪费首屏高度。
-        「当前不在房间内」这句文案保留 —— 进过房间再回来的人需要它来确认自己真的出来了。
+        连接状态（issue #116 把它与房间状态并成一行）。
+
+        原来这里还有一句「当前不在房间内。」，issue #126 删掉了：首页**没有房间概念**，
+        这句话纯属噪音 —— 刚掉线或刚退房回到首页时，它反而让人怀疑「我是不是被踢了」。
+        「我已经出来了」这件事由界面本身说明：房间码与席位表都不在了。
       */}
       <p className="text-xs text-slate-400">
         {session.link === 'online' ? (
@@ -170,7 +173,6 @@ export default function HomeScreen(props: {
         ) : (
           <span className="text-rose-400">服务端未连接</span>
         )}
-        <span className="ml-2 text-slate-500">当前不在房间内。</span>
       </p>
 
       {!online ? (

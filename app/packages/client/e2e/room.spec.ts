@@ -48,9 +48,11 @@ test('建房 → 加入 → 双方可见 → 刷新自动重连', async ({ brows
   await expect(host.getByTestId('notice')).toContainText('已自动重连', { timeout: 10_000 });
   await expect(host.getByTestId('room-code')).toHaveText(code);
 
-  // 离开后回到「不在房间内」
+  // 离开后回到首页（issue #126：首页不再有「当前不在房间内。」这句话），
+  // 用「建房入口回来了 + 房间码不在了」证明真的退出了 —— 断言界面事实，不依赖某句文案。
   await host.getByTestId('leave').click();
-  await expect(host.getByText('当前不在房间内')).toBeVisible({ timeout: 10_000 });
+  await expect(host.getByTestId('create')).toBeVisible({ timeout: 10_000 });
+  await expect(host.getByTestId('room-code')).toHaveCount(0);
 });
 
 test('满员后第三人加入被拒', async ({ browser }) => {

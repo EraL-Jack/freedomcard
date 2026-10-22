@@ -85,6 +85,32 @@ function CardDetail(props: {
   onActivate?: (effectId: string) => void;
   onClose: () => void;
 }): React.JSX.Element {
+  /*
+   * Esc 关闭（issue #124）。
+   *
+   * 右键 / 长按打开的浮层是 `fixed inset-0` 的全屏遮罩，键鼠用户的本能是敲 Esc ——
+   * 原来按了毫无反应，只能去点「关闭」。遮罩把桌子挡住了，很容易以为界面卡死。
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') props.onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [props.onClose]);
+
+  /*
+   * 打开时把焦点移进浮层（issue #124 同条）。
+   *
+   * 不移动焦点的话，键盘用户的 Tab 还在背后的桌子上走 —— 视觉上浮层在前面、
+   * 焦点在后面，按回车触发的是看不见的按钮。落在「关闭」上：它是浮层里
+   * 唯一必然存在的按钮（效果按钮要看牌）。
+   */
+  const closeRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    closeRef.current?.focus();
+  }, []);
+
   const def = CARD_POOL[props.card.defId];
   const power = core.unitPower(props.state, CARD_POOL, props.card.uid) ?? def?.power ?? 0;
   // 局内一律显示**实际值**（D-232）：实际支付费用 + 当前力量下的打脸伤害。
@@ -150,6 +176,7 @@ function CardDetail(props: {
           </div>
         ) : null}
         <button
+          ref={closeRef}
           type="button"
           className="mt-3 w-full rounded bg-slate-700 py-2 text-sm"
           onClick={props.onClose}
@@ -471,22 +498,30 @@ function ZoneBox(props: {
     >
       {/* 标题行恒为纯文本（D-265）：点击由**容器**承担，整块区域都是查看入口。
           可查看时右侧多一个 `›`，告诉玩家「这里有内容、点得开」——
-          五区格子只有 60 来像素宽，塞不下「查看」两个字。 */}
-      <div className="flex w-full items-center justify-between gap-1 text-[10px] text-slate-400">
-        <span className="truncate">{props.label}</span>
-        {props.badge ? (
-          <span className="shrink-0 font-mono text-rose-300" data-testid={props.badgeTestId}>
-            {props.badge}
-          </span>
-        ) : null}
-        <span className="shrink-0 text-slate-200" data-testid="zone-count">
-          {props.cards.length}
+          五区格子只有 60 来像素宽，塞不下「查看」两个字。
+
+          换行而不是截断（issue #129）：390px 下指挥官区标题被压成「指挥...」，
+          玩家认不出这是全场唯一掉血就输的区域。`flex-wrap` 让右侧的徽标 / 张数
+          整体换到第二行，区名保留完整 —— 宁可多 12px 高，也不要少两个字。 */}
+      <div className="flex w-full flex-wrap items-center gap-x-1 text-[10px] leading-tight text-slate-400">
+        <span className="min-w-0 break-all" data-testid="zone-label">
+          {props.label}
         </span>
-        {inspectable ? (
-          <span className="shrink-0 text-slate-500" aria-hidden="true">
-            ›
+        <span className="ml-auto flex shrink-0 items-center gap-1">
+          {props.badge ? (
+            <span className="font-mono text-rose-300" data-testid={props.badgeTestId}>
+              {props.badge}
+            </span>
+          ) : null}
+          <span className="text-slate-200" data-testid="zone-count">
+            {props.cards.length}
           </span>
-        ) : null}
+          {inspectable ? (
+            <span className="text-slate-500" aria-hidden="true">
+              ›
+            </span>
+          ) : null}
+        </span>
       </div>
       {props.action ? (
         <button
@@ -1272,7 +1307,7 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
       ? mulliganOpen
         ? mulliganExpired
           ? '换牌时间到，正在开局…'
-          : `开局换牌：选出手牌里不想要的 →「确认换牌」；不想换直接点「不换牌」${
+          : `开局换牌：点选不想留的手牌（可多选）→ 出现「确认换牌」；不想换就直接点「不换牌」${
               mulliganLeft === null ? '' : `（剩余 ${mulliganLeft} 秒，到点自动不换牌开局）`
             }`
         : '你已确认，等待对手完成换牌…'
@@ -1784,30 +1819,7 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
         */}
       </header>
 
-      {/* 选位提示（D-257）—— 必须常显且贴住操作区。
-          否则「点了出牌、卡却还在手上、桌面没变化」又是一次「点了没反应」（D-256 同款坑）。 */}
-      {placing ? (
-        <div
-          className="fixed inset-x-2 bottom-16 z-[62] flex items-center gap-2 rounded-lg border border-cyan-600 bg-slate-900/95 px-3 py-2 text-xs text-cyan-100 shadow-lg"
-          role="status"
-          data-testid="placing-hint"
-        >
-          <span className="flex-1">
-            选择位置：点我方随从区的格子 —— 空位直接放入，有随从则顶替（被顶替者进弃牌区）
-          </span>
-          <button
-            type="button"
-            className="shrink-0 rounded bg-slate-700 px-2 py-1"
-            onClick={() => {
-              setPlacing(null);
-              setPicked(null);
-            }}
-            data-testid="placing-cancel"
-          >
-            取消
-          </button>
-        </div>
-      ) : null}
+      {/* 选位提示（D-257）—— 已移到随从区下方**参与布局**（issue #130），见第 ④ 排之后。 */}
 
       {/* 支付选卡（D-257）—— 费用区比「该付的张数」多时才出现，否则没什么可挑的。 */}
       {payPicker ? (
@@ -2059,6 +2071,35 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
               state={state}
             />
           </section>
+
+          {/* 选位提示（D-257 / issue #130）—— **参与布局**，不再是 `fixed bottom-16`。
+              原来那条横跨全宽、压在**手牌**下半部分上，正好盖住「费 / 力 / 伤」——
+              而「我这张牌多大」恰恰是玩家选位置时最想再确认一眼的东西：
+              提示条本意是帮忙，结果挡住了决策信息。
+              现在它插在随从区与五区之间，占一行高度，不覆盖任何内容；
+              仍然常显 —— 「点了出牌、卡还在手上、桌面没变化」那个坑（D-256）不能回来。 */}
+          {placing ? (
+            <div
+              className="flex items-center gap-2 rounded border border-cyan-600 bg-cyan-950/60 px-2 py-1 text-[11px] text-cyan-100"
+              role="status"
+              data-testid="placing-hint"
+            >
+              <span className="flex-1">
+                点我方随从区的格子放下 —— 空位直接放入，有随从则顶替（被顶替者进弃牌区）
+              </span>
+              <button
+                type="button"
+                className="shrink-0 rounded bg-slate-700 px-2 py-1"
+                onClick={() => {
+                  setPlacing(null);
+                  setPicked(null);
+                }}
+                data-testid="placing-cancel"
+              >
+                取消
+              </button>
+            </div>
+          ) : null}
 
           {/* ⑤ 我方五区 —— 与第 ② 排（对方五区）**严格镜像**（Era 2026-10-14）。
               ② 卡组/法术/指挥官/弃牌/除外 → ⑤ 除外/弃牌/指挥官/法术/卡组。
