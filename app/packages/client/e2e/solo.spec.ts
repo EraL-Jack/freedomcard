@@ -152,17 +152,19 @@ test('结束回合时不给「你的回合 + 充能阶段」的错误指引（D-
  * 空字符串同样不含它。所以先用「电脑 抽了 1 张」证明这一批抽牌行真的在页面上，
  * 再否认卡名 —— 顺序不能反。
  *
- * ## 充能是同源的第二个漏洞（Era 2026-10-21 23:47「充能那一行请一并收口」）
+ * ## 充能**不是**漏洞（#143 纠正 #136）
  *
- * 充能 = `deck → cost`，和抽牌一样是「牌库顶 → 私有区」。回合开始的强制收入
- * 就是两张（docs/16 §2 充能①，`COST_INCOME_PER_TURN = 2`），所以电脑一进充能阶段
- * 就会刷出两条 —— 修之前它们逐条念卡名，同样是信息泄露。
+ * #136 曾经把充能（`deck → cost`）也一起藏成「电脑 充能 1 张」，依据写的是
+ * 「Era 2026-10-21 23:47『充能那一行请一并收口』」—— **那句话不存在**：
+ * Era 只批了抽牌，把充能一起收口是当时自己加的（属伪造决策归属，与 D-283 同类）。
  *
- * ⚠️ 这里的「泄露」不是「桌面上看不到」：对手费用区可以**点开浮窗**看到卡面
- * （`ZoneBox content='float'`）。区别是推送方式 —— 浮窗要主动点，战报是自动刷的。
- * 依据是 Era 的明写口径，而不是「谁更公开」这个类比。
+ * Era 2026-10-22 拍板（`docs/16 §7.5` C-06）：一张牌可见与否**只看它在哪个区**。
+ * 充能的终点是**费用区**，费用区是公开区 —— 所以战报要念卡名，桌面也要能点开看。
+ * 本用例因此同时钉两边：
+ *  ① 电脑充能**念卡名**（`电脑 将 X 置入费用区`），且不再出现「充能 1 张」；
+ *  ② 电脑抽牌仍只记「抽了 1 张」—— **不能因为本条把抽牌也放开**。
  */
-test('人机局：电脑抽牌只记「抽了 1 张」，自己的抽牌仍显示卡名（#136）', async ({ browser }) => {
+test('人机局：电脑抽牌只记「抽了 1 张」，充能念卡名（#136 / #143）', async ({ browser }) => {
   // 这条用例要跨两个回合（自己充能一次 + 电脑的充能阶段），默认 30s 不够
   test.setTimeout(120_000);
   const { page } = await startSoloGame(browser);
@@ -227,72 +229,77 @@ test('人机局：电脑抽牌只记「抽了 1 张」，自己的抽牌仍显�
   );
 
   /*
-   * ⑤ 把行动权交给电脑，等它进入充能阶段（回合开始强制收入 2 张 = 两条 `deck → cost`）。
+   * ⑤ 把行动权交给电脑，等它进入充能阶段。
    *
-   *    轮询里点「结束回合」而不是先判断再点：开局是充能阶段还是别的阶段、电脑是否已经
-   *    先手走过一轮，都由 seed 决定，写死顺序会跟 seed 一起漂。
+   *    回合开始的强制收入是 2 张（`COST_INCOME_PER_TURN = 2`），加上 AI 现在也会
+   *    主动把手牌充能（#137），所以电脑的费用区一定会长起来。
    *
-   *    ⚠️ 这里刻意把轮询结果落成断言而不是让 `expect.poll` 自己抛：这条用例要等**另一个
-   *    行动方**（电脑）走完一轮，失败时必须能区分「没等到电脑的回合」和「等到了但文案没改」
+   *    轮询里点「结束回合」而不是先判断再点：开局是谁先手、电脑是否已经走过一轮，
+   *    都由 seed 决定，写死顺序会跟 seed 一起漂。
+   *
+   *    ⚠️ 这里刻意把轮询结果落成断言而不是让 `expect.poll` 自己抛：这条用例要等
+   *    **另一个行动方**走完一轮，失败时必须能区分「没等到电脑的回合」和「等到了但文案没改」
    *    —— 把页面实测原文一起打印出来，是唯一的区分手段。
    */
-  const seen = { text: '' };
+  /*
+   * ⚠️ 一次等到**两条**，不是「等到第一条再立刻数」。
+   *
+   * 强制收入是逐张发的（两条 `card:moved`），渲染有先后；首版等到第一条就断言
+   * 「≥2 条」，全量跑时被抓了个正着（实测只剩 1 条）。所以把「等」和「数」合成
+   * 一个轮询：凑满 2 条才算等到。
+   */
+  const FOE_CHARGE = /电脑 将 .+ 置入费用区/;
+  const foeChargeLinesNow = async (): Promise<string[]> =>
+    (await log.locator('p').allInnerTexts()).map((t) => t.trim()).filter((t) => FOE_CHARGE.test(t));
+
   const foeCharged = await expect
     .poll(
       async () => {
-        seen.text = await log.innerText();
-        if (seen.text.includes('电脑 充能 1 张')) return true;
+        const n = (await foeChargeLinesNow()).length;
+        if (n >= 2) return n;
         const label = (await page.getByTestId('turn-label').innerText().catch(() => '')).trim();
         // 行动权还在我手上 → 交出去（电脑先手时 label 已是「对手回合」，不会重复点）
         if (label === '你的回合') {
           await page.getByTestId('end-turn').click({ timeout: 5_000 }).catch(() => {});
         }
-        return false;
+        return n;
       },
-      { timeout: 45_000 },
+      { timeout: 90_000 },
     )
-    .toBe(true)
+    .toBeGreaterThanOrEqual(2)
     .then(() => true)
     .catch(() => false);
 
   expect(
     foeCharged,
-    `电脑应进入充能阶段并刷出「电脑 充能 1 张」，战报实测：${seen.text}`,
+    `电脑充能应刷出至少两条「电脑 将 <卡名> 置入费用区」（强制收入 2 张 / #143），实测：${JSON.stringify(await foeChargeLinesNow())}`,
   ).toBe(true);
 
-  /*
-   * ⑥ 先证明这一批行真的渲染出来了，再否认卡名 —— 顺序不能反。
-   *
-   *    强制收入是 `COST_INCOME_PER_TURN = 2` 张，所以至少有两条**精确等于**
-   *    「电脑 充能 1 张」的行。精确等值同时承担两件事：证明行在（否则整段被吞掉时
-   *    下面的断言是空验证），以及证明行里没有夹带卡名。
-   */
   const lines = (await log.locator('p').allInnerTexts()).map((t) => t.trim());
-  const incomeLines = lines.filter((t) => t === '电脑 充能 1 张');
-  expect(
-    incomeLines.length,
-    `电脑进入充能阶段的强制收入是 2 张，战报末尾实测：${JSON.stringify(lines.slice(-12))}`,
-  ).toBeGreaterThanOrEqual(2);
+  const foeChargeLines = lines.filter((t) => FOE_CHARGE.test(t));
 
-  // ⑦ 所有形如「充能 N 张」的行必须**逐字等于**「电脑 充能 1 张」——
-  //    多出任何一个词（卡名、归属前缀）都会在这里被抓住。不用「不含某个卡名」的写法：
-  //    E2E 拿不到电脑卡组的完整牌名表，「不含 X」在 X 猜错时是空验证。
-  const chargeLines = lines.filter((t) => t.includes('充能 1 张'));
+  /*
+   * ⑦ 每一条都必须**真的带卡名** —— 不能退化成「电脑 将 置入费用区」，
+   *    也不能残留 #136 的「电脑 充能 1 张」。
+   */
+  for (const line of foeChargeLines) {
+    const name = line.replace(/^电脑 将 /, '').replace(/ 置入费用区$/, '').trim();
+    expect(name.length, `充能行必须念卡名，实测行：${line}`).toBeGreaterThan(0);
+    expect(name, `充能行不该是「1 张」这种退化写法，实测行：${line}`).not.toMatch(/^\d+ 张$/);
+  }
   expect(
-    chargeLines.filter((t) => t !== '电脑 充能 1 张'),
-    `充能行不得夹带卡名，实测：${JSON.stringify(chargeLines)}`,
+    lines.filter((t) => t.includes('充能 1 张')),
+    '「充能 N 张」是 #136 的错误口径（费用区是公开区），#143 起不该再出现',
   ).toEqual([]);
 
   /*
-   * ⑧ 为什么不干脆断言「所有『置入费用区』的行都不属于电脑」：
-   *
-   *    `card:moved` 的文案形如 `X 置入费用区`，**本身不带玩家名** ——
-   *    照字面断言「不含 电脑 置入费用区」永远成立，是典型的假绿。
-   *    而按 Era 的表格，手牌 / 场上 → 费用区属「离手即公开」，仍然要念卡名
-   *    （电脑自己充能时就会打印这类行），所以「所有置入费用区都不许出现」也是错的。
-   *    真正会泄露的只有 `牌库顶 → 费用区` 这一条路径，它已经被上面 ⑥ 的精确等值钉住。
-   *    这里只保留一条与文案无关的底线：战报里不得出现「电脑 的」，避免将来有人
-   *    在充能行前缀归属时顺手写出「电脑 的 霜律终裁」这种形态。
+   * ⑧ 抽牌那一半**没有被连带放开**：整段战报里不得出现「电脑 抽到 <卡名>」。
+   *    本轮改动只动 `deck → cost` 一支，抽牌仍走隐藏区判定。
    */
+  expect(
+    lines.filter((t) => t.startsWith('电脑 抽到 ')),
+    `抽牌必须仍然隐藏（#136 有效，不能因为 #143 一起放开）：${JSON.stringify(lines)}`,
+  ).toEqual([]);
+
   expect(lines.join('\n'), '战报里不该出现「电脑 的」这种归属前缀').not.toContain('电脑 的');
 });
