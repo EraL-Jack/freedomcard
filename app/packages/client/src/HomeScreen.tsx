@@ -4,6 +4,7 @@ import { MAIN_DECK_SIZE } from '@app/shared/constants';
 import type { MatchFormat } from '@app/shared/types';
 import { CARD_POOL } from '@app/shared/cards';
 import { TURN_TIMEOUT_MS, TURN_TIMEOUT_OPTIONS } from '@app/shared/constants';
+import { BASIC_DECKS } from '@app/shared/default-decks';
 
 import {
   listSelectionOptions,
@@ -37,6 +38,16 @@ export default function HomeScreen(props: {
   const [format, setFormat] = useState<MatchFormat>('bo1');
   /** 回合时限（H18）：30 / 60 / 180 / 999 秒，默认 60s。 */
   const [turnMs, setTurnMs] = useState(String(TURN_TIMEOUT_MS));
+  /**
+   * 人机房对手用哪套基础卡组（#161 / Era 2026-10-22「161人机可选」）。
+   *
+   * `''` = 不指定 —— 服务端按房间码散列（与加这个字段之前**完全一致**）。
+   * 默认必须是「不指定」：Era 只说「可选」，把默认改成固定一套等于静默砍掉
+   * 玩家原本能撞到的另外两套。
+   */
+  const [opponentDeck, setOpponentDeck] = useState('');
+  /** 按钮文案用：`blade` → 「炎刃」。空/非法一律回「电脑」（= 不指定）。 */
+  const opponentDeckName = BASIC_DECKS.find((d) => d.slug === opponentDeck)?.name.split(' · ')[0];
   const [localError, setLocalError] = useState('');
 
   /**
@@ -297,28 +308,62 @@ export default function HomeScreen(props: {
           不用再开两个窗口自己跟自己打。用的仍是上面选的**卡组 / 赛制 / 时限**，
           所以人机房也能拿来试新卡组。
         */}
-        <button
-          type="button"
-          className="w-full rounded border border-emerald-700 bg-emerald-900/40 px-4 py-3 text-emerald-100 disabled:opacity-50"
-          disabled={!online || session.busy !== null}
-          onClick={() =>
-            createOrJoin((name) => {
-              const play = selectionForPlay();
-              session.create({
-                nickname: name,
-                capacity: 2,
-                format,
-                deck: play.deck,
-                commander: play.commander,
-                solo: true,
-                turnTimeoutMs: Number(turnMs),
-              });
-            })
-          }
-          data-testid="create-solo"
-        >
-          {session.busy === 'create-solo' ? '正在开人机房…' : '人机对战（对手：电脑）'}
-        </button>
+        {/*
+          对手卡组（#161 / Era 2026-10-22「161人机可选」）。
+
+          ⚠️ **和按钮挤在同一行**，不是审美选择，是空间约束：home-layout 用例里
+          1366×768 只剩 22px 余量，单独一行（≈66px）会把「编辑卡组」顶出首屏
+          （`home-layout.spec.ts` 当场就红了）。这也跟 issue #116 的先例一致 ——
+          「赛制 + 时限」当初就是因为同样的原因才并成一行。
+
+          选择结果写进按钮文案（「对手：炎刃」），所以下拉里只放短词，
+          不需要额外的说明行来解释「不指定」是什么意思。
+        */}
+        <div className="flex gap-2">
+          <select
+            className="w-24 shrink-0 rounded border border-emerald-800 bg-emerald-950/60 px-1 py-2 text-xs text-emerald-100 disabled:opacity-50"
+            value={opponentDeck}
+            onChange={(e) => setOpponentDeck(e.target.value)}
+            disabled={!online || session.busy !== null}
+            aria-label="对手卡组（人机对战）"
+            title="对手卡组（人机对战）"
+            data-testid="opponent-deck"
+          >
+            <option value="">不指定</option>
+            {BASIC_DECKS.map((d) => (
+              <option key={d.slug} value={d.slug}>
+                {/* 「炎刃 · 中速除外」→「炎刃」：下拉只有 96px 宽，放全名会被截断 */}
+                {d.name.split(' · ')[0]}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="min-w-0 flex-1 rounded border border-emerald-700 bg-emerald-900/40 px-4 py-3 text-emerald-100 disabled:opacity-50"
+            disabled={!online || session.busy !== null}
+            onClick={() =>
+              createOrJoin((name) => {
+                const play = selectionForPlay();
+                session.create({
+                  nickname: name,
+                  capacity: 2,
+                  format,
+                  deck: play.deck,
+                  commander: play.commander,
+                  solo: true,
+                  turnTimeoutMs: Number(turnMs),
+                  // 空字符串 = 不指定，这里转成 undefined 让请求里根本不出现该字段。
+                  ...(opponentDeck ? { opponentDeck } : {}),
+                });
+              })
+            }
+            data-testid="create-solo"
+          >
+            {session.busy === 'create-solo'
+              ? '正在开人机房…'
+              : `人机对战（对手：${opponentDeck ? opponentDeckName : '电脑'}）`}
+          </button>
+        </div>
       </section>
 
       <section className="space-y-3 rounded-lg border border-slate-800 bg-slate-900 p-4">

@@ -443,6 +443,70 @@ describe('RoomManager · 人机房', () => {
     expect(ai.deck).toEqual(basic!.deck);
   });
 
+  /* ------------- 可选对手卡组（#161 / Era 2026-10-22「161人机可选」） ------------- */
+
+  it('指定 opponentDeck 时，AI 用那一套（卡组与指挥官成套）', () => {
+    const { manager } = harness();
+    for (const slug of ['blade', 'frost', 'star'] as const) {
+      const basic = BASIC_DECKS.find((d) => d.slug === slug)!;
+      const r = manager.create({ nickname: 'Era', capacity: 2, solo: true, opponentDeck: slug });
+      if (!r.ok) throw new Error(`create(${slug}) failed`);
+      const ai = r.value.room.seats[1]!;
+      // 成套是关键：指挥官与 30 张必须来自同一套，否则开局会装配出「霜律指挥官 + 炎刃 30 张」
+      expect(ai.commander, `${slug} 的指挥官`).toBe(basic.commander);
+      expect(ai.deck, `${slug} 的 30 张`).toEqual(basic.deck);
+    }
+  });
+
+  it('三套指定出来的对手互不相同（选择真的生效，不是恒取第一套）', () => {
+    const { manager } = harness();
+    const cmdrs = (['blade', 'frost', 'star'] as const).map((slug) => {
+      const r = manager.create({ nickname: 'Era', capacity: 2, solo: true, opponentDeck: slug });
+      if (!r.ok) throw new Error('create failed');
+      return r.value.room.seats[1]!.commander;
+    });
+    expect(new Set(cmdrs).size).toBe(3);
+  });
+
+  it('非法 slug 不拒建房，静默回落到按房码散列', () => {
+    const { manager } = harness();
+    const r = manager.create({
+      nickname: 'Era',
+      capacity: 2,
+      solo: true,
+      opponentDeck: 'no-such-deck',
+    });
+    // 建房必须成功 —— 手误 / 老客户端带了个新 slug 都不该被挡在门外
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const ai = r.value.room.seats[1]!;
+    const basic = BASIC_DECKS.find((d) => d.commander === ai.commander);
+    // 回落到的仍是一套**合法且成套**的基础卡组
+    expect(basic).toBeTruthy();
+    expect(ai.deck).toEqual(basic!.deck);
+  });
+
+  it('不传 opponentDeck 时行为与加字段之前一致（仍是散列，不是固定炎刃）', () => {
+    const { manager } = harness();
+    // 多开几房：散列会在三套之间轮换，若被静默改成「恒取第一套」这里会退化成一个值
+    const seen = new Set<string>();
+    for (let i = 0; i < 12; i++) {
+      const r = manager.create({ nickname: 'Era', capacity: 2, solo: true });
+      if (!r.ok) throw new Error('create failed');
+      seen.add(r.value.room.seats[1]!.commander);
+      manager.leave(r.value.seat.playerId); // 清掉，避免撞房间数上限
+    }
+    expect(seen.size).toBeGreaterThan(1);
+  });
+
+  it('联机房（非 solo）不看 opponentDeck —— 没有 AI 席位可言', () => {
+    const { manager } = harness();
+    const r = manager.create({ nickname: 'Era', capacity: 2, opponentDeck: 'frost' });
+    if (!r.ok) throw new Error('create failed');
+    expect(r.value.room.seats[1]).toBeNull();
+    expect(r.value.room.capacity).toBe(2);
+  });
+
   it('AI 不泄漏卡组内容给客户端（只给张数）', () => {
     const { manager } = harness();
     const r = manager.create({ nickname: 'Era', capacity: 2, solo: true });

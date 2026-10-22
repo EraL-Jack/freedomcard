@@ -176,10 +176,10 @@ Windows 需放行 5173 / 3000 端口的入站规则（网络配置文件为 Publ
 | `pnpm dev` | 并行起服务端与客户端 |
 | `pnpm typecheck` | 全量 `tsc --noEmit` |
 | `pnpm lint` | ESLint（flat config） |
-| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层 + `client` 纯逻辑，2026-10-22 时点 **506 passed**（core 259 + server 167 + client 80，另有 1 条 skipped 基线采样） |
+| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层 + `client` 纯逻辑，2026-10-22 时点 **512 passed**（core 259 + server **173** + client 80，另有 1 条 skipped 基线采样） |
 | `pnpm --filter @app/client run test:coverage` | client 覆盖率（v8）。目前只覆盖 `selectors` / `labels` / `log` 三个纯逻辑模块；组件层由 E2E 兜 |
 | `pnpm build` | 构建客户端到 `packages/client/dist` |
-| `pnpm --filter @app/client test:e2e` | 端到端（Playwright）：**79 条** —— 房间流程 / 首页与对战桌布局 / 视口溢出 / 联机开局 / 回合操作 / 攻击与指挥官伤害 / 卡组编辑 / 人机对战 / 人机房换牌阶段与倒计时 / 回合边界的指引不变量 / 堆叠区浮窗 / 新手引导 / 390px 日志抽屉 / 断线与点击反馈 / 危险操作 / 打磨观感 / 结算覆盖层 / 再来一局 / 计时回弹 / 在途反馈 / 确定性守卫 |
+| `pnpm --filter @app/client test:e2e` | 端到端（Playwright）：**81 条** —— 房间流程 / 首页与对战桌布局 / 视口溢出 / 联机开局 / 回合操作 / 攻击与指挥官伤害 / 卡组编辑 / 人机对战 / 人机房换牌阶段与倒计时 / 回合边界的指引不变量 / 堆叠区浮窗 / 新手引导 / 390px 日志抽屉 / 断线与点击反馈 / 危险操作 / 打磨观感 / 结算覆盖层 / 再来一局 / 计时回弹 / 在途反馈 / 人机对手卡组 / 确定性守卫 |
 
 > 首次跑 E2E 需先下载浏览器：`pnpm --filter @app/client exec playwright install chromium`（约 197 MiB，慢）。
 > 截图落在 `packages/client/e2e/screenshots/`（已被 `.gitignore` 忽略）。
@@ -372,7 +372,7 @@ app/
 
 | 事件 | 方向 | payload | 说明 |
 | --- | --- | --- | --- |
-| `room:create` | C→S | `{ nickname, capacity, format?, solo?, turnTimeoutMs?, deck?, commander? }` | 建房。**`capacity` 已不再生效**（T-07：房间恒 2 席，传几都一样）；`format` = BO1/BO3；`solo: true` = 人机房（服务端立刻坐入 AI）；`turnTimeoutMs` = 30/60/180/999 秒四档之一（H18，缺省或非法档位回落 60s）；`deck` = 30 个 `defId`；`commander` = 指挥官 `defId`（D-184，两者成对，不传即服务端默认） |
+| `room:create` | C→S | `{ nickname, capacity, format?, solo?, turnTimeoutMs?, deck?, commander?, opponentDeck? }` | 建房。**`capacity` 已不再生效**（T-07：房间恒 2 席，传几都一样）；`format` = BO1/BO3；`solo: true` = 人机房（服务端立刻坐入 AI）；`turnTimeoutMs` = 30/60/180/999 秒四档之一（H18，缺省或非法档位回落 60s）；`deck` = 30 个 `defId`；`commander` = 指挥官 `defId`（D-184，两者成对，不传即服务端默认）；`opponentDeck` = 人机对手用哪套基础卡组（`blade`/`frost`/`star`，D-314，缺省或非法值回落「按房码散列」） |
 | `room:join` | C→S | `{ code, nickname, deck?, commander? }` | 加入；满员返回 `ROOM_FULL`。**没有 `faction`**（ADR-0042：不存在阵营，老客户端带了会被 strip，不报错） |
 | `room:reconnect` | C→S | `{ playerId, token }` | 断线重连；返回快照（含 `lastSeqByPlayer`） |
 | `room:leave` | C→S | — | 主动离开；房主离开则移交房主 |
@@ -538,6 +538,15 @@ app/
     ⚠️ **不要再加任何全局减费** —— 调价请直接改卡面 `cost`，
     定价约定写在 `docs/18 §3.6`。效果类临时减费（星轨传令）不受影响。
     0 费随从因此从 6 张变 12 张（占 40%），这是原来的事实被写到明面上，强度没变。
+
+34. **人机房可以指定对手用哪套基础卡组**（#161 / D-314 / ADR-0080）：
+    首页「人机对战」按钮左侧的紧凑下拉：不指定 / 炎刃 / 霜律 / 星轨，
+    选择结果写进按钮文案（`人机对战（对手：炎刃）`）。
+    **不指定 = 维持原行为**：服务端仍按房间码散列（同房码同对手，不同房会轮换）。
+    非法 slug 不拒建房，静默回落散列 —— 这个字段只是偏好，不值得为它挡住开房。
+    只影响人机：联机建房的协议入参与行为都不变。
+    ⚠️ 该控件**必须与按钮同一行**：1366×768 下首页只剩 22px 余量，
+    单独一行会把「编辑卡组」顶出首屏（`home-layout.spec.ts` 会红）。
 
 ## 11. 本轮验收清单（D-137 ~ D-149）
 

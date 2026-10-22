@@ -83,6 +83,17 @@ export const RoomCreateSchema = z.object({
    */
   solo: z.boolean().optional(),
   /**
+   * 人机房的**对手**用哪套基础卡组（#161 / Era 2026-10-22「161人机可选」）。
+   *
+   * 取值是 `BASIC_DECKS` 的 `slug`（`blade` / `frost` / `star`），缺省 = 维持原行为
+   * （`aiBasicDeck(code)` 按房间码散列，同房码同对手）。
+   *
+   * ⚠️ 刻意用 `z.string()` 而不是 `z.enum`：非法 slug 应当**静默回落散列**，
+   * 而不是让建房请求 400 —— 手误和「老客户端带了个新 slug」都不该挡住开房。
+   * 白名单校验在房间层（`room.ts` 的 `pickAiDeck`）。
+   */
+  opponentDeck: z.string().max(16).optional(),
+  /**
    * 回合时限（毫秒）—— H18 / Era 2026-10-21「时长建议在建房能选择，30-60-180-999」。
    *
    * 这里只做「是正整数」的类型约束，**档位白名单在房间层**（`normalizeTurnTimeout`）：
