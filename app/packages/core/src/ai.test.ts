@@ -106,7 +106,7 @@ describe('decideAiMove · 出牌', () => {
       own: { hand: [c('h1', 'cheap'), c('h2', 'big')], cost: [c('c1', 'cheap')] },
       maxCost: 1,
     });
-    // cheap 实付 0（随从 −1），big 实付 3 —— 只有 cheap 付得起
+    // cheap 卡面 1 费 → 实付 1，big 实付 3；额度 1 时只有 cheap 付得起
     expect(decideAiMove(s, 'ai', CARDS, 1000)).toEqual({ type: 'card:play', payload: { uid: 'h1' } });
   });
 

@@ -716,7 +716,14 @@ describe('充能 chargeRule（X-2，充能区即费用区）', () => {
 /* ------------------------------ 出牌与支付 ------------------------------ */
 
 describe('出牌 playRule（A5 补充 2：按张数支付）', () => {
-  it('随从减费：卡面 2 费实际支付 1 张（docs/16 §4）', () => {
+  /*
+   * 卡面费用即实付（D-313 / #164）。
+   *
+   * 这条用例原来是「卡面 2 费实际支付 1 张 —— 随从全局 −1」的证据。那条全局减费
+   * 已删除（1 费烘焙进 24 张随从的卡面 `cost`），所以断言反过来：
+   * **印 2 就付 2**。夹具卡池与真实卡池解耦，改卡面数字不会影响这条。
+   */
+  it('卡面费用即实付：2 费随从支付 2 张（D-313 / #164）', () => {
     const s = craft({
       phase: 'main',
       zones: { hand: [c('h1', 'm2')], cost: [c('k1', 'm4'), c('k2', 'm4')] },
@@ -724,9 +731,9 @@ describe('出牌 playRule（A5 补充 2：按张数支付）', () => {
     const after = run(s, intent('p1', INTENTS.play, { uid: 'h1' }));
     const p = after.players['p1']!;
     expect(p.zones.board.map((x) => x.uid)).toContain('h1');
-    expect(p.zones.cost.length).toBe(1); // 2 - (cost 2 − 1) = 1
-    expect(p.zones.graveyard[0]!.uid).toBe('k1'); // 按费用区顺序从前往后取
-    expect(p.usedCostThisTurn).toBe(1);
+    expect(p.zones.cost.length).toBe(0); // 2 − 2 = 0，不再有 −1
+    expect(p.zones.graveyard.map((x) => x.uid)).toEqual(['k1', 'k2']); // 按费用区顺序
+    expect(p.usedCostThisTurn).toBe(2);
   });
 
   it('费用区张数不足 → 拒绝 INSUFFICIENT_COST', () => {
@@ -807,23 +814,26 @@ describe('自选支付费用卡（D-257）', () => {
     });
 
   it('按 costUids 指定的那几张支付，未被选中的留在费用区', () => {
-    const after = run(board(), intent('p1', INTENTS.play, { uid: 'h1', costUids: ['k3'] }));
+    const after = run(board(), intent('p1', INTENTS.play, { uid: 'h1', costUids: ['k3', 'k2'] }));
     const p = after.players['p1']!;
-    // m2 费用 2 → 随从减 1 = 支付 1 张
-    expect(p.zones.graveyard.map((x) => x.uid)).toContain('k3');
-    expect(p.zones.cost.map((x) => x.uid)).toEqual(['k1', 'k2']);
+    // m2 卡面 2 费 → 实付 2 张（D-313 之后卡面即实付，不再 −1）
+    expect(p.zones.graveyard.map((x) => x.uid).sort()).toEqual(['k2', 'k3']);
+    expect(p.zones.cost.map((x) => x.uid)).toEqual(['k1']);
   });
 
   it('多张支付时按给定顺序全部扣除', () => {
     const s = craft({
       phase: 'main',
-      zones: { hand: [c('h1', 'd7')], cost: [c('k1', 'm4'), c('k2', 'm4'), c('k3', 'm4')] },
+      zones: {
+        hand: [c('h1', 'd7')],
+        cost: [c('k1', 'm4'), c('k2', 'm4'), c('k3', 'm4'), c('k4', 'm4')],
+      },
     });
-    // d7 费用 3 → 随从减 1 = 支付 2 张
-    const after = run(s, intent('p1', INTENTS.play, { uid: 'h1', costUids: ['k2', 'k1'] }));
+    // d7 卡面 3 费 → 实付 3 张（D-313 之后不再 −1）
+    const after = run(s, intent('p1', INTENTS.play, { uid: 'h1', costUids: ['k2', 'k1', 'k4'] }));
     const p = after.players['p1']!;
     expect(p.zones.cost.map((x) => x.uid)).toEqual(['k3']);
-    expect(p.zones.graveyard.map((x) => x.uid).sort()).toEqual(['k1', 'k2']);
+    expect(p.zones.graveyard.map((x) => x.uid).sort()).toEqual(['k1', 'k2', 'k4']);
   });
 
   it('张数不对 → INVALID_COST_PICK（少给不该白赚、多给不该多丢）', () => {
@@ -843,7 +853,7 @@ describe('自选支付费用卡（D-257）', () => {
   it('重复选同一张 → INVALID_COST_PICK', () => {
     const s = craft({
       phase: 'main',
-      zones: { hand: [c('h1', 'd7')], cost: [c('k1', 'm4'), c('k2', 'm4')] },
+      zones: { hand: [c('h1', 'd7')], cost: [c('k1', 'm4'), c('k2', 'm4'), c('k3', 'm4')] },
     });
     const r = applyIntent(s, intent('p1', INTENTS.play, { uid: 'h1', costUids: ['k1', 'k1'] }), CTX);
     expect(r.ok).toBe(false);
@@ -852,7 +862,8 @@ describe('自选支付费用卡（D-257）', () => {
 
   it('不传 costUids 时沿用「按顺序取前 N 张」（AI 与老客户端路径）', () => {
     const after = run(board(), intent('p1', INTENTS.play, { uid: 'h1' }));
-    expect(after.players['p1']!.zones.cost.map((x) => x.uid)).toEqual(['k2', 'k3']);
+    // m2 实付 2 张，按顺序取前两张 → 只剩 k3
+    expect(after.players['p1']!.zones.cost.map((x) => x.uid)).toEqual(['k3']);
   });
 });
 

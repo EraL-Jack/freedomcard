@@ -7,7 +7,7 @@
  */
 
 import type { CardDef, CardInstance, GameEvent, GameState, Intent, PlayerId, PlayerState, Rejection, Zone } from '@app/shared/types';
-import { DAMAGE_TIER_MAX_LOW, DAMAGE_TIER_MAX_MID, MINION_COST_DISCOUNT, RULE_ERRORS } from '@app/shared/constants';
+import { DAMAGE_TIER_MAX_LOW, DAMAGE_TIER_MAX_MID, RULE_ERRORS } from '@app/shared/constants';
 
 import { advanceCursor, shuffle } from './rng.js';
 import { ZONES, activePlayer } from './state.js';
@@ -194,16 +194,22 @@ export function unitPower(state: GameState, cards: Record<string, CardDef>, uid:
 /* ------------------------------ 费用与伤害 ------------------------------ */
 
 /**
- * 一张卡**实际要支付的费用**（docs/16 §4 / §4.1）：
- * 随从减 1（最低 0），法术与设置法术按卡面值。
+ * 一张卡**实际要支付的费用**。
+ *
+ * 卡面数字即实付（D-313 / #164）：随从的「−1 费」已经烘焙进 `cards.ts` 的 `cost`，
+ * 这里不再做任何折算，全工程只有一个数。
+ *
+ * 历史：这里曾经是 `Math.max(0, def.cost - MINION_COST_DISCOUNT)`，
+ * 而卡面印的是未折的数 —— 于是卡组编辑说 4 费、手牌说 3 费，同一张牌两个价。
+ * `MINION_COST_DISCOUNT` 已随 D-313 删除，**不要再加回任何全局减费**：
+ * 调价请直接改卡面的 `cost`（定价约定见 `docs/18`）。
  *
  * ⚠️ 本回合的一次性减费（星轨传令 `nextMinionDiscount`）**不在**这里 ——
  * 那是「下一张随从」的临时优惠，若算进来，手牌里每张随从都会显示成折后价。
- * 它在出牌时由 `play.ts` 叠加；界面同理只显示这张卡的常规实付（D-232）。
+ * 它在出牌时由 `play.ts` 叠加。
  */
 export function costToPay(def: CardDef): number {
-  if (def.type !== 'minion') return Math.max(0, def.cost);
-  return Math.max(0, def.cost - MINION_COST_DISCOUNT);
+  return Math.max(0, def.cost);
 }
 
 /**

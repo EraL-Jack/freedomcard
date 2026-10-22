@@ -15,7 +15,37 @@ import type { CardDef } from '@app/shared/types';
 import { CARD_POOL, TOKEN_CARD_IDS, validateCardPool } from '@app/shared/cards';
 
 import { checkDeck } from './deck.js';
+import { costToPay } from './ops.js';
 import { createInitialState } from './state.js';
+
+describe('卡面费用即实付（D-313 / #164）', () => {
+  /*
+   * 全卡池不变量：`costToPay(def) === def.cost`。
+   *
+   * 这是 #164 的验收口径 2 —— 它把「卡面一个数、实付另一个数」钉死为不可能。
+   * 谁把全局减费加回 `costToPay`，这条立刻红；谁在 `cards.ts` 写小数也不会红，
+   * 那归 `validateCardPool()`。
+   */
+  it('对全卡池恒成立（随从与法术都是）', () => {
+    for (const def of Object.values(CARD_POOL)) {
+      expect(costToPay(def), `${def.defId}（${def.name}）的实付应等于卡面费用`).toBe(def.cost);
+    }
+  });
+
+  /*
+   * 卡面数字也是「局内手牌 / 卡组编辑 / 卡牌详情」三处唯一的来源。
+   * 这里只守数据层：随从费用分布符合 `docs/16 §11.1` 的口径，
+   * 改动卡池时若忘了同步条文，这条会指出分布变了。
+   */
+  it('随从费用分布与 docs/16 §11.1 一致', () => {
+    const dist: Record<number, number> = {};
+    for (const def of Object.values(CARD_POOL)) {
+      if (def.type !== 'minion') continue;
+      dist[def.cost] = (dist[def.cost] ?? 0) + 1;
+    }
+    expect(dist).toEqual({ 0: 12, 1: 5, 2: 4, 3: 2, 4: 3, 5: 3, 6: 1 });
+  });
+});
 
 describe('卡池数值自检（D-240）', () => {
   it('真实卡池全部合法', () => {
