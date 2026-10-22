@@ -243,8 +243,11 @@ export async function pick(page: Page, indices: readonly number[]): Promise<void
  *
  * 每充一张手牌就变化，故每轮重读手牌；留一张随从不出（供后续出牌测试）。
  * 返回实际充能张数。
+ *
+ * `keep` = **要留几张随从**（默认 1）。只验法术的用例传 0 —— 随从对它没用，
+ * 全部充进费用区才能把 `maxCost` 档位抬上去（issue #149）。
  */
-export async function chargeMinions(page: Page): Promise<number> {
+export async function chargeMinions(page: Page, keep = 1): Promise<number> {
   // 从**当前**费用区张数起算（调用前可能已有拖拽充能，drag.spec 2026-10-18）。
   // 返回充能完成后费用区的总张数。
   //
@@ -257,9 +260,9 @@ export async function chargeMinions(page: Page): Promise<number> {
   for (;;) {
     const hand = await readHand(page);
     const minions = hand.filter((c) => c.kind === '随从');
-    if (minions.length <= 1) break; // 留一张随从供出牌；极端牌序（起手仅 1 随从）则充 0 张
-    const keep = [...minions].sort((a, b) => payOf(a) - payOf(b))[0]!;
-    const target = minions.find((c) => c.index !== keep.index);
+    if (minions.length <= keep) break; // 留够 `keep` 张随从；极端牌序（随从不够）则不再充
+    const cheapest = [...minions].sort((a, b) => payOf(a) - payOf(b))[0]!;
+    const target = minions.find((c) => c.index !== cheapest.index);
     if (!target) break;
     const before = await zoneCount(page, 'cost', 1);
     await pick(page, [target.index]);

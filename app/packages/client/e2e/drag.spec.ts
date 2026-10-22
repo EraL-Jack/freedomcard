@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-import { activePage, advancePhase, chargeMinions, confirmPay, costRemaining, payOf, playOneMinion, readHand, settleChoices, startGame, turnNo, zoneCount } from './helpers.js';
+import { activePage, advancePhase, chargeMinions, confirmPay, costRemaining, payOf, playOneMinion, readHand, settleChoices, startGame, turnNo, zoneCount, type HandCard } from './helpers.js';
 
 /**
  * 拖拽交互端到端验证（B3-1「点选+拖拽都要」/ Era 2026-10-18「模拟现实操作的卡牌」）。
@@ -143,7 +143,8 @@ test('拖拽我方随从到对方随从 = 发起攻击', async ({ browser }) => 
  * 法术区没有落点、拖到随从格又必然带一个非法 slot。
  */
 test('拖拽法术卡到法术区 = 出牌（issue #108）', async ({ browser }) => {
-  test.setTimeout(90_000);
+  // 150s：可能要为「手上没有付得起的法术」推进若干回合（issue #149），比原来的 90s 留出余量
+  test.setTimeout(150_000);
   const { host, guest } = await startGame(browser);
   const pages = [host, guest];
 
@@ -155,17 +156,11 @@ test('拖拽法术卡到法术区 = 出牌（issue #108）', async ({ browser })
 
   const p = await activePage(pages);
   await expect.poll(() => phaseOf(p)).toContain('阶段 充能');
-  await chargeMinions(p);
-  await advancePhase(p, '抽牌'); // 抽完自动落在主要阶段
 
+  // 手牌与抽牌都是随机的，可能一张付得起的法术都没有（见 `ensureSpellToCast`）——
+  // 它在必要时自动推进回合、靠抽牌凑出可打的法术，而不是碰运气。
+  const spell = await ensureSpellToCast(pages, p);
   const hand = await readHand(p);
-  const costZone = await zoneCount(p, 'cost', 1);
-  const budget = await costRemaining(p);
-  const spell = hand
-    .filter((c) => c.kind === '法术' || c.kind === '设置')
-    .filter((c) => payOf(c) <= costZone && payOf(c) <= budget)
-    .sort((a, b) => payOf(a) - payOf(b))[0];
-  expect(spell, `手牌里应有付得起的法术（费用区 ${costZone} 张、本回合额度 ${budget}）`).toBeDefined();
 
   const before = hand.length;
   const spellZoneBefore = await zoneCount(p, 'spell', 1);
@@ -192,6 +187,62 @@ test('拖拽法术卡到法术区 = 出牌（issue #108）', async ({ browser })
     .toBe(true);
   await expect(p.getByText('只有随从需要指定位置')).toHaveCount(0);
 });
+
+/**
+ * 推进到「手牌里存在付得起的法术」为止（issue #149）。
+ *
+ * ## 为什么不能读一次手牌就断言
+ *
+ * 起手与抽牌都是随机的，而**法术不吃随从减费**（`MINION_COST_DISCOUNT` 只作用于随从），
+ * 后攻首回合的额度又只有 1~3 —— 手里有没有「≤ 额度」的法术完全看牌序。
+ * 更难受的是反方向也会踩：`chargeMinions` 会把随从全充进费用区，
+ * 若起手 6 张全是随从，手上连一张法术都不剩，再怎么充也变不出来。
+ * 炎刃卡组 30 张里只有 7 张非随从，起手全随从约 **17%** —— 旧写法在这种牌型下
+ * **必然**红，而失败信息是「手牌里应有付得起的法术」，读起来像实现坏了。
+ * 它已经误伤过一次：D-290 的全量跑出现 1 红，最后要靠人工复跑 3 次才能排除。
+ *
+ * ## 为什么是「推进回合」而不是 issue 里的另外两个选项
+ *
+ * - 传 seed：`room:create` 要新增可选字段，schema / 服务端 / 回放三处跟着改，为一条用例动协议不值；
+ * - 「拖任意付得起的牌」：法术区只收法术，拖随从会被拒，验不到目标路径。
+ *
+ * 牌库固定含 7 张法术，所以**抽牌是唯一确定性能拿到法术的途径**。
+ * 每圈：充能（不留随从，把 `maxCost` 档位抬上去）→ 抽牌 → 看手牌；没有就结束回合。
+ * 10 圈内抽到至少一张法术的概率 96%（`1 - C(23,10)/C(30,10)`），够用；
+ * 真跑满 10 圈说明牌库构成变了，那是该被发现的新事实，不是该被咽下去的偶发。
+ */
+async function ensureSpellToCast(pages: readonly Page[], me: Page): Promise<HandCard> {
+  for (let round = 0; round < 10; round++) {
+    // 轮到对手就替它结束回合 —— E2E 里没有 AI，另一个页面就是对手本人。
+    for (let guard = 0; guard < 4; guard++) {
+      const actor = await activePage(pages);
+      if (actor === me) break;
+      const t = await turnNo(actor);
+      await actor.getByTestId('end-turn').click();
+      await expect.poll(() => turnNo(actor), { timeout: 15_000 }).toBeGreaterThan(t);
+    }
+
+    // 法术用例不需要留随从：全充进费用区，`maxCost` 按 chargeCount 分档抬上去。
+    await expect.poll(() => phaseOf(me), { timeout: 15_000 }).toContain('阶段 充能');
+    await chargeMinions(me, 0);
+    await advancePhase(me, '抽牌'); // 抽完自动落在主要阶段
+
+    const hand = await readHand(me);
+    const costZone = await zoneCount(me, 'cost', 1);
+    const budget = await costRemaining(me);
+    const spell = hand
+      .filter((c) => c.kind === '法术' || c.kind === '设置')
+      .filter((c) => payOf(c) <= costZone && payOf(c) <= budget)
+      .sort((a, b) => payOf(a) - payOf(b))[0];
+    if (spell) return spell;
+
+    // 本回合没有能用的法术 —— 结束回合，靠下一张抽牌
+    const t = await turnNo(me);
+    await me.getByTestId('end-turn').click();
+    await expect.poll(() => turnNo(me), { timeout: 15_000 }).toBeGreaterThan(t);
+  }
+  throw new Error('推进 10 个回合仍没有付得起的法术 —— 牌库构成变了？');
+}
 
 /** header 文本（含阶段名）—— 与 helpers.phaseText 同口径。 */
 async function phaseOf(page: Page): Promise<string> {
