@@ -31,8 +31,7 @@ import type { RoomSession } from './useRoom.js';
 export default function HomeScreen(props: {
   session: RoomSession;
   onEditDeck: () => void;
-}): React.JSX.Element {
-  const { session } = props;
+}): React.JSX.Element {  const { session } = props;
   const [nickname, setNickname] = useState(() => localStorage.getItem('fc.nickname') ?? '');
   const [code, setCode] = useState('');
   const [format, setFormat] = useState<MatchFormat>('bo1');
@@ -98,7 +97,7 @@ export default function HomeScreen(props: {
   };
 
   return (
-    <main className="mx-auto flex min-h-dvh max-w-md flex-col gap-4 p-4">
+    <main className="mx-auto flex min-h-dvh max-w-md flex-col gap-3 p-4">
       {/*
         系统提示条（D-256）—— 这是「点了没反应」的根治。
 
@@ -134,11 +133,35 @@ export default function HomeScreen(props: {
         </div>
       ) : null}
 
-      <h1 className="text-xl font-semibold">ETCG</h1>
-      {/* A1（P-08）：Era 2026-10-21 —— 「暂时代称可以叫 ETCG，风格为混合风格，什么样的卡组都会有」。
-          游戏名仍是他起的名，副标题把这句风格原话直接摆出来，不另行发挥。 */}
-      <p className="-mt-2 text-xs text-slate-400">混合风格 · 什么样的卡组都有</p>
+      {/*
+        标题行（issue #116 / D-296）—— 「编辑卡组」原本是整页最后一个按钮，
+        1366×768 下落在 top 834、完全在首屏之外（需滚 164px）。第一次进来的玩家
+        因此以为只有三套预设卡组能用 —— 而卡组编辑正是这个 Demo 的卖点。
 
+        挪到标题右侧后，它的位置不再取决于下面表单有多长：表单以后再加一行也不会把它挤出去。
+        按钮保留 `data-testid="edit-deck"`（E2E 与卡组链路都靠它）。
+      */}
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h1 className="text-xl font-semibold">ETCG</h1>
+          {/* A1（P-08）：Era 2026-10-21 —— 「暂时代称可以叫 ETCG，风格为混合风格，什么样的卡组都会有」。
+              游戏名仍是他起的名，副标题把这句风格原话直接摆出来，不另行发挥。 */}
+          <p className="mt-0.5 text-xs text-slate-400">混合风格 · 什么样的卡组都有</p>
+        </div>
+        <button
+          type="button"
+          className="shrink-0 rounded border border-slate-700 px-3 py-2 text-sm"
+          onClick={props.onEditDeck}
+          data-testid="edit-deck"
+        >
+          编辑卡组
+        </button>
+      </div>
+
+      {/*
+        连接状态 + 房间状态并成一行（issue #116）：两句话各占一行时纯属浪费首屏高度。
+        「当前不在房间内」这句文案保留 —— 进过房间再回来的人需要它来确认自己真的出来了。
+      */}
       <p className="text-xs text-slate-400">
         {session.link === 'online' ? (
           <span className="text-emerald-400">服务端已连接</span>
@@ -147,9 +170,8 @@ export default function HomeScreen(props: {
         ) : (
           <span className="text-rose-400">服务端未连接</span>
         )}
+        <span className="ml-2 text-slate-500">当前不在房间内。</span>
       </p>
-
-      <p className="text-xs text-slate-500">当前不在房间内。</p>
 
       {!online ? (
         <p className="text-xs text-amber-300" data-testid="offline-hint">
@@ -207,40 +229,43 @@ export default function HomeScreen(props: {
           ) : null}
         </label>
 
-        {/* 赛制（D-132）：BO1 一局定胜负；BO3 三局两胜、双方各先手一次 */}
-        <label className="block">
-          <span className="text-xs text-slate-400">赛制</span>
-          <select
-            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2"
-            value={format}
-            onChange={(e) => setFormat(e.target.value === 'bo3' ? 'bo3' : 'bo1')}
-            data-testid="format"
-          >
-            <option value="bo1">BO1 · 一局定胜负</option>
-            <option value="bo3">BO3 · 三局两胜（各先手一次）</option>
-          </select>
-        </label>
-
-        {/*
-          回合时限（H18）—— Era 2026-10-21：「时长建议在建房能选择，30-60-180-999」。
-          档位写死在 shared（`TURN_TIMEOUT_OPTIONS`），客户端只负责选择与展示；
-          服务端仍按白名单归一，非法值回落默认，老客户端不带该字段也能建房。
-        */}
-        <label className="block">
-          <span className="text-xs text-slate-400">每回合时限</span>
-          <select
-            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2"
-            value={turnMs}
-            onChange={(e) => setTurnMs(e.target.value)}
-            data-testid="turn-timeout"
-          >
-            {TURN_TIMEOUT_OPTIONS.map((ms) => (
-              <option key={ms} value={String(ms)}>
-                {turnTimeoutLabel(ms)}
-              </option>
-            ))}
-          </select>
-        </label>
+        {/* 赛制（D-132）+ 回合时限（H18）—— 并成一行（issue #116）：两者都是「开这局之前
+            顺手选一下」的短选项，各占一整行会把「加入房间」整段推出首屏。 */}
+        <div className="grid grid-cols-2 gap-2">
+          {/* 赛制：BO1 一局定胜负；BO3 三局两胜、双方各先手一次 */}
+          <label className="block">
+            <span className="text-xs text-slate-400">赛制</span>
+            <select
+              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-2"
+              value={format}
+              onChange={(e) => setFormat(e.target.value === 'bo3' ? 'bo3' : 'bo1')}
+              data-testid="format"
+            >
+              <option value="bo1">BO1 · 一局定胜负</option>
+              <option value="bo3">BO3 · 三局两胜</option>
+            </select>
+          </label>
+          {/*
+            回合时限（H18）—— Era 2026-10-21：「时长建议在建房能选择，30-60-180-999」。
+            档位写死在 shared（`TURN_TIMEOUT_OPTIONS`），客户端只负责选择与展示；
+            服务端仍按白名单归一，非法值回落默认，老客户端不带该字段也能建房。
+          */}
+          <label className="block">
+            <span className="text-xs text-slate-400">每回合时限</span>
+            <select
+              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-2"
+              value={turnMs}
+              onChange={(e) => setTurnMs(e.target.value)}
+              data-testid="turn-timeout"
+            >
+              {TURN_TIMEOUT_OPTIONS.map((ms) => (
+                <option key={ms} value={String(ms)}>
+                  {turnTimeoutLabel(ms)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
 
         <button
           type="button"
@@ -322,14 +347,8 @@ export default function HomeScreen(props: {
         </button>
       </section>
 
-      <button
-        type="button"
-        className="rounded border border-slate-700 px-4 py-3"
-        onClick={props.onEditDeck}
-        data-testid="edit-deck"
-      >
-        编辑卡组
-      </button>
+      {/* 「编辑卡组」已移到标题行（issue #116）—— 这里不再放第二个入口，
+          两个同名按钮只会让「我刚才点的是哪个」变成问题。 */}
 
       <p className="mt-auto text-[11px] text-slate-500">
         视觉为占位风格（纯色 + 文字卡），等待 B6 / B7 的美术输入。
