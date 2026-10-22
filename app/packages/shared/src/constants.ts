@@ -48,6 +48,19 @@ export const SOCKET_EVENTS = {
   gameIntent: 'game:intent',
   gameEvents: 'game:events',
   gameSnapshot: 'game:snapshot',
+  /**
+   * 计时基线变更（#155 / D-310）。
+   *
+   * 「任何被接受的操作都重新计时」（ADR-0017）是**服务端**的事实，但客户端只从
+   * `game:snapshot` 读 `turnDeadline` —— 而操作被接受时服务端只广播 `room:state`，
+   * 于是服务端把截止时刻一路往后推、客户端手里的那个数一路减到 0 并夹住。
+   * 界面说「0 秒」，操作却仍然被接受，两边说法相反。
+   *
+   * 为什么不干脆在每次接受后广播一份 `game:snapshot`：客户端把快照当作**新起点**，
+   * 收到就清空播放队列（`useRoom.ts` 的 `onSnapshot`）—— 那会把正在放的动画掐断，
+   * 而逐条播放是 Era 明确要的。所以计时单独一条轻量事件，只带一个截止时刻。
+   */
+  gameTimer: 'game:timer',
 } as const;
 
 /**

@@ -329,10 +329,24 @@ function syncTimers(roomId: string, rt: RoomRuntime): void {
   if (rt.state.phase === 'mulligan') {
     rt.timer.clear();
     armMulliganTimer(roomId, rt);
-    return;
+  } else {
+    clearMulliganTimer(rt);
+    rt.timer.arm();
   }
-  clearMulliganTimer(rt);
-  rt.timer.arm();
+  /*
+   * 计时基线一变就必须告诉客户端（#155 / D-310）。
+   *
+   * 放在这里而不是各个调用点：`syncTimers` 就是「重新计时」这件事的唯一定义，
+   * 漏掉任何一个调用点都会重现「界面 0 秒、操作仍被接受」的矛盾。
+   */
+  emitTimer(roomId, rt);
+}
+
+/** 把**当前**的计时截止时刻推给客户端（#155）。只带一个数，不触碰播放队列。 */
+function emitTimer(roomId: string, rt: RoomRuntime): void {
+  io.to(roomId).emit(SOCKET_EVENTS.gameTimer, {
+    turnDeadline: rt.state.phase === 'mulligan' ? rt.mulliganDeadline : rt.timer.deadlineAt,
+  });
 }
 
 function broadcastRoom(roomId: string): void {

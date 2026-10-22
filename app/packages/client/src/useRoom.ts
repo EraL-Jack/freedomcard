@@ -596,12 +596,26 @@ export function useRoom(): RoomSession {
       void pump();
     };
 
+    /*
+     * 计时基线变更（#155 / D-310）。
+     *
+     * 服务端在**每次被接受的操作**后重新计时（ADR-0017）。原来只有 `game:snapshot`
+     * 会带 `turnDeadline`，而操作被接受时只广播 `room:state` —— 于是服务端的截止时刻
+     * 一直往后推，客户端那个数一路减到 0 并夹住：界面说「0 秒」，操作却仍被接受。
+     *
+     * 这里只重设一个数，**不动播放队列** —— 动画照放，倒计时该回弹就回弹。
+     */
+    const onTimer = (out: { turnDeadline?: number }): void => {
+      setTurnDeadline(out.turnDeadline ?? null);
+    };
+
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
     socket.on('connect_error', onError);
     socket.on(SOCKET_EVENTS.roomState, onRoomState);
     socket.on(SOCKET_EVENTS.gameSnapshot, onSnapshot);
     socket.on(SOCKET_EVENTS.gameEvents, onGameEvents);
+    socket.on(SOCKET_EVENTS.gameTimer, onTimer);
 
     return () => {
       socket.off('connect', onConnect);
@@ -610,6 +624,7 @@ export function useRoom(): RoomSession {
       socket.off(SOCKET_EVENTS.roomState, onRoomState);
       socket.off(SOCKET_EVENTS.gameSnapshot, onSnapshot);
       socket.off(SOCKET_EVENTS.gameEvents, onGameEvents);
+      socket.off(SOCKET_EVENTS.gameTimer, onTimer);
     };
   }, [appendLog, pump]);
 

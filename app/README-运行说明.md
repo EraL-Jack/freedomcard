@@ -176,10 +176,10 @@ Windows 需放行 5173 / 3000 端口的入站规则（网络配置文件为 Publ
 | `pnpm dev` | 并行起服务端与客户端 |
 | `pnpm typecheck` | 全量 `tsc --noEmit` |
 | `pnpm lint` | ESLint（flat config） |
-| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层 + `client` 纯逻辑，2026-10-22 时点 **500 passed**（core 257 + server 167 + client 76，另有 1 条 skipped 基线采样） |
+| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层 + `client` 纯逻辑，2026-10-22 时点 **504 passed**（core 257 + server 167 + client 80，另有 1 条 skipped 基线采样） |
 | `pnpm --filter @app/client run test:coverage` | client 覆盖率（v8）。目前只覆盖 `selectors` / `labels` / `log` 三个纯逻辑模块；组件层由 E2E 兜 |
 | `pnpm build` | 构建客户端到 `packages/client/dist` |
-| `pnpm --filter @app/client test:e2e` | 端到端（Playwright）：**75 条** —— 房间流程 / 首页与对战桌布局 / 视口溢出 / 联机开局 / 回合操作 / 攻击与指挥官伤害 / 卡组编辑 / 人机对战 / 人机房换牌阶段与倒计时 / 回合边界的指引不变量 / 堆叠区浮窗 / 新手引导 / 390px 日志抽屉 / 断线与点击反馈 / 危险操作 / 打磨观感 / 结算覆盖层 / 再来一局 / 确定性守卫 |
+| `pnpm --filter @app/client test:e2e` | 端到端（Playwright）：**76 条** —— 房间流程 / 首页与对战桌布局 / 视口溢出 / 联机开局 / 回合操作 / 攻击与指挥官伤害 / 卡组编辑 / 人机对战 / 人机房换牌阶段与倒计时 / 回合边界的指引不变量 / 堆叠区浮窗 / 新手引导 / 390px 日志抽屉 / 断线与点击反馈 / 危险操作 / 打磨观感 / 结算覆盖层 / 再来一局 / 计时回弹 / 确定性守卫 |
 
 > 首次跑 E2E 需先下载浏览器：`pnpm --filter @app/client exec playwright install chromium`（约 197 MiB，慢）。
 > 截图落在 `packages/client/e2e/screenshots/`（已被 `.gitignore` 忽略）。
@@ -384,6 +384,7 @@ app/
 | `game:intent` | C→S | `Intent` | 走完整处理链：去重 → 引擎 → reduce → 哈希 → 回放 → 广播 |
 | `game:events` | S→C | 处理结果 | `accepted` 广播全房；`rejected` / `dropped` 只回发送方 |
 | `game:snapshot` | S→C | 状态快照 | 重连 / 开局前下发**起点状态**；客户端必须先用它建立起点，否则那一批事件会被丢弃 |
+| `game:timer` | S→C | `{ turnDeadline }` | 计时基线变更（D-310 / #155）：任何被接受的操作都会重新计时（ADR-0017），这条事件把新的截止时刻推给客户端。**刻意不用快照代替** —— 客户端收到快照会清空播放队列，等于掐断动画（ADR-0077） |
 | `echo` | C→S→C | `{ message }` | 连通性自检，无业务含义（`EchoSchema` 校验；D-180 补进本表） |
 
 要记住的三条：
@@ -500,6 +501,18 @@ app/
     只在系列赛**未**分胜负时出现；「再来一局」只在整场**已**结束（`phase === 'ended'`）时出现，
     两者不会同时在场。重开会把上一局的回放先落盘 —— **连打两局得到两份独立 `replay.json`**，
     不是一份追加。
+
+28. **回合内任何被接受的操作都会让倒计时回弹**（#155 / D-310 / ADR-0077）：
+    服务端本来就每次重新计时（ADR-0017），现在会把新的截止时刻推给客户端（`game:timer`）。
+    此前客户端只从快照读 `turnDeadline`，于是界面一路数到 `0s` 停住、操作却仍被接受 ——
+    那种「界面说超时、引擎说没超时」的状态不会再出现。
+    ⚠️ 人机局的 AI 每动一手也会重新计时，所以**对手回合里时钟看起来几乎不动**，这是对的。
+
+29. **打指挥官的战报不再写「裁决」**（#156 / D-311）：
+    打脸没有防守方，也没有任何东西被破坏，现在只写
+    `炎刃骑士 直击指挥官 → 造成 2 点伤害`（法术直伤写「对指挥官造成 N 点伤害」）。
+    随从对撞仍然是「裁决 X vs Y → …」。旧回放不受影响 —— 引擎事件流没改，
+    这一层只是渲染（ADR-0077 之外的另一条取舍：改文案不改协议）。
 
 ## 11. 本轮验收清单（D-137 ~ D-149）
 
