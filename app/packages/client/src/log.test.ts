@@ -338,6 +338,83 @@ describe('隐藏信息：抽牌只看自己的卡名，对手只记张数', () =
 
 /* -------------------- #121：战报里不许出现协议串 -------------------- */
 
+/**
+ * 打脸不是「裁决」（#156）。
+ *
+ * `attack.ts` 对「随从攻击敌方指挥官」硬编码 `outcome: 'defender'` + `defPower: 0`，
+ * 照字面渲染就是「裁决 5 vs 0 → 防守方破坏」—— 而打脸什么都不破坏，
+ * 且这是每回合都会出现的最频繁路径。文案层负责把这条岔开：
+ * 裁决行不出，改由「谁直击了指挥官、掉了多少」说清。
+ */
+describe('打脸的战报（#156）', () => {
+  /** 状态里放一张敌方指挥官 + 一张我方场上随从，供 `defIdOf` 反查。 */
+  function stateWithCommander(): GameState {
+    const s = stateWithHands({ p1: [], p2: [] });
+    const players = (s as unknown as {
+      players: Record<string, { zones: Record<string, { uid: string; defId: string }[]> }>;
+    }).players;
+    players.p2!.zones.commander = [{ uid: 'c2', defId: 'bladeLord' }];
+    players.p1!.zones.board = [{ uid: 'a1', defId: 'bladeKnight' }];
+    players.p1!.zones.commander = [{ uid: 'c1', defId: 'frostAdjudicator' }];
+    return s;
+  }
+
+  it('打指挥官不写「裁决 X vs 0 → 防守方破坏」', () => {
+    const s = stateWithCommander();
+    expect(
+      describeEvent(
+        ev('combat:resolved', {
+          by: 'p1',
+          attackerUid: 'a1',
+          targetUid: 'c2',
+          atkPower: 5,
+          defPower: 0,
+          outcome: 'defender',
+        }),
+        NAMES,
+        s,
+      ),
+      '打脸不发裁决行 —— 那句话在说「有东西被破坏」，而什么都没坏',
+    ).toBeNull();
+  });
+
+  it('打随从仍然要裁决行（不能顺手删掉真对撞）', () => {
+    const s = stateWithCommander();
+    // 目标是我方场上那张随从（不是指挥官）→ 裁决行照旧
+    expect(
+      describeEvent(
+        ev('combat:resolved', {
+          by: 'p1',
+          attackerUid: 'a1',
+          targetUid: 'a1',
+          atkPower: 4,
+          defPower: 2,
+          outcome: 'defender',
+        }),
+        NAMES,
+        s,
+      ),
+    ).toBe('裁决 4 vs 2 → 防守方破坏');
+  });
+
+  it('指挥官受伤时写出「谁打的」与伤害值', () => {
+    const s = stateWithCommander();
+    expect(
+      describeEvent(ev('commander:damaged', { playerId: 'p2', amount: 2, sourceUid: 'a1' }), NAMES, s),
+    ).toBe('炎刃骑士 直击指挥官 → 造成 2 点伤害');
+    // 查不到来源卡（旧回放 / 效果直伤）时退回不带主语的写法，不能出现「— 直击」
+    expect(describeEvent(ev('commander:damaged', { playerId: 'p2', amount: 1 }), NAMES, s)).toBe(
+      '指挥官受到 1 点伤害',
+    );
+  });
+
+  it('「电脑的指挥官发起攻击」中间不留空格（#159-3）', () => {
+    expect(describeEvent(ev('commander:attacked', { playerId: 'p1' }), NAMES, null)).toBe(
+      'Era的指挥官发起攻击',
+    );
+  });
+});
+
 describe('未映射的事件不进玩家战报（issue #121 / D-291）', () => {
   /*
    * 症状：中文战报里蹦出 `draw:completed`、`mulligan:closed` 这类英文冒号串，

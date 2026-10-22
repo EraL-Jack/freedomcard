@@ -147,11 +147,18 @@ test('攻击对方指挥官 → 对方掉血（ADR-0022）', async ({ browser })
   await second.getByTestId('slot-0').nth(1).locator('[data-testid="card"]').click();
   await second.getByTestId('zone-commander').nth(0).locator('[data-testid="card"]').click();
 
-  await expect(second.getByTestId('log')).toContainText('裁决', { timeout: 10_000 });
+  /*
+   * #156：打指挥官**不是**「裁决」—— 没有防守方，也没有任何东西被破坏。
+   * 战报要说的是「谁直击了指挥官、掉多少」，并且绝不能出现
+   * 「裁决 X vs 0 → 防守方破坏」那种说了破坏却什么都没坏的行。
+   */
+  const log = second.getByTestId('log');
+  await expect(log).toContainText('直击指挥官', { timeout: 10_000 });
+  await expect(log, '打脸不该出现「裁决 X vs 0」').not.toContainText('vs 0');
 
   // ADR-0014：指挥官不走「破坏」，改为扣血。随从力量值恒 ≥ 1，
   // 而指挥官此时为第 1 档（力量 1），故结局必是「防守方破坏」或「双方破坏」，
   // 两种情况**都会扣血** —— 这个断言不依赖具体抽到哪张牌。
   await expect.poll(hpOf).toBeLessThan(hpBefore);
-  await expect(second.getByTestId('log')).toContainText('指挥官受到', { timeout: 10_000 });
+  await expect(log, '掉的血要写在战报里').toContainText('点伤害', { timeout: 10_000 });
 });

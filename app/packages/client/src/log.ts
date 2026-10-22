@@ -77,6 +77,23 @@ function zoneText(zone: unknown): string {
 }
 
 /**
+ * 这个 uid 是不是某方的**指挥官**（#156）。
+ *
+ * 为什么需要它：`attack.ts` 对「随从打脸」硬编码了 `outcome: 'defender'` 与
+ * `defPower: 0`，照字面渲染会得到「裁决 5 vs 0 → 防守方破坏」——
+ * 一句说「有东西被破坏」但其实什么都没坏的话，而打脸是最频繁的结算路径。
+ * 判断依据只能是区域（`commander` 区恒为 1 张），事件本身不带这个信息。
+ */
+function isCommanderUid(state: GameState | null, uid: unknown): boolean {
+  if (!state || typeof uid !== 'string') return false;
+  for (const id of state.seats) {
+    const p: PlayerState | undefined = state.players[id];
+    if (p?.zones.commander.some((c) => c.uid === uid)) return true;
+  }
+  return false;
+}
+
+/**
  * 区域可见性表 —— `docs/16 §7.5`（Era 2026-10-22 拍板 C-06）：
  * 一张牌对对手可见与否**只取决于它当时所在的区**，与「怎么进来的」无关。
  *
@@ -244,7 +261,8 @@ export function describeEvent(
       return `${cardName(defIdOf(state, str('uid')))} 被冻结（跳过下次重置）`;
 
     case 'commander:attacked':
-      return `${who(names, str('playerId'))} 的指挥官发起攻击`;
+      // 「电脑 的指挥官」多一个空格（#156-3）：中文里昵称后面直接跟「的」。
+      return `${who(names, str('playerId'))}的指挥官发起攻击`;
 
     case 'cost:spent':
       return `${who(names, str('playerId'))} 消耗 ${num('amount') ?? 0} 张费用`;
@@ -253,8 +271,22 @@ export function describeEvent(
     case 'cost:income':
       return `⚡ ${who(names, str('playerId'))} 充能阶段自动 +${num('amount') ?? 0} 张费用`;
 
-    case 'commander:damaged':
-      return `指挥官受到 ${num('amount') ?? 1} 点伤害`;
+    case 'commander:damaged': {
+      /*
+       * #156：带 `sourceUid` 时说清「谁打的」（事件里有这张牌的 uid）——
+       * 光写「指挥官受到 2 点伤害」时，玩家分不清是随从打脸还是法术直伤。
+       * 动词按卡类型分开：随从 / 指挥官是「直击」，法术 / 设置是「造成」。
+       */
+      const amount = num('amount') ?? 1;
+      const source = str('sourceUid');
+      const defId = source ? defIdOf(state, source) : undefined;
+      if (!defId) return `指挥官受到 ${amount} 点伤害`;
+      const name = cardName(defId);
+      const type = CARD_POOL[defId]?.type;
+      return type === 'minion' || type === 'commander'
+        ? `${name} 直击指挥官 → 造成 ${amount} 点伤害`
+        : `${name} 对指挥官造成 ${amount} 点伤害`;
+    }
 
     case 'card:revealed':
       return `展示：${cardName(defIdOf(state, str('uid')))}`;
@@ -278,8 +310,18 @@ export function describeEvent(
     case 'deck:put-bottom':
       return null; // 展示后的归位，展示那一行已经说清楚了
 
-    case 'combat:resolved':
+    case 'combat:resolved': {
+      /*
+       * #156：打指挥官不写「裁决」行。
+       *
+       * `attack.ts` 对打脸硬编码 `outcome: 'defender'` + `defPower: 0`，
+       * 照字面就成了「裁决 5 vs 0 → 防守方破坏」—— 没有任何东西被破坏，
+       * 而这是每回合都会出现的最频繁路径。谁打的脸、掉多少血，
+       * 由紧随其后的 `commander:damaged` 那行说清楚。
+       */
+      if (isCommanderUid(state, str('targetUid'))) return null;
       return `裁决 ${num('atkPower')} vs ${num('defPower')} → ${OUTCOME_LABEL[str('outcome') ?? ''] ?? '?'}`;
+    }
 
     case 'health:changed':
       return `${who(names, str('playerId'))} 血量 → ${num('value') ?? '?'}`;
