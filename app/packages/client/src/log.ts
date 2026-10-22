@@ -16,6 +16,35 @@ import { PHASE_LABEL, ZONE_LABEL } from './labels.js';
  * 卡名从共享卡池查得 —— 这也是卡池必须放在 `shared` 的原因（ADR-0020）。
  */
 
+/** 战报在界面上只保留最近 N 条（B2-5：长局会有几百条，全量渲染没必要）。 */
+export const LOG_LIMIT = 200;
+
+/** 战报一行。`id` 只做 React key，不承载任何语义。 */
+export interface LogEntry {
+  id: number;
+  at: number;
+  text: string;
+}
+
+/**
+ * 追加一行战报并截到 `LOG_LIMIT` 条（#135 / D-291）。
+ *
+ * `id` 必须由**单调自增计数器**提供，绝不能取 `prev.length + 1`：
+ * 数组被截到 200 条后长度**恒为 200**，此后每条新行的 id 都是 201 ——
+ * React 报 key 冲突并可能重复渲染或吞掉行。
+ * 战报是复盘的唯一凭据，行序不可信等于所有基于战报的结论都不可信。
+ *
+ * @param seq 调用方维护的单调序号（`useRoom` 用 `useRef`）
+ */
+export function pushLogLine(
+  prev: readonly LogEntry[],
+  at: number,
+  text: string,
+  seq: number,
+): LogEntry[] {
+  return [...prev, { id: seq, at, text }].slice(-LOG_LIMIT);
+}
+
 /** 取卡名；查不到定义时退回 `defId`，避免出现空白格。 */
 function cardName(defId: string | undefined): string {
   if (!defId) return '—';
@@ -297,7 +326,41 @@ export function describeEvent(
       return `对局结束，胜者：${who(names, w)}`;
     }
 
+    /*
+     * ---- 故意不写日志 / 只写一句话的事件（#121 / D-291）----
+     *
+     * 原来这些落到 `default: return e.type`，于是玩家战报里出现
+     * `draw:completed`、`mulligan:closed` 这类**英文协议串**。
+     * 中文界面里蹦出冒号串，玩家的第一反应是「报错了」——
+     * 而战报是他理解局面的主要凭据，混进技术字符串会拉低整块日志的可信度。
+     *
+     * 这里的每个类型都是对照 `core/src/reducer.ts` 的 `case` 逐个核对过的
+     * （2026-10-22，41 个类型全部分类完毕，没有漏网的）。
+     */
+    case 'attack:declared':
+    case 'trigger:attack':
+    case 'trigger:defend':
+      return null; // 攻击过程的中间事件，合并进 `combat:resolved` 一行
+    case 'draw:completed':
+      return null; // 抽牌阶段收尾标记；动效已给「抽牌完成」，阶段行也有
+    case 'card:pending-buff':
+      return null; // 顶替 / 预增益的记账，属内部状态
+    case 'commander:grown':
+      return null; // 指挥官力量值已取消（docs/16 §6.2.1），属遗留事件
+    case 'mulligan:closed':
+      return '换牌结束，进入第一回合';
+    case 'sudden:death':
+      return '⚡ 双方血量相同 —— 进入即死模式：此后任何一方掉血即判负';
+
     default:
-      return e.type;
+      /*
+       * 未映射的事件**不进玩家战报**（#121）—— 宁可少一行，也不要让玩家看到
+       * 协议串。回放与服务端日志仍是全量（`docs/16 §7.5.4`）。
+       *
+       * 代价：以后新增事件若忘记补中文，它会在界面上「安静地消失」。
+       * 这是刻意选的方向：少一行会被「局面对不上」发现，而协议串只会被当成报错。
+       * 新增事件时**请回来补一条中文**，并在 `log.test.ts` 留一条断言。
+       */
+      return null;
   }
 }

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { GameEvent, GameState } from '@app/shared/types';
 
-import { describeEvent } from './log.js';
+import { LOG_LIMIT, describeEvent, pushLogLine, type LogEntry } from './log.js';
 
 /**
  * 事件 → 中文日志（B2-5 右侧战报列）。
@@ -109,8 +109,17 @@ describe('事件日志文案', () => {
     expect(describeEvent(ev('game:ended', { winner: '' }), NAMES, null)).toContain('平局');
   });
 
-  it('未知事件类型回落成类型名（不吞事件，便于排查新事件漏翻译）', () => {
-    expect(describeEvent(ev('some:new-event'), NAMES, null)).toBe('some:new-event');
+  /*
+   * ⚠️ 本条**方向已反转**（#121 / D-291）。
+   *
+   * 旧口径是「未知事件回落成类型名，不吞事件，便于排查新事件漏翻译」——
+   * 代价是玩家在中文战报里读到 `draw:completed`、`mulligan:closed`，
+   * 第一反应是「报错了」。开发期的便利不该由玩家承担。
+   *
+   * 新口径：**未映射就隐藏**。排查靠服务端日志与回放（都是全量），不靠玩家战报。
+   */
+  it('未知事件类型不进日志（不再回落成类型名）', () => {
+    expect(describeEvent(ev('some:new-event'), NAMES, null)).toBeNull();
   });
 
   /* ---- D-257 / D-258：新增事件必须有中文，且不能退化成英文标识符 ---- */
@@ -324,5 +333,87 @@ describe('隐藏信息：抽牌只看自己的卡名，对手只记张数', () =
     expect(
       describeEvent(ev('card:moved', { from: 'board', to: 'cost', uid: 'u2', playerId: 'p2' }), NAMES, s, 'p1'),
     ).toBe('Guest 将 霜律终裁 置入费用区');
+  });
+});
+
+/* -------------------- #121：战报里不许出现协议串 -------------------- */
+
+describe('未映射的事件不进玩家战报（issue #121 / D-291）', () => {
+  /*
+   * 症状：中文战报里蹦出 `draw:completed`、`mulligan:closed` 这类英文冒号串，
+   * 玩家第一反应是「报错了」。根因是 `describeEvent` 的 `default` 直接 `return e.type`。
+   *
+   * 现在的口径：**未映射 → 不进日志**（回放/服务端日志仍是全量，docs/16 §7.5.4）。
+   * 显式列出的这几个是有意忽略的中间事件，单独钉住，防止有人「顺手把它放回来」。
+   */
+  it('有意忽略的中间事件返回 null', () => {
+    for (const type of [
+      'draw:completed',
+      'attack:declared',
+      'trigger:attack',
+      'trigger:defend',
+      'card:pending-buff',
+      'commander:grown',
+    ]) {
+      expect(describeEvent(ev(type), NAMES, null), type).toBeNull();
+    }
+  });
+
+  it('换成中文而不是消失：换牌结束 / 即死模式', () => {
+    // 这两条是里程碑，玩家需要知道；不写就等于「局面对不上」。
+    expect(describeEvent(ev('mulligan:closed'), NAMES, null)).toBe('换牌结束，进入第一回合');
+    const sudden = describeEvent(ev('sudden:death'), NAMES, null);
+    expect(sudden).toContain('即死模式');
+  });
+
+  it('将来新增的未映射事件也不会把协议串漏到界面上', () => {
+    // 这条是**方向性**断言：宁可少一行，也不许出现 `some:future-event`。
+    const out = describeEvent(ev('some:future-event'), NAMES, null);
+    expect(out).toBeNull();
+    expect(out).not.toBe('some:future-event');
+  });
+});
+
+/* -------------------- #135：战报的 key 必须唯一 -------------------- */
+
+describe('战报行的 id 单调递增、不重复（issue #135 / D-291）', () => {
+  /*
+   * 旧实现：`{ id: prev.length + 1 }` 再 `.slice(-200)`。
+   * 长度被钉在 200 之后，新行 id 恒为 201 —— React 报 key 冲突，
+   * 行可能重复渲染或被吞，而战报是复盘的唯一凭据。
+   *
+   * 现在 `id` 由调用方的单调计数器给（`useRoom` 的 `logSeqRef`），
+   * 这里直接测 `pushLogLine` 的性质，不需要渲染 React。
+   */
+  const push = (n: number): LogEntry[] => {
+    let log: LogEntry[] = [];
+    for (let i = 1; i <= n; i++) log = pushLogLine(log, 1000 + i, `第 ${i} 行`, i);
+    return log;
+  };
+
+  it('连推 300 条后只留最近 200 条，且 id 两两不同', () => {
+    const log = push(300);
+    expect(log).toHaveLength(LOG_LIMIT);
+    expect(log[log.length - 1]!.text).toBe('第 300 行');
+    expect(log[0]!.text).toBe('第 101 行'); // 前 100 条被截掉
+    const ids = log.map((x) => x.id);
+    expect(new Set(ids).size).toBe(LOG_LIMIT);
+    // 截断之后 id 仍应是连续递增的尾部，而不是「全 201」
+    expect(ids).toEqual(Array.from({ length: LOG_LIMIT }, (_, i) => i + 101));
+  });
+
+  it('旧算法确实会撞 key（把根因钉成断言，防止改回去）', () => {
+    // 复刻旧实现：id 取「当前长度 + 1」
+    let old: { id: number }[] = [];
+    for (let i = 0; i < 300; i++) old = [...old, { id: old.length + 1 }].slice(-LOG_LIMIT);
+    /*
+     * 截到 200 条之后长度恒为 200 → 新行 id 恒为 201。
+     * 300 行里：前 100 行（1..200 那批剩下的）id 各异，后 100 行全是 201，
+     * 于是只剩 101 个不同的 id —— 其中序号 201 重复了 100 次。
+     */
+    const ids = old.map((x) => x.id);
+    expect(new Set(ids).size).toBe(101);
+    expect(ids[ids.length - 1]).toBe(201);
+    expect(ids.filter((x) => x === 201)).toHaveLength(100);
   });
 });
