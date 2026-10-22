@@ -11,6 +11,10 @@ export default defineConfig({
   fullyParallel: false, // 房间流程依赖两个上下文的时序，串行更稳
   workers: 1,
   reporter: [['list']],
+  // 默认 30s 太紧（D-316）：`chargeMinions` 现在会等播放队列排空再动下一步
+  // （ADR-0078：队列没排空时客户端视图是旧的），这段等待是**合法耗时**，不是挂起。
+  // 放不到这里的话，一个 25s 的用例会被「等正确的东西」顶过线。
+  timeout: 60_000,
   use: {
     baseURL: 'http://127.0.0.1:5173',
     /*

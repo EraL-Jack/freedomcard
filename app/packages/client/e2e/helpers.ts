@@ -258,64 +258,78 @@ export async function chargeMinions(page: Page, keep = 1): Promise<number> {
   // 第 1 回合 maxCost = 1，若留下 5 费大哥（支付 4）就出不了，测试会误报。
   let total = await zoneCount(page, 'cost', 1);
   for (;;) {
+    // 读手牌之前必须等播放队列排空（ADR-0078）：队列没排空时客户端视图是**旧的**，
+    // 会把刚充掉的牌还当成在手里，于是下一枪打在一张已经不在手里的牌上（D-316 第二轮）。
+    await waitIdle(page);
     const hand = await readHand(page);
     const minions = hand.filter((c) => c.kind === '随从');
     if (minions.length <= keep) break; // 留够 `keep` 张随从；极端牌序（随从不够）则不再充
     const cheapest = [...minions].sort((a, b) => payOf(a) - payOf(b))[0]!;
     const target = minions.find((c) => c.index !== cheapest.index);
     if (!target) break;
-    total = await chargeOne(page, target.index);
+    total = await chargeOne(page, target);
   }
   return total;
 }
 
 /**
- * 选中第 `index` 张手牌、点它旁边的「充能」，并等到费用区真的多一张。
+ * 等「在途」结束 —— 顶栏的「同步中…」消失即代表播放队列已排空（D-312 / ADR-0078）。
  *
- * ## 为什么要包一层重试（D-316 / CI 2026-10-22 两次红）
- *
- * 「充能」按钮**挂在选中态上** —— 点下去就 `setPicked(null)`，按钮随即从 DOM 消失。
- * 于是 Playwright 的 click 有两种失败姿势，两次 CI 红各占一种：
- * `turn.spec:37` 是 `element was detached from the DOM, retrying`；
- * `zone-inspect:18` 先 `element is not stable` 再 detached。
- * 两者都一路重试到用例超时（30s / 90s），把「偶发一次点击没落地」放大成整条流水线变红。
- *
- * ## 重试必须幂等
- *
- * 点了之后事件还在播放队列里时，费用区张数**不会立刻变**。所以不能「click 抛错就再点一次」
- * —— 那会重复充能，后面「留一张随从」的约定就破了。判定顺序：
- *   1. 费用区已经涨了 → 成功（上一次其实点到了，报错发生在播放延迟里）；
- *   2. 没涨 → 重新选中再点；
- *   3. 三次都没落地 → 抛错，并把顶栏现场一起带上去，不用再靠猜。
+ * 客户端是弱客户端：事件先入队逐条播放，队列没排空时它显示的是**旧状态**。
+ * 测试如果在这段窗口里读手牌/点按钮，就会打在过期的视图上。这不是缺陷，是设计。
  */
-async function chargeOne(page: Page, index: number): Promise<number> {
+export async function waitIdle(page: Page): Promise<void> {
+  await expect(page.getByTestId('syncing')).toHaveCount(0, { timeout: 15_000 });
+}
+
+/**
+ * 选中一张手牌、点它旁边的「充能」，并确认费用区真的多了一张。
+ *
+ * ## 两类失败，两次 CI 红各占一类（D-316）
+ *
+ * **① 点不下去**：按钮挂在选中态上，点完就 `setPicked(null)`，按钮随即从 DOM 消失。
+ * Playwright 因此会报 `element was detached from the DOM, retrying`（偶尔先来一句
+ * `element is not stable`）。默认 click 超时是「整条用例的超时」，一次没落地就吃光预算。
+ *
+ * **② 打空了**：点击落了地，但费用区 10 秒没涨 —— 客户端视图还停在播放队列后面，
+ * 这一枪打在**已经不在手里**的牌上，服务端按规则拒掉。这一类比①更隐蔽：
+ * 报错落在「费用区没涨」上，看不出真正原因是「读手牌读早了」。
+ *
+ * ## 解法：先对齐视图，再动手；重试以「状态」为判据
+ *
+ * 1. 动手指前 `waitIdle()` —— 队列排空后手牌视图才是准的（这是②的根因）；
+ * 2. 点完再 `waitIdle()` 等本次操作播完，然后用**费用区张数**判断是否成功；
+ * 3. 没涨才重试，重试前重新确认这张牌还在手里（否则换一张），最多 3 次；
+ * 4. 三次都不行 → 抛错并带上 `tableSnapshot()` 现场，不用再靠猜。
+ */
+async function chargeOne(page: Page, target: HandCard): Promise<number> {
+  const before = await zoneCount(page, 'cost', 1);
+  let lastErr: unknown;
   for (let attempt = 1; attempt <= 3; attempt++) {
-    const before = await zoneCount(page, 'cost', 1);
-    await pick(page, [index]);
+    await waitIdle(page);
+    // 这张牌可能已经被充掉了（视图对齐后手牌变短）—— 那就换当前最后一张随从，
+    // 而不是对着一个空位 `nth(i).click()` 空等 30 秒。
+    const hand = await readHand(page);
+    const minions = hand.filter((c) => c.kind === '随从');
+    const still = minions.find((c) => c.index === target.index && c.name === target.name);
+    const pickTarget = still ?? minions.at(-1);
+    if (!pickTarget) return await zoneCount(page, 'cost', 1); // 手里没随从了，交给外层收尾
+
+    await pick(page, [pickTarget.index]);
     try {
-      // 单次点击自带 5s 上限：默认是「整条用例的超时」，一次没落地就吃掉全部预算。
-      await page.getByTestId('charge').click({ timeout: 5_000 });
+      // 单次点击自带上限：默认是整条用例的超时，一次没落地就吃掉全部预算。
+      await page.getByTestId('charge').click({ timeout: 4_000 });
     } catch (err) {
-      const landed = await expect
-        .poll(() => zoneCount(page, 'cost', 1), { timeout: 5_000 })
-        .toBeGreaterThan(before)
-        .then(() => true)
-        .catch(() => false);
-      if (!landed) {
-        if (attempt === 3) {
-          // 现场比原始错误更值钱：原始错误只有「detached / not stable」两种，看不出当时在哪个阶段。
-          throw new Error(
-            `第 ${index} 张手牌的「充能」连续 3 次没点下去。现场：${await tableSnapshot(page)}`,
-            { cause: err },
-          );
-        }
-        continue;
-      }
+      lastErr = err; // ①：点没落地（按钮先没了）。下面统一用费用区判真假。
     }
-    await expect.poll(() => zoneCount(page, 'cost', 1), { timeout: 10_000 }).toBeGreaterThan(before);
-    return zoneCount(page, 'cost', 1);
+    await waitIdle(page);
+    const now = await zoneCount(page, 'cost', 1);
+    if (now > before) return now;
   }
-  throw new Error('chargeOne 不可能走到这里');
+  throw new Error(
+    `「充能」连续 3 次没生效（目标 ${target.index}「${target.name}」）。现场：${await tableSnapshot(page)}`,
+    { cause: lastErr },
+  );
 }
 
 /**
