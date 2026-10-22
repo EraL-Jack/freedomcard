@@ -14,6 +14,8 @@ jobs:
   quality:
     name: typecheck / lint / test
     runs-on: ubuntu-latest
+    # 正常 30~60 秒。不写 timeout 等于允许一次挂起堵住队列 6 小时（见 e2e 那段注释）。
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -47,6 +49,9 @@ jobs:
   e2e:
     name: 端到端（Chromium）
     runs-on: ubuntu-latest
+    # 正常 7~10 分钟（84 条）。留 3 倍余量，同时把「挂起」的代价封在 30 分钟内：
+    # 2026-10-22 run 39783536963 在 apt 上挂了 6 小时才撞上 GitHub 的 360 分钟上限。
+    timeout-minutes: 30
     # 需要下载浏览器，单列一个 job，失败不影响质量闸门先出结果。
     steps:
       - uses: actions/checkout@v4
@@ -64,16 +69,49 @@ jobs:
         working-directory: app
         run: pnpm install --frozen-lockfile
 
+      # `--with-deps` 会走 apt，而 apt **自己没有超时**：镜像一卡就无限等。
+      # 那次就卡在 `azure.archive.ubuntu.com` 的 InRelease 上（13:04 起无输出，19:04 被 6h 上限杀掉）。
+      # 对策：单次尝试用 `timeout` 兜住，失败重试；三次都不行立刻报错退出 ——
+      # 目标是**分钟级变红**，而不是小时级静默挂起。
       - name: 安装 Chromium
         working-directory: app/packages/client
-        run: pnpm exec playwright install --with-deps chromium
+        timeout-minutes: 15
+        run: |
+          set -o pipefail
+          for i in 1 2 3; do
+            echo "::group::尝试 $i / 3"
+            if timeout --kill-after=30 300 pnpm exec playwright install --with-deps chromium; then
+              echo "::endgroup::"
+              echo "第 $i 次安装成功"
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "第 $i 次安装超时或失败（多半是 apt 镜像卡住），5 秒后重试"
+            sleep 5
+          done
+          echo "::error::Chromium 连续 3 次装不上，放弃。先看上面 apt 的输出卡在哪一步。"
+          exit 1
 
       - name: 端到端
         working-directory: app/packages/client
         run: pnpm test:e2e
 
-      - name: 上传截图
-        if: always()
+      # 失败时**必须**带得走现场：截图只覆盖少数用例，真正定位靠 trace。
+      # 2026-10-22 两次失败都只上传了 screenshots，没有 test-results，
+      # 只能对着日志里两行 Call log 反推。
+      - name: 上传失败现场（trace + 截图）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-failure
+          path: |
+            app/packages/client/test-results
+            app/packages/client/e2e/screenshots
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: 上传截图（通过时留观感证据）
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: e2e-screenshots

@@ -13,7 +13,16 @@ export default defineConfig({
   reporter: [['list']],
   use: {
     baseURL: 'http://127.0.0.1:5173',
-    trace: 'off',
+    /*
+     * 只在 CI 留现场（D-316）。本地跑图省事、跑得快，trace 一直开着没必要；
+     * CI 上恰恰相反 —— 失败如果没留下 trace，就只能对着两行 Call log 猜，
+     * 2026-10-22 两次红都是这么白追的。
+     *
+     * `retain-on-failure`：跑的时候录，通过就丢，红的那条留着。
+     * GitHub Actions 会置 `CI=true`，本地手动跑仍是一律不录。
+     */
+    trace: process.env.CI ? 'retain-on-failure' : 'off',
+    screenshot: process.env.CI ? 'only-on-failure' : 'off',
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {

@@ -264,13 +264,80 @@ export async function chargeMinions(page: Page, keep = 1): Promise<number> {
     const cheapest = [...minions].sort((a, b) => payOf(a) - payOf(b))[0]!;
     const target = minions.find((c) => c.index !== cheapest.index);
     if (!target) break;
-    const before = await zoneCount(page, 'cost', 1);
-    await pick(page, [target.index]);
-    await page.getByTestId('charge').click();
-    await expect.poll(() => zoneCount(page, 'cost', 1), { timeout: 10_000 }).toBeGreaterThan(before);
-    total = await zoneCount(page, 'cost', 1);
+    total = await chargeOne(page, target.index);
   }
   return total;
+}
+
+/**
+ * 选中第 `index` 张手牌、点它旁边的「充能」，并等到费用区真的多一张。
+ *
+ * ## 为什么要包一层重试（D-316 / CI 2026-10-22 两次红）
+ *
+ * 「充能」按钮**挂在选中态上** —— 点下去就 `setPicked(null)`，按钮随即从 DOM 消失。
+ * 于是 Playwright 的 click 有两种失败姿势，两次 CI 红各占一种：
+ * `turn.spec:37` 是 `element was detached from the DOM, retrying`；
+ * `zone-inspect:18` 先 `element is not stable` 再 detached。
+ * 两者都一路重试到用例超时（30s / 90s），把「偶发一次点击没落地」放大成整条流水线变红。
+ *
+ * ## 重试必须幂等
+ *
+ * 点了之后事件还在播放队列里时，费用区张数**不会立刻变**。所以不能「click 抛错就再点一次」
+ * —— 那会重复充能，后面「留一张随从」的约定就破了。判定顺序：
+ *   1. 费用区已经涨了 → 成功（上一次其实点到了，报错发生在播放延迟里）；
+ *   2. 没涨 → 重新选中再点；
+ *   3. 三次都没落地 → 抛错，并把顶栏现场一起带上去，不用再靠猜。
+ */
+async function chargeOne(page: Page, index: number): Promise<number> {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const before = await zoneCount(page, 'cost', 1);
+    await pick(page, [index]);
+    try {
+      // 单次点击自带 5s 上限：默认是「整条用例的超时」，一次没落地就吃掉全部预算。
+      await page.getByTestId('charge').click({ timeout: 5_000 });
+    } catch (err) {
+      const landed = await expect
+        .poll(() => zoneCount(page, 'cost', 1), { timeout: 5_000 })
+        .toBeGreaterThan(before)
+        .then(() => true)
+        .catch(() => false);
+      if (!landed) {
+        if (attempt === 3) {
+          // 现场比原始错误更值钱：原始错误只有「detached / not stable」两种，看不出当时在哪个阶段。
+          throw new Error(
+            `第 ${index} 张手牌的「充能」连续 3 次没点下去。现场：${await tableSnapshot(page)}`,
+            { cause: err },
+          );
+        }
+        continue;
+      }
+    }
+    await expect.poll(() => zoneCount(page, 'cost', 1), { timeout: 10_000 }).toBeGreaterThan(before);
+    return zoneCount(page, 'cost', 1);
+  }
+  throw new Error('chargeOne 不可能走到这里');
+}
+
+/**
+ * 失败时打一份「现在的牌桌长什么样」—— 顶栏三段 + 提示条 + 手牌与费用区张数。
+ *
+ * 2026-10-22 那两次 CI 红只留下 Call log 里两行，连当时是哪个阶段、有没有提示条都不知道，
+ * 白追一轮。现场要随手能带出来，才谈得上定位。
+ */
+async function tableSnapshot(page: Page): Promise<string> {
+  const read = async (id: string): Promise<string> => {
+    const node = page.getByTestId(id).first();
+    if ((await node.count()) === 0) return '（无）';
+    return (await node.innerText()).replace(/\s+/g, ' ').trim();
+  };
+  return [
+    `回合=${await read('turn')}`,
+    `阶段=${await read('phase')}`,
+    `归属=${await read('turn-label')}`,
+    `提示=${await read('notice')}`,
+    `手牌=${await handCount(page)} 张`,
+    `费用区=${await zoneCount(page, 'cost', 1)} 张`,
+  ].join(' / ');
 }
 
 /**

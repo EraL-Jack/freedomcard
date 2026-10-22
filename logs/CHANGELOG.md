@@ -5978,3 +5978,79 @@ issue 的第 3 条建议是「按回合折叠，当前回合展开」。做完�
 - 引擎事件流零改动（`mech` 是纯渲染标记，不进协议、不进回放）；
 - 桌面日志列仍是半透明（右侧独立一列、下面是深色页面，有层次感）；
 - 「隐藏机制细节」是**本机偏好**，未落 localStorage（与音效开关不同：它是诊断用，不需要记住）。
+
+---
+
+## 2026-10-23 · CI：挂起比失败更贵，失败必须自带现场（D-316）
+
+来源：Era 2026-10-23「检查一下最近的 PR CI 有失败的，检查一下是什么原因解决一下」。
+
+### 修前：最近 7 个 PR 里有 2 个红
+
+| PR | 作业 | 结论 | 耗时 | 真实原因 |
+| --- | --- | --- | --- | --- |
+| #167 | 端到端 | failure | 9.5 min | `zone-inspect.spec.ts:18` 经 `helpers.ts:269` 点「充能」时 `element was detached from the DOM`，一路重试到 90s 用例超时 |
+| #169 | 端到端 | cancelled | **6 小时** | 卡在 `playwright install --with-deps` 的 `apt-get update`：`azure.archive.ubuntu.com` 的 InRelease 从 13:04 起无输出，撞 GitHub 的 360 分钟 job 上限才被杀 |
+
+同源的两条 `push master`（`7eea2cc` / `7dcc387`）也是红，签名一致：`turn.spec.ts:37` 同样卡在
+`helpers.ts:269` 的充能点击上。**所以不是两条缺陷，是一类问题 + 一类环境。**
+
+### 交付件
+
+| 交付件 ID | 交付件 | 版本 |
+| --- | --- | --- |
+| D-316-a | `.github/workflows/ci.yml`：两个 job 加 `timeout-minutes`（quality 15 / e2e 30） | v1 |
+| D-316-b | `.github/workflows/ci.yml`：「安装 Chromium」单次 `timeout --kill-after=30 300` + 最多 3 次重试，步骤上限 15 分钟 | v1 |
+| D-316-c | `.github/workflows/ci.yml`：失败上传 `test-results`（trace + 截图），通过时才传截图 | v1 |
+| D-316-d | `client/playwright.config.ts`：CI 下 `trace: retain-on-failure`、`screenshot: only-on-failure`；本地仍全 off | v1 |
+| D-316-e | `client/e2e/helpers.ts`：充能点击拆成幂等的 `chargeOne()`（3 次重试 + 费用区判成功），新增 `tableSnapshot()` 现场快照 | v1 |
+
+### 根因一：apt 没有自己的超时
+
+`playwright install --with-deps` 会调 `sudo apt-get`。apt 的下载**不设上限**，镜像一端卡住就一直等；
+GitHub 的 job 默认上限是 360 分钟，于是「一次镜像抖」= 堵住队列 6 小时。
+
+两层兜底：单次尝试 `timeout 300`（超时杀掉 → 重试，最多 3 次），步骤再加 `timeout-minutes: 15`，
+job 加 `timeout-minutes: 30`。三次都装不上就 `::error::` 直接退出 ——
+**分钟级变红，比小时级静默挂起便宜一个数量级。**
+
+### 根因二：「充能」按钮挂在选中态上，点完就消失
+
+按钮是 `picked === c.uid` 时浮出来的，`onClick` 里第一件事是 `session.charge()`，第二件事是
+`setPicked(null)` —— 按钮随即从 DOM 移除。Playwright 的 click 因此有两种失败姿势：
+
+- 点下去之前按钮没了 → `element was detached from the DOM, retrying`；
+- 尺寸还在变（提示条/特效把牌桌顶了一下）→ `element is not stable`，然后同样 detached。
+
+本机快（点击在几十毫秒内落地）几乎撞不上，CI 上偶发（近 7 次里 2 次）。**它从来没吃掉过断言**，
+吃掉的只是时间 —— 默认 click 用的是「整条用例的超时」，一次未落地就耗光 30s / 90s 预算。
+
+改法：把「选中 → 点充能 → 费用区 +1」当成**一个可重试单元**，单次点击给 5s 上限。
+重试必须幂等 —— 点了之后事件还在播放队列里时费用区张数不会立刻变，所以
+**先看费用区涨没涨，涨了就算成功**，没涨才重新选、重新点；三次都不行才抛错，并带上现场。
+
+### 红绿证据（注入法）
+
+注入一段「选中后 40ms 自动取消选中」的探针（模拟按钮在点击落地前消失），**同一个探针下**：
+
+| helper | 结果 |
+| --- | --- |
+| 旧（`charge().click()` 裸调用） | **红**：`element was detached from the DOM, retrying` @ `helpers.ts:269` —— 与 CI 报错一字不差 |
+| 新（`chargeOne()`） | **绿**：`2 passed (33.6s)` |
+
+探针随后已删除（`grep TEMP-PROBE` 无残留），工作树里没有测试专用代码。
+
+### 验证
+
+- 单测 **516**（core 259 / server 173 / client 84，另有 1 skipped）；E2E **84 passed**；
+  typecheck 0 / lint 0。
+- 受影响的两个文件（`turn.spec` / `zone-inspect.spec`）单独 `--repeat-each=3` 跑过 **21 passed**。
+- 工作流本身没有本地执行器，**以本分支的 CI run 为验收**（见 PR 正文）。
+
+### 边界与遗留
+
+- `trace: retain-on-failure` 只在 CI 开；本地仍是 `off`（不拖慢本地迭代）。
+- 失败现场的保留期 14 天。
+- **孤儿 vite 实例**（2026-10-13 的三个，占 5178/5180/5181）无法在本会话内终止（`拒绝访问`，
+  属另一会话/更高权限启动）。它们不影响 CI，但会占着 `node_modules/.vite` 缓存，
+  必要时在管理员 shell 里手动结束，或重启机器清掉。
