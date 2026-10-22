@@ -176,10 +176,10 @@ Windows 需放行 5173 / 3000 端口的入站规则（网络配置文件为 Publ
 | `pnpm dev` | 并行起服务端与客户端 |
 | `pnpm typecheck` | 全量 `tsc --noEmit` |
 | `pnpm lint` | ESLint（flat config） |
-| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层 + `client` 纯逻辑，2026-10-22 时点 **493 passed**（core 257 + server 160 + client 76，另有 1 条 skipped 基线采样） |
+| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层 + `client` 纯逻辑，2026-10-22 时点 **500 passed**（core 257 + server 167 + client 76，另有 1 条 skipped 基线采样） |
 | `pnpm --filter @app/client run test:coverage` | client 覆盖率（v8）。目前只覆盖 `selectors` / `labels` / `log` 三个纯逻辑模块；组件层由 E2E 兜 |
 | `pnpm build` | 构建客户端到 `packages/client/dist` |
-| `pnpm --filter @app/client test:e2e` | 端到端（Playwright）：**71 条** —— 房间流程 / 首页与对战桌布局 / 视口溢出 / 联机开局 / 回合操作 / 攻击与指挥官伤害 / 卡组编辑 / 人机对战 / 人机房换牌阶段与倒计时 / 回合边界的指引不变量 / 堆叠区浮窗 / 新手引导 / 390px 日志抽屉 / 断线与点击反馈 / 危险操作 / 打磨观感 / 确定性守卫 |
+| `pnpm --filter @app/client test:e2e` | 端到端（Playwright）：**75 条** —— 房间流程 / 首页与对战桌布局 / 视口溢出 / 联机开局 / 回合操作 / 攻击与指挥官伤害 / 卡组编辑 / 人机对战 / 人机房换牌阶段与倒计时 / 回合边界的指引不变量 / 堆叠区浮窗 / 新手引导 / 390px 日志抽屉 / 断线与点击反馈 / 危险操作 / 打磨观感 / 结算覆盖层 / 再来一局 / 确定性守卫 |
 
 > 首次跑 E2E 需先下载浏览器：`pnpm --filter @app/client exec playwright install chromium`（约 197 MiB，慢）。
 > 截图落在 `packages/client/e2e/screenshots/`（已被 `.gitignore` 忽略）。
@@ -378,6 +378,7 @@ app/
 | `room:leave` | C→S | — | 主动离开；房主离开则移交房主 |
 | `room:ready` | C→S | — | 准备；满员且全员 ready → 服务端走系统 `game:start`（ADR-0019） |
 | `room:next-game` | C→S | — | BO3 开下一小局，**仅房主**；第 2 局换先手、**第 3 局由上一局败者先攻**（H33 / D-145） |
+| `room:rematch` | C→S | — | **系列赛打完之后**原地重开（D-309 / #125）：比分归零、重新掷骰定先后手、**双方都要点**（人机房单票即开）。与 `room:next-game` 是两件事，见 ADR-0076 |
 | `room:deck` | C→S | `{ deck: string[], commander? }` | 准备页换卡组（**卡组与指挥官一起换**，D-184），**仅未开局**（BO3 局间也拒，H37）；空数组 = 回到服务端默认卡组 |
 | `room:state` | S→C | 房间视图 | 房间变化时广播（**不含 token**；卡组只给 `deckSize`） |
 | `game:intent` | C→S | `Intent` | 走完整处理链：去重 → 引擎 → reduce → 哈希 → 回放 → 广播 |
@@ -489,6 +490,16 @@ app/
     终局期间操作条整体不渲染 —— 引擎在 `winner !== null` 之后会拒掉一切 Intent，
     界面留着按钮只会换来一句 `GAME_OVER`。
     **回放入口仍是置灰状态**（D-183），所以此刻战报就是唯一复盘手段。
+
+27. **「再来一局」共用原房间，比分从 0:0 重来**（#125 / D-309 / ADR-0076）：
+    结算卡片上的主按钮，点了**原地开下一局** —— 房间码、双方昵称、卡组、指挥官都不变，
+    只有对局状态重置（血量 / 牌库 / 弃牌 / 除外 / 回合数 / 计时）。
+    联机要求**双方都点**（点过的一方看到「等待对手确认…」，另一方看到「对手想再来一局」）；
+    人机房的 AI 不会点按钮，玩家一票即开；对手已离开时按钮置灰并写明原因。
+    ⚠️ 它与 BO3 的「开始第 N 局」不是同一个动作：那个比分继续累计、只有房主能点，
+    只在系列赛**未**分胜负时出现；「再来一局」只在整场**已**结束（`phase === 'ended'`）时出现，
+    两者不会同时在场。重开会把上一局的回放先落盘 —— **连打两局得到两份独立 `replay.json`**，
+    不是一份追加。
 
 ## 11. 本轮验收清单（D-137 ~ D-149）
 

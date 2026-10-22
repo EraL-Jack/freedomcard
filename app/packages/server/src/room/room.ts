@@ -173,6 +173,7 @@ export class RoomManager {
       seriesWinner: null,
       firstPlayers: [],
       lastLoser: null,
+      rematchVotes: [],
     };
     /*
      * 人机房：建房即坐入 AI（D-242）。
@@ -322,6 +323,9 @@ export class RoomManager {
     const room = this.rooms.get(roomId);
     if (!room) return null;
     room.gameNo += 1;
+    // 新的一局打完了，上一批「再来一局」的意愿作废（D-309）—— 否则在 BO3 里
+    // 第 1 局投过票的人会被算成对第 2 局也同意了。
+    room.rematchVotes = [];
     if (winner) room.wins[winner] = (room.wins[winner] ?? 0) + 1;
     // H33（D-145）：第 3 小局由上一小局的败者先攻 —— 判和时无败者，置 null 回落掷骰。
     room.lastLoser = winner
@@ -372,6 +376,81 @@ export class RoomManager {
       return room.seats.find((s) => s && s.playerId !== prev)?.playerId ?? null;
     }
     return room.lastLoser;
+  }
+
+  /**
+   * 「再来一局」投票（D-309 / #125）。
+   *
+   * 与 BO3 的 `room:next-game` 是两件事：那个是**系列赛内部**的下一小局
+   * （比分累计、先手轮换、房主独裁）；这个是**系列赛打完**后重开一场
+   * （比分归零、重新掷骰定先后手、双方都得同意）。
+   *
+   * 为什么要求双方都投：重开是把房间从 `ended` 拉回对局，单方面就能拉，
+   * 等于替对手做了「继续打」的决定。人机房例外 —— AI 没有按钮，玩家点了就开。
+   */
+  voteRematch(
+    playerId: PlayerId,
+  ): Outcome<{ room: Room; shouldStart: boolean; waitingFor: PlayerId | null }> {
+    const found = this.locate(playerId);
+    if (!found) return { ok: false, error: ROOM_ERRORS.NOT_IN_ROOM, message: '不在房间内' };
+    const { room } = found;
+    if (room.phase !== 'ended') {
+      return { ok: false, error: ROOM_ERRORS.NO_REMATCH, message: '这一局还没打完' };
+    }
+    // 人机房：AI 没有按钮，玩家一个人说了算 —— 先认出来，它压根不需要「等谁」。
+    const solo = room.seats.some((s) => s?.playerId === AI_PLAYER_ID);
+    // 只在座的真人算「要等的人」：AI 席位没有按钮，空席位更不会有。
+    const humans = room.seats.filter(
+      (s): s is Seat => s !== null && s.playerId !== playerId && s.playerId !== AI_PLAYER_ID,
+    );
+    if (!solo) {
+      if (humans.length === 0) {
+        return { ok: false, error: ROOM_ERRORS.OPPONENT_LEFT, message: '对手已离开，无法再来一局' };
+      }
+      const away = humans.find((s) => !s.connected);
+      if (away) {
+        return {
+          ok: false,
+          error: ROOM_ERRORS.OPPONENT_LEFT,
+          message: `${away.nickname} 已断线，等他回来再开`,
+        };
+      }
+    }
+    if (!room.rematchVotes.includes(playerId)) room.rematchVotes.push(playerId);
+
+    const waiting = solo
+      ? null
+      : (humans.find((s) => !room.rematchVotes.includes(s.playerId)) ?? null);
+    return {
+      ok: true,
+      value: { room, shouldStart: waiting === null, waitingFor: waiting?.playerId ?? null },
+    };
+  }
+
+  /**
+   * 重开前的房间复位（D-309）—— 只清**系列赛层**的事实，不动席位与卡组。
+   *
+   * - 席位保留 ⇒ 昵称 / 卡组 / 指挥官沿用上一局（#125 验收 2）；
+   * - 比分与局数归零 ⇒ 新的一场从第 1 局算起，与「BO3 局间」明确分开；
+   * - `phase` 回到 `lobby` ⇒ 会话层用与**首次开局完全相同**的路径重建对局
+   *   （`startGame` 的 `isFirstGame` 分支），不为「重开」再写第二套开局逻辑。
+   *
+   * 准备状态**不重置**：这一局本来就是双方都说「继续」才开的，再要求准备一次
+   * 只是多一步无意义点击（人机房的 AI 永远 ready，真人房却要再点一次）。
+   */
+  resetForRematch(roomId: string): Room | null {
+    const room = this.rooms.get(roomId);
+    if (!room) return null;
+    room.phase = 'lobby';
+    room.wins = {};
+    for (const s of room.seats) if (s) room.wins[s.playerId] = 0;
+    room.gameNo = 0;
+    room.awaitingNext = false;
+    room.seriesWinner = null;
+    room.firstPlayers = [];
+    room.lastLoser = null;
+    room.rematchVotes = [];
+    return room;
   }
 
   /**
@@ -450,6 +529,8 @@ export class RoomManager {
     }
     const idx = room.seats.findIndex((s) => s?.playerId === playerId);
     if (idx >= 0) room.seats[idx] = null;
+    // 席位变了，之前那批「再来一局」的意愿不再指向同一批人（D-309）。
+    room.rematchVotes = [];
     this.byPlayer.delete(playerId);
 
     if (room.hostId === playerId) {
@@ -486,6 +567,8 @@ export class RoomManager {
         if (!seat || seat.connected || seat.disconnectedAt === null) continue;
         if (now - seat.disconnectedAt <= this.graceMs) continue;
         room.seats[i] = null;
+        // 同 `leave`：席位变了，旧投票作废（D-309）。
+        room.rematchVotes = [];
         this.byPlayer.delete(seat.playerId);
         freed.push({ playerId: seat.playerId, roomId: room.id });
       }
@@ -538,6 +621,13 @@ export class RoomManager {
       awaitingNext: room.awaitingNext,
       seriesWinner: room.seriesWinner,
       firstPlayers: [...room.firstPlayers],
+      /*
+       * D-309 / #125：结算页的「再来一局」要靠这两项决定形态 ——
+       * `rematchVotes` 让点过的人看到「等对手确认」，`solo` 让 AI 房单票即开。
+       * `solo` 由 AI 席位推导而不是另存一份：两个来源必然一致，没必要多一个字段。
+       */
+      rematchVotes: [...room.rematchVotes],
+      solo: room.seats.some((s) => s?.playerId === AI_PLAYER_ID),
       seats: room.seats.map((s) =>
         s
           ? {

@@ -497,3 +497,126 @@ describe('RoomManager · 人机房', () => {
     expect(fallback.value.room.turnTimeoutMs).toBe(TURN_TIMEOUT_MS);
   });
 });
+
+/**
+ * 再来一局（D-309 / #125）。
+ *
+ * 这一组钉住三件事，任何一条掉了都会让玩家原地卡住或替对手做决定：
+ * ① 联机必须**双方都点**才开（单票只记票，并告诉对方「他在等你」）；
+ * ② 人机房 AI 不会点按钮，玩家一票即开；
+ * ③ 对手走了就不能静默失败 —— 必须回一个能说人话的错误码。
+ */
+describe('RoomManager · 再来一局（D-309 / #125）', () => {
+  /** 一间打满两席的联机房（BO1 打完即 ended）。 */
+  function duo() {
+    const h = harness();
+    const created = h.manager.create({ nickname: 'A', capacity: 2, commander: 'bladeLord' });
+    if (!created.ok) throw new Error('create failed');
+    const joined = h.manager.join({
+      code: created.value.room.code,
+      nickname: 'B',
+      commander: 'starWatcher',
+    });
+    if (!joined.ok) throw new Error('join failed');
+    const roomId = created.value.room.id;
+    h.manager.recordGameResult(roomId, created.value.seat.playerId);
+    return {
+      ...h,
+      roomId,
+      host: created.value.seat.playerId,
+      guest: joined.value.seat.playerId,
+    };
+  }
+
+  it('联机：一人投票只记票，两人都投才开', () => {
+    const s = duo();
+    const first = s.manager.voteRematch(s.host);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    expect(first.value.shouldStart).toBe(false);
+    expect(first.value.waitingFor).toBe(s.guest);
+    // 对手看得到「他点了」——否则只能干等，分不清对面有没有收到
+    expect(s.manager.publicView(first.value.room).rematchVotes).toEqual([s.host]);
+
+    const second = s.manager.voteRematch(s.guest);
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    expect(second.value.shouldStart).toBe(true);
+    expect(second.value.waitingFor).toBeNull();
+  });
+
+  it('人机房：玩家一票即开（AI 没有按钮）', () => {
+    const { manager } = harness();
+    const r = manager.create({ nickname: 'Era', capacity: 2, solo: true });
+    if (!r.ok) throw new Error('create failed');
+    const me = r.value.seat.playerId;
+    manager.recordGameResult(r.value.room.id, 'ai');
+
+    const vote = manager.voteRematch(me);
+    expect(vote.ok).toBe(true);
+    if (!vote.ok) return;
+    expect(vote.value.shouldStart).toBe(true);
+    // 视图里要标明这是人机房 —— 客户端据此不显示「等待对手确认…」
+    expect(manager.publicView(vote.value.room).solo).toBe(true);
+  });
+
+  it('一局还没打完时投票 = NO_REMATCH（不是静默失败）', () => {
+    const { manager } = harness();
+    const created = manager.create({ nickname: 'A', capacity: 2 });
+    if (!created.ok) throw new Error('create failed');
+    const vote = manager.voteRematch(created.value.seat.playerId);
+    expect(vote.ok).toBe(false);
+    if (vote.ok) return;
+    expect(vote.error).toBe('NO_REMATCH');
+  });
+
+  it('对手已离开 → OPPONENT_LEFT，而不是开一间没有对手的对局', () => {
+    const s = duo();
+    s.manager.leave(s.guest);
+    const vote = s.manager.voteRematch(s.host);
+    expect(vote.ok).toBe(false);
+    if (vote.ok) return;
+    expect(vote.error).toBe('OPPONENT_LEFT');
+  });
+
+  it('对手掉线（席位还留着）→ OPPONENT_LEFT，等他回来', () => {
+    const s = duo();
+    s.manager.markDisconnected(s.guest);
+    const vote = s.manager.voteRematch(s.host);
+    expect(vote.ok).toBe(false);
+    if (vote.ok) return;
+    expect(vote.error).toBe('OPPONENT_LEFT');
+  });
+
+  it('resetForRematch：清比分与局数，席位 / 卡组 / 指挥官一律保留', () => {
+    const s = duo();
+    const before = s.manager.getRoom(s.roomId)!;
+    const decksBefore = before.seats.map((x) => x?.deck ?? null);
+    const cmdsBefore = before.seats.map((x) => x?.commander ?? null);
+
+    s.manager.voteRematch(s.host);
+    s.manager.resetForRematch(s.roomId);
+    const room = s.manager.getRoom(s.roomId)!;
+
+    expect(room.phase).toBe('lobby');
+    expect(room.gameNo).toBe(0);
+    expect(room.awaitingNext).toBe(false);
+    expect(room.seriesWinner).toBeNull();
+    expect(room.firstPlayers).toEqual([]);
+    expect(room.lastLoser).toBeNull();
+    expect(room.rematchVotes).toEqual([]);
+    // 比分归零而不是清空键：双方都还在座，视图要能显示 0:0
+    expect(room.wins).toEqual({ [s.host]: 0, [s.guest]: 0 });
+    // 席位保留 = 「同一批人、同一套卡组」，这是 #125 验收 2 的核心
+    expect(room.seats.map((x) => x?.deck ?? null)).toEqual(decksBefore);
+    expect(room.seats.map((x) => x?.commander ?? null)).toEqual(cmdsBefore);
+  });
+
+  it('打完下一局会清掉上一批投票（BO3 里不会把人算成「已经同意」）', () => {
+    const s = duo();
+    s.manager.voteRematch(s.host);
+    expect(s.manager.getRoom(s.roomId)!.rematchVotes).toEqual([s.host]);
+    s.manager.recordGameResult(s.roomId, s.guest);
+    expect(s.manager.getRoom(s.roomId)!.rematchVotes).toEqual([]);
+  });
+});
