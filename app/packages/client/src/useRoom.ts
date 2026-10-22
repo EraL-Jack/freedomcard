@@ -118,6 +118,15 @@ export type BusyKind = 'create' | 'create-solo' | 'join';
  */
 export const ACK_TIMEOUT_MS = 8_000;
 
+/**
+ * 「我的操作已被发出」的兜底时长（#158）。
+ *
+ * 正常路径上它不会到期：播放队列排空就复位。只有服务端一声不响（丢包 / 崩了）时才靠它
+ * 把按钮放开 —— 否则界面永远停在「处理中」，比「没反应」更难判断。
+ * 取 10 秒：实测最长的交棒批次 3~5 秒（`turn:changed` 1100ms + 逐条 FX），留一倍余量。
+ */
+export const INTENT_WAIT_MS = 10_000;
+
 export interface RoomSession {
   link: LinkState;
   room: RoomView | null;
@@ -136,6 +145,13 @@ export interface RoomSession {
    * 充能，但席位还没换 —— 界面**不得**据此给出「你的回合，该这么操作」的指引。
    */
   turnPending: boolean;
+  /**
+   * 我发出的操作还在被处理（#158）：已 emit，但播放队列还没排空。
+   *
+   * 界面据此把动作按钮切成「处理中…」并禁用 —— 否则从点击到界面翻页之间
+   * 那 1.5~2 秒里，玩家分不清「点上了」和「没点上」，连点会被规则静默拒掉。
+   */
+  syncing: boolean;
   /** 正在播放的呈现事件（横幅/飘字）；无则 `null`。 */
   fx: Fx | null;
   /** 展示区内容（D-123）：按玩家记的最近一批「从卡组展示」的卡。 */
@@ -281,6 +297,39 @@ export function useRoom(): RoomSession {
   // 事件播放队列（见 FX_MS 注释）：服务端事件逐条播放而非瞬时 reduce 完。
   const queueRef = useRef<GameEvent[]>([]);
   const pumpingRef = useRef(false);
+
+  /**
+   * 「我的操作正在被处理」（#158）。
+   *
+   * 现象：点一次「推进阶段」，界面约 1.5~2 秒没有任何变化 —— 顶栏还写着「阶段 充能」、
+   * 按钮外观也不变；连点的第二下基于客户端还没 reduce 的旧状态发出，被阶段规则拒掉，
+   * 而且被拒的提示常被下一条盖掉。玩家分不清「点上了」和「没点上」。
+   *
+   * 为什么不在发出后立刻复位：真正慢的不是网络，是**事件逐条播放**（FX_MS）。
+   * 所以「在途」要一直持续到播放队列排空 —— 那才是玩家真正看到新局面的时刻。
+   */
+  const [syncing, setSyncing] = useState(false);
+  const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** 结束「在途」态：清兜底定时器并复位（幂等）。 */
+  const endSyncing = useCallback((): void => {
+    if (syncTimerRef.current !== null) {
+      clearTimeout(syncTimerRef.current);
+      syncTimerRef.current = null;
+    }
+    setSyncing(false);
+  }, []);
+
+  /** 开始「在途」态 + 兜底：服务端一声不响时也要把按钮放开，不能永远卡在「处理中」。 */
+  const beginSyncing = useCallback((): void => {
+    setSyncing(true);
+    if (syncTimerRef.current !== null) clearTimeout(syncTimerRef.current);
+    syncTimerRef.current = setTimeout(() => {
+      syncTimerRef.current = null;
+      setSyncing(false);
+    }, INTENT_WAIT_MS);
+  }, []);
+
   const fxIdRef = useRef(0);
   const [fx, setFx] = useState<Fx | null>(null);
   /**
@@ -535,9 +584,16 @@ export function useRoom(): RoomSession {
        * 那条 `turn:changed` 永远不会被应用。不在这里清掉，顶栏会永久停在
        * 「回合切换中…」且不再给任何指引（Era 最烦的「点了没反应」的变体）。
        */
-      if (queueRef.current.length === 0 && mountedRef.current) setTurnPending(false);
+      if (queueRef.current.length === 0 && mountedRef.current) {
+        setTurnPending(false);
+        /*
+         * 「处理中」的结束点定在**队列排空**（#158）：玩家看到的界面是在这里才真正翻页的，
+         * 在那之前放开按钮只会让人再点一次、再被拒一次。
+         */
+        endSyncing();
+      }
     }
-  }, [appendLog]);
+  }, [appendLog, endSyncing]);
 
   // 提示条自动消退（Era 2026-10-18：提示要醒目但不该常驻）—— 4s 后自动消失。
   useEffect(() => {
@@ -574,6 +630,9 @@ export function useRoom(): RoomSession {
 
     const onGameEvents = (out: EventsOut): void => {
       if (out.kind !== 'accepted') {
+        // 被拒 / 被忽略：服务端已经给了结果，立刻把按钮放开（#158），
+        // 让玩家能马上重试，而不是在「处理中」里等一个不会来的批次。
+        endSyncing();
         setNotice(
           out.kind === 'rejected'
             ? (out.error?.message ?? out.error?.code ?? '操作被拒绝')
@@ -626,7 +685,7 @@ export function useRoom(): RoomSession {
       socket.off(SOCKET_EVENTS.gameEvents, onGameEvents);
       socket.off(SOCKET_EVENTS.gameTimer, onTimer);
     };
-  }, [appendLog, pump]);
+  }, [appendLog, pump, endSyncing]);
 
   /** 发一条玩家 Intent。`seq` 单调递增，重连后由快照纠正。 */
   const send = useCallback((type: string, payload?: Record<string, unknown>): void => {
@@ -636,6 +695,9 @@ export function useRoom(): RoomSession {
       return;
     }
     seqRef.current += 1;
+    // 发出去就把按钮标成「处理中」（#158）—— 与 ack 是否回来无关：
+    // 客户端的 socket.emit 没带 ack 回调，能等到的只有随后那条 game:events。
+    beginSyncing();
     const intent: Intent = {
       type,
       actor: 'player',
@@ -644,7 +706,7 @@ export function useRoom(): RoomSession {
       ...(payload ? { payload } : {}),
     };
     socket.emit(SOCKET_EVENTS.gameIntent, intent);
-  }, []);
+  }, [beginSyncing]);
 
   /**
    * 收下服务端给的席位身份。
@@ -896,6 +958,7 @@ export function useRoom(): RoomSession {
     log,
     // 回合边界是否还在播放中（D-268）—— 顶栏与阶段提示据此避免「半批状态」误导。
     turnPending,
+    syncing,
     fx,
     revealed,
     notice,

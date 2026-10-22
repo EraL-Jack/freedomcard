@@ -174,3 +174,60 @@ test('选位置提示条不与手牌重叠（#130）', async ({ browser }) => {
   await p.getByTestId('placing-cancel').click();
   await expect(hint).toHaveCount(0);
 });
+
+/** 两个矩形是否相交（留 1px 容差，避免亚像素误判）。 */
+function intersects(
+  a: { x: number; y: number; width: number; height: number },
+  b: { x: number; y: number; width: number; height: number },
+): boolean {
+  return (
+    a.x < b.x + b.width - 1 &&
+    b.x < a.x + a.width - 1 &&
+    a.y < b.y + b.height - 1 &&
+    b.y < a.y + a.height - 1
+  );
+}
+
+test('回合横幅不压住我方随从格（#159-1）', async ({ browser }) => {
+  const { host, guest } = await startGame(browser);
+  const first = await activePage([host, guest]);
+  const second = first === host ? guest : host;
+
+  // 一方结束回合 → 另一方屏幕上出现「第 N 回合」横幅（停留 1100ms）
+  await first.getByTestId('end-turn').click();
+
+  /*
+   * 必须按**文案**锁定回合横幅，不能「fx 一可见就量」。
+   *
+   * 事件是逐条播放的：结束回合先来「结束阶段」（`kind: 'phase'`，居中），
+   * 「第 N 回合」（`kind: 'turn'`，贴顶）排在队列后面。只等 `fx` 可见会量到
+   * 前一条居中横幅 —— 于是断言测的根本不是本轮修的横幅（首次跑就是这么红的）。
+   */
+  const fx = second.getByTestId('fx');
+  await expect(fx, '回合横幅应该出现').toContainText('回合', { timeout: 30_000 });
+  const fxBox = await fx.boundingBox();
+  expect(fxBox, '横幅应有几何尺寸').not.toBeNull();
+
+  /*
+   * 我方第 2 格 —— issue 里被压住的正是这一格（1440×900 压第 2 格，390×844 压整排）。
+   * `slot-1` 出现两次：nth(0)=对手、nth(1)=我方。
+   */
+  const slotBox = await second.getByTestId('slot-1').nth(1).boundingBox();
+  expect(slotBox, '我方随从格应有几何尺寸').not.toBeNull();
+
+  expect(
+    intersects(fxBox!, slotBox!),
+    `回合横幅 (y=${fxBox!.y}, h=${fxBox!.height}) 压住了我方随从格 (y=${slotBox!.y}, h=${slotBox!.height})`,
+  ).toBe(false);
+});
+
+test('指挥官区不显示张数，只显示血量（#159-2）', async ({ browser }) => {
+  const { page } = await startSoloGame(browser);
+
+  const myCommander = page.getByTestId('zone-commander').nth(1);
+  await expect(myCommander).toContainText('血');
+  // 指挥官区恒为 1 张：「血 10 1」会被读成一个两位数
+  await expect(myCommander.getByTestId('zone-count'), '指挥官区不该有张数').toHaveCount(0);
+  // 其它区域照旧有张数 —— 别把这条修成「全都不显示」
+  await expect(page.getByTestId('zone-cost').nth(1).getByTestId('zone-count')).toHaveCount(1);
+});

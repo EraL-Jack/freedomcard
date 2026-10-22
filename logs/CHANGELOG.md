@@ -5748,3 +5748,62 @@ issue 的推荐方案 A 是「给攻击指挥官单独一条文案，引擎不�
 
 > 注：注入时**「打随从仍出裁决」那条保持绿** —— 证明注入精准命中「打脸」这一支，
 > 不是把整个裁决行删掉。
+
+## 2026-10-22 · 在途反馈与牌桌可读性（#158 / #159-1 / #159-2）
+
+| ID | 改动 |
+| --- | --- |
+| D-312-a | `client/src/useRoom.ts`：新增 `syncing` 状态 + `beginSyncing()` / `endSyncing()`；`send()` 里开局，**播放队列排空**时收尾 |
+| D-312-b | `client/src/useRoom.ts`：`RoomSession` 增加 `syncing`（调用方据此置灰按钮、挂提示） |
+| D-312-c | `client/src/TableScreen.tsx`：`advance` / `end-turn` / 抽牌按钮 `disabled={syncing}` + 文案「处理中…」+ `cursor-progress` |
+| D-312-d | `client/src/TableScreen.tsx`：顶栏 clock 之后常驻 `data-testid="syncing"` 的「同步中…」（`role="status"`） |
+| D-312-e | `client/src/TableScreen.tsx`：回合横幅（`fx.kind === 'turn'`）贴顶（`items-start pt-16 sm:pt-20`），字号降为 `text-lg sm:text-2xl`、内边距 `px-4 py-2`（#159-1） |
+| D-312-f | `client/src/TableScreen.tsx`：`ZoneBox` 的 `zone-count` 只在**看不到卡**的区域渲染（指挥官区不再出现「血 10 1」，#159-2） |
+| D-312-g | `e2e/latency.spec.ts`（新，1 条）+ `e2e/polish.spec.ts` +2 条（含 `intersects()` 辅助） |
+| D-312-h | `logs/DECISIONS.md` 新增 **ADR-0078**（「在途」的结束点是播放队列排空） |
+
+### #158：「在途」的结束点为什么是队列排空，而不是 ack 回来
+
+第一版直觉是「等服务器 ack 到了就恢复按钮」。但 `socket.emit` 在 `send()` 里没带走 ack 回调，
+能等到的只有随后那条 `game:events` —— 而 `game:events` **回来 ≠ 玩家看见结果**：
+事件进队列后还要按 `FX_MS` 逐条播放，回合切换那一串能播一两秒。
+
+慢的从来不是网络，是播放。所以在途的终点定义成 **`pump()` 的 `finally` 里队列排空**，
+语义是「玩家眼睛追上了服务器」。这也顺手覆盖了 `game:events` 被拒（非 `accepted`）的分支：
+那条不产生事件、队列永远排不空，必须在 `onGameEvents` 里单独 `endSyncing()`。
+
+`INTENT_WAIT_MS = 10_000` 是**兜底看门狗**（`syncing` 最长挂 10 秒），不是正常路径的时长 ——
+正常路径靠两个 `endSyncing()` 收尾。没有它的话，一条被吞掉的事件会让按钮永久置灰。
+
+### #159-1：为什么只挪回合横幅，不挪全部 FX
+
+伤害 / 裁决 / 收入是**结算**提示，此刻玩家没有可点的操作，居中才落在视线焦点上。
+回合横幅不一样：它出现的那一刻玩家正要去点随从格。而它是 `pointer-events-none` ——
+**点得到、看不见**，操作照旧成功，玩家却不知道自己点到了哪里，是最坏的一种遮挡。
+
+顺带把字号降了一档：390px 下 `text-2xl` 加 `px-8 py-4` 会把横幅撑到接近满宽，
+即使贴顶也会横向压住牌桌边缘。
+
+### #159-2：为什么是「不渲染」而不是「显示成灰色」
+
+指挥官区恒有 1 张。那个 `1` 紧跟在「血 10」后面，读起来像一个两位数（「血 10 1」）。
+留着它再调色，噪音依旧存在；张数只在**数得清、且会变**的区域才有信息量
+（弃牌区 / 除外区 / 费用区）。所以判据落在 `showCards`：看得到卡的地方不显示张数。
+
+### 红绿证据（注入法）
+
+| 断言 | 注入的坏实现 | 红 |
+| --- | --- | --- |
+| 操作后立刻有「同步中」（E2E） | 注释掉 `send()` 里的 `beginSyncing()` | `element(s) not found`（`getByTestId('syncing')`） |
+| 回合横幅不压随从格（E2E） | 回合横幅改回 `items-center` | `Expected: false / Received: true`，消息带几何：`横幅 (y=337.5, h=58.5) 压住随从格 (y=321, h=94.5)` |
+| 指挥官区无张数（E2E） | `showCards ? null : …` 改成无条件渲染 | `unexpected value "1"` |
+
+### 一次假红：测试量错了对象
+
+首跑「回合横幅不压随从格」是红的，但**不是样式没生效**。点「结束回合」后，
+队列里先播的是「结束阶段」（`kind: 'phase'`，本来就居中），「第 N 回合」排在后面。
+原写法「`fx` 一可见就量尺寸」量到的是前一条横幅，测的根本不是本轮修的东西。
+
+改为按**文案**锁定（`toContainText('回合')`）后转绿。
+这条经验归入通用做法：**按 testid 定位到「某类元素」，再按文案锁定「这一个」**——
+逐条播放的队列里，同类元素会连续换人。
