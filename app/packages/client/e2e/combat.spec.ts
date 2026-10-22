@@ -62,6 +62,40 @@ test('出随从 → 战斗阶段发起攻击 → 力量值裁决并结算', asyn
   const myGraveBefore = await zoneCount(attackerPage, 'graveyard', 1);
 
   await attackerPage.getByTestId('slot-0').nth(1).locator('[data-testid="card"]').click();
+
+  /*
+   * 可攻击目标必须一眼可见（issue #119）。
+   *
+   * 原实现只给对方目标加了一圈 `ring-emerald-400/80`，而对方随从的卡框本来就是青色 ——
+   * 描边微调在深色底上几乎看不出来，玩家点了自己的随从后不知道能打谁，
+   * 容易判断成「卡住了」。现在给目标加**角标文字**，并断言它只出现在目标上。
+   */
+  await expect(
+    attackerPage.getByTestId('slot-0').nth(0).locator('[data-testid="hittable-mark"]'),
+  ).toBeVisible();
+  await expect(
+    attackerPage.getByTestId('zone-commander').nth(0).locator('[data-testid="hittable-mark"]'),
+  ).toBeVisible();
+  // 自己的随从是「攻击方」不是「目标」，不该挂角标（两个概念混在一起就没法区分了）
+  await expect(
+    attackerPage.getByTestId('slot-0').nth(1).locator('[data-testid="hittable-mark"]'),
+  ).toHaveCount(0);
+
+  /*
+   * 「取消攻击」与「认输」必须拉开（issue #120）：原来 `gap-1` = 4px，同一行同一高度，
+   * 取消一次攻击的手滑就落在认输上。判定用矩形间距，不看样式类名 ——
+   * 改成 `justify-between` 也好、加分隔线也好，只要真的分开了就算过。
+   */
+  const cancelBox = await attackerPage.getByTestId('cancel-attack').boundingBox();
+  const concedeBox = await attackerPage.getByTestId('concede').boundingBox();
+  expect(cancelBox).not.toBeNull();
+  expect(concedeBox).not.toBeNull();
+  const sameRow = Math.abs(cancelBox!.y - concedeBox!.y) < 12;
+  if (sameRow) {
+    const gap = concedeBox!.x - (cancelBox!.x + cancelBox!.width);
+    expect(gap, '「取消攻击」与「认输」的水平间距').toBeGreaterThanOrEqual(16);
+  }
+
   await attackerPage.getByTestId('slot-0').nth(0).locator('[data-testid="card"]').click();
 
   // 战斗结算：至少产出一条「裁决 X vs Y → …」
