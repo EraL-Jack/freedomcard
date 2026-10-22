@@ -177,6 +177,11 @@ export interface RoomSession {
     solo?: boolean;
     /** 回合时限（H18）：30 / 60 / 180 / 999 秒，缺省用服务端默认。 */
     turnTimeoutMs?: number;
+    /**
+     * 人机房**对手**用哪套基础卡组（#161）：`blade` / `frost` / `star`。
+     * 缺省 = 服务端按房间码散列（与加这个字段之前完全一致）。
+     */
+    opponentDeck?: string;
   }): void;
   join(code: string, nickname: string, deck?: string[], commander?: string): void;
   /** 准备页换卡组（D-184）—— 未开局时可用；卡组与指挥官一起换。 */
@@ -762,8 +767,18 @@ export function useRoom(): RoomSession {
       commander?: string;
       solo?: boolean;
       turnTimeoutMs?: number;
+      opponentDeck?: string;
     }): void => {
-      const { nickname, capacity, format = 'bo1', deck, commander, solo, turnTimeoutMs } = opts;
+      const {
+        nickname,
+        capacity,
+        format = 'bo1',
+        deck,
+        commander,
+        solo,
+        turnTimeoutMs,
+        opponentDeck,
+      } = opts;
       // 先表态再干活（D-256）：点击到 ack 之间原本界面毫无变化。
       beginRequest(solo ? 'create-solo' : 'create', solo ? '正在开人机房…' : '正在建房…');
       /*
@@ -799,6 +814,8 @@ export function useRoom(): RoomSession {
             format,
             // D-242：人机房 —— 服务端会立刻坐入 AI 并把容量收到 2。
             ...(solo ? { solo: true } : {}),
+            // #161：指定对手卡组。只在人机房有意义，不传 = 服务端散列。
+            ...(solo && opponentDeck ? { opponentDeck } : {}),
             // H18：不传 = 服务端默认 60s（与老客户端同一路径）。
             ...(turnTimeoutMs ? { turnTimeoutMs } : {}),
             // D-141 / D-184：只有正好 30 张才会传；指挥官与它成对。

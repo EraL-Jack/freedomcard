@@ -31,6 +31,18 @@ function aiBasicDeck(code: string): (typeof BASIC_DECKS)[number] {
   return BASIC_DECKS[h] ?? BASIC_DECKS[0]!;
 }
 
+/**
+ * 人机房对手的卡组（#161）—— 指定了就按指定的，没指定 / slug 不认识就回到散列。
+ *
+ * 「不指定 = 维持现状」是需求的默认值：Era 只说「可选」，把默认改成固定一套
+ * 会让原本能撞到三套的玩家从此只看到一套，属于静默的功能倒退。
+ * 非法 slug 也走散列而不是报错 —— 建房失败的成本远高于「对手换了个人」。
+ */
+function pickAiDeck(code: string, slug?: string): (typeof BASIC_DECKS)[number] {
+  const picked = slug === undefined ? undefined : BASIC_DECKS.find((d) => d.slug === slug);
+  return picked ?? aiBasicDeck(code);
+}
+
 export interface JoinInfo {
   room: Room;
   seat: Seat;
@@ -109,6 +121,8 @@ export class RoomManager {
     format?: MatchFormat;
     /** 人机房（D-242）—— 自动占一个 AI 席位，容量强制为 2。 */
     solo?: boolean;
+    /** 对手用哪套基础卡组（#161，`BASIC_DECKS` 的 slug）；缺省 / 非法 = 按房码散列。 */
+    opponentDeck?: string;
     /** 回合时限（H18）；缺省 / 非白名单档位 = 默认 60s。 */
     turnTimeoutMs?: number;
     /** 本局指挥官（D-184）；缺省 = 第一套基础卡组的指挥官。 */
@@ -183,7 +197,7 @@ export class RoomManager {
      * 它的 `connected` 恒为 `true`，因此 `prune()` 不会回收它。
      */
     if (input.solo) {
-      const basic = aiBasicDeck(code);
+      const basic = pickAiDeck(code, input.opponentDeck);
       room.seats[1] = {
         seat: 1,
         playerId: AI_PLAYER_ID,

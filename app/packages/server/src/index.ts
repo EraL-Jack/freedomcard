@@ -987,6 +987,8 @@ io.on('connection', (socket) => {
         socketId: socket.id,
         code: r.value.room.code,
         solo: parsed.data.solo === true,
+        // 人机房对手卡组（#161）：`(散列)` 表示没指定，按房码轮换 —— 排查时要知道是哪种。
+        opponentDeck: parsed.data.opponentDeck ?? '(散列)',
         deckCards: parsed.data.deck?.length ?? 0,
         turnTimeoutMs: r.value.room.turnTimeoutMs,
       },

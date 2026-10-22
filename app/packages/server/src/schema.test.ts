@@ -137,6 +137,38 @@ describe('房间入站 schema · 指挥官（D-184）', () => {
    * 协议加了 `turnTimeoutMs` 但 schema 忘了声明，字段会被静默丢掉，
    * 玩家选 999 秒、服务端仍按默认 60 秒跑，界面上没有任何异常。
    */
+  /*
+   * #161：`opponentDeck` 必须**穿过 zod**。
+   *
+   * 这是本仓库踩过三次的坑（`payload` / `deck` / `commander`）：`z.object()` 会静默
+   * strip 未声明的键，于是「客户端传了、服务端永远收不到」，界面看着正常、行为错。
+   * 所以每个新增协议字段都要有一条「保留」断言。
+   */
+  it('RoomCreateSchema 保留 opponentDeck（人机房可选对手卡组 #161）', () => {
+    expect(
+      RoomCreateSchema.parse({ nickname: 'Era', capacity: 2, solo: true, opponentDeck: 'frost' })
+        .opponentDeck,
+    ).toBe('frost');
+    // 缺省 = 不带该字段 → 房间层按房码散列（与加字段之前一致）
+    expect(
+      RoomCreateSchema.parse({ nickname: 'Era', capacity: 2, solo: true }).opponentDeck,
+    ).toBeUndefined();
+    // 非法 slug **能过 schema** —— 回落逻辑在房间层，不该让建房 400
+    expect(
+      RoomCreateSchema.safeParse({
+        nickname: 'Era',
+        capacity: 2,
+        solo: true,
+        opponentDeck: 'no-such-deck',
+      }).success,
+    ).toBe(true);
+    // 类型层面仍挡明显越界（超长字符串）
+    expect(
+      RoomCreateSchema.safeParse({ nickname: 'Era', capacity: 2, opponentDeck: 'x'.repeat(17) })
+        .success,
+    ).toBe(false);
+  });
+
   it('RoomCreateSchema 保留 turnTimeoutMs；非白名单档位在房间层回落（不报 400）', () => {
     expect(
       RoomCreateSchema.parse({ nickname: 'Era', capacity: 2, turnTimeoutMs: 180_000 }).turnTimeoutMs,
