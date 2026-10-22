@@ -176,10 +176,10 @@ Windows 需放行 5173 / 3000 端口的入站规则（网络配置文件为 Publ
 | `pnpm dev` | 并行起服务端与客户端 |
 | `pnpm typecheck` | 全量 `tsc --noEmit` |
 | `pnpm lint` | ESLint（flat config） |
-| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层 + `client` 纯逻辑，2026-10-21 时点 **454 passed**（core 237 + server 160 + client 57） |
+| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层 + `client` 纯逻辑，2026-10-22 时点 **490 passed**（core 257 + server 160 + client 73，另有 1 条 skipped 基线采样） |
 | `pnpm --filter @app/client run test:coverage` | client 覆盖率（v8）。目前只覆盖 `selectors` / `labels` / `log` 三个纯逻辑模块；组件层由 E2E 兜 |
 | `pnpm build` | 构建客户端到 `packages/client/dist` |
-| `pnpm --filter @app/client test:e2e` | 端到端（Playwright）：**50 条** —— 房间流程 / 视口溢出 / 联机开局 / 回合操作 / 攻击与指挥官伤害 / 卡组编辑 / 人机对战 / 人机房换牌阶段与倒计时 / 回合边界的指引不变量 / 堆叠区浮窗 / 新手引导 / 390px 日志抽屉 / 断线与点击反馈 |
+| `pnpm --filter @app/client test:e2e` | 端到端（Playwright）：**71 条** —— 房间流程 / 首页与对战桌布局 / 视口溢出 / 联机开局 / 回合操作 / 攻击与指挥官伤害 / 卡组编辑 / 人机对战 / 人机房换牌阶段与倒计时 / 回合边界的指引不变量 / 堆叠区浮窗 / 新手引导 / 390px 日志抽屉 / 断线与点击反馈 / 危险操作 / 打磨观感 / 确定性守卫 |
 
 > 首次跑 E2E 需先下载浏览器：`pnpm --filter @app/client exec playwright install chromium`（约 197 MiB，慢）。
 > 截图落在 `packages/client/e2e/screenshots/`（已被 `.gitignore` 忽略）。
@@ -434,6 +434,9 @@ app/
    在 D-265 换成**浮窗**后不再是问题 —— 五个堆叠区现在只占「区名 + 张数」那么高。
    仍然**没有**动的是「哪一排该高、哪一排该矮」以及「五区一行是否该拆成两行」，
    这会改变整桌观感，属于视觉决策，等 Era 定。
+22. **没有内建聊天，对战桌右侧只有战报**（#122 / D-307）：`docs/22` N-09 定了第一版不做好友/私聊，
+    原来那块「对话框（占位）」是**空承诺** —— 玩家会以为「有消息没加载出来」或「聊天坏了」，
+    所以整块删掉了（不是加一句说明）。真要加聊天时，`aside` 那一列塞回去即可。
 21. **充值/充能被连点时会出现一条「这张牌已经不在你的手牌或场上了」**
    （D-265 实机自查发现，桌面与 390px 都有）：这是**正常拒绝** —— 第一下已经充能成功、
    第二下用的是同一个 uid。提示已经改成人话（原来会把 40 位内部 uid 直接印在 toast 上）。
