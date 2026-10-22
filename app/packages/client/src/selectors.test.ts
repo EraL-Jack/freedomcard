@@ -46,6 +46,51 @@ function player(s: GameState, id: string, patch: Partial<PlayerState>): GameStat
 }
 
 describe('可操作性判定（T-04）', () => {
+  /*
+   * 终局全禁（issue #154）—— 结算改成覆盖层之后，牌桌与操作条仍可能被渲染。
+   * 引擎在 `winner !== null` 之后会拒掉一切 Intent，界面若还留着按钮，
+   * 就变成「界面承诺了引擎不认的动作」。这条守卫只管界面，不改引擎口径。
+   */
+  it('终局：原本可操作的战斗阶段也一律收回（牌桌仍在渲染，但按钮必须消失）', () => {
+    const live = base({ phase: 'battle', activeSeat: 0, turn: 5 });
+    // 先证明这确实是「本来会给按钮」的状态，否则下面的全 false 说明不了问题
+    expect(actionability(live, ME, NOW).canBattle).toBe(true);
+
+    const over: GameState = { ...live, winner: FOE, endReason: 'health' };
+    const a = actionability(over, ME, NOW);
+    expect(a.myTurn).toBe(false);
+    expect(a.canBattle).toBe(false);
+    expect(a.canPickHand).toBe(false);
+    expect(a.canDraw).toBe(false);
+    expect(a.canCommanderAttack).toBe(false);
+    expect(a.canRevealAttack).toBe(false);
+    expect(a.canMulligan).toBe(false);
+    expect(a.mulliganOpen).toBe(false);
+  });
+
+  it('平局（draw）与终局同口径', () => {
+    const s: GameState = { ...base({ phase: 'main', activeSeat: 0 }), draw: true };
+    expect(actionability(s, ME, NOW).canPickHand).toBe(false);
+    expect(actionability(s, ME, NOW).myTurn).toBe(false);
+  });
+
+  it('终局仍挂着待定选择时，回答入口不被一起关掉（否则玩家卡在浮层里）', () => {
+    const s: GameState = {
+      ...base({ phase: 'battle', activeSeat: 0 }),
+      winner: FOE,
+      pendingChoice: {
+        id: 'c1',
+        playerId: ME,
+        source: { cardUid: 'u1' } as never,
+        prompt: '选一个',
+        options: [],
+      } as never,
+    };
+    const a = actionability(s, ME, NOW);
+    expect(a.choiceOpen).toBe(true);
+    expect(a.canBattle).toBe(false);
+  });
+
   it('不是自己的回合：手牌不可点、不能宣告攻击、不能抽牌', () => {
     const s = base({ phase: 'main', activeSeat: 1 });
     const a = actionability(s, ME, NOW);
