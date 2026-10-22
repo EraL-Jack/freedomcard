@@ -6087,3 +6087,29 @@ Error: Test timeout of 30000ms exceeded
 
 验证：受影响三个文件（`turn` / `zone-inspect` / `drag`）`--repeat-each=2` → **20 passed (4.2m)**；
 全量 E2E 见本 PR 的 CI run。
+
+### 第三轮：把 apt 从关键路径上摘掉（D-316-i）
+
+第二轮推到 PR #170 后又红了一次（run 120059757539），但**这次是我的修法自己造成的**：
+
+```
+尝试 1：apt 下载 26MB 字体包…（正常，只是慢）→ 300s 被 timeout 杀死
+尝试 2：E: Could not get lock /var/lib/dpkg/lock-frontend. It is held by process 2624 (apt-get)
+尝试 3：同上 → exit 100
+```
+
+两个发现：
+
+1. **被杀死在安装中途的 apt 会变成孤儿进程，继续攥着 dpkg 锁** —— 于是「重试」全部拿不到锁，
+   重试逻辑等于失效。**「用 timeout 杀掉」与「重试」这两个手段互斥**：要么让它自己失败，要么杀完先清锁。
+2. 那次 apt 的清单是 `8 upgraded, 9 newly installed`，新装的几乎全是**字体**
+   （`fonts-wqy-zenhei` / `fonts-unifont` / `fonts-ipafont-gothic`）——
+   说明 Chromium 需要的系统库（nss3 / glib / xvfb）**runner 镜像里本来就有**，
+   `--with-deps` 在 GitHub 托管机上是**多余且脆弱**的一步。
+
+| ID | 位置 | 改动 |
+| --- | --- | --- |
+| D-316-i | `ci.yml` | 拆成两步：`安装 Chromium（只下浏览器，不走 apt）`（纯 CDN，可安全重试）；`安装系统依赖与中文字体（可选，失败不阻断）` 用 `playwright install-deps` + `continue-on-error: true` + 6 分钟上限 + apt 自身 20s 超时 |
+
+原则：**依赖装不上不该判红，功能跑不过才该判红**。apt 从此不在关键路径上，
+既不会再挂 6 小时，也不会再因为重试拿不到锁而假红。

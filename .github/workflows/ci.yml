@@ -69,28 +69,53 @@ jobs:
         working-directory: app
         run: pnpm install --frozen-lockfile
 
-      # `--with-deps` 会走 apt，而 apt **自己没有超时**：镜像一卡就无限等。
-      # 那次就卡在 `azure.archive.ubuntu.com` 的 InRelease 上（13:04 起无输出，19:04 被 6h 上限杀掉）。
-      # 对策：单次尝试用 `timeout` 兜住，失败重试；三次都不行立刻报错退出 ——
-      # 目标是**分钟级变红**，而不是小时级静默挂起。
-      - name: 安装 Chromium
+      # ⚠️ 不要把 apt 放进关键路径（D-316 第二轮）。
+      #
+      # `--with-deps` 会调 apt，而 apt **自己没有超时**：镜像一卡就无限等 ——
+      # 2026-10-22 run 39783536963 就卡在 `azure.archive.ubuntu.com` 的 InRelease 上，
+      # 从 13:04 挂到 19:04 撞 6 小时上限。
+      #
+      # 第一版对策是「`timeout 300` 兜住 + 重试」，结果**制造了新问题**（run 120059757539）：
+      # 第 1 次被 timeout 杀在安装中途，apt-get 变成孤儿进程仍攥着
+      # `/var/lib/dpkg/lock-frontend`，第 2、3 次立刻 `E: Could not get lock … exit 100`。
+      # 而且第 1 次其实是在**正常下载，只是慢**（26MB 字体包走了 5 分钟）。
+      #
+      # 那次 apt 的输出还说明了另一件事：`8 upgraded, 9 newly installed`，新装的几乎全是
+      # **字体**（fonts-wqy-zenhei / fonts-unifont / fonts-ipafont-gothic）——
+      # Chromium 需要的系统库（nss3 / glib / xvfb）runner 镜像里本来就有。
+      #
+      # 所以：浏览器本体单独装（纯 CDN 下载，可安全重试），字体另开一步、失败不阻断。
+      - name: 安装 Chromium（只下浏览器，不走 apt）
         working-directory: app/packages/client
-        timeout-minutes: 15
+        timeout-minutes: 10
         run: |
-          set -o pipefail
           for i in 1 2 3; do
-            echo "::group::尝试 $i / 3"
-            if timeout --kill-after=30 300 pnpm exec playwright install --with-deps chromium; then
+            echo "::group::下载尝试 $i / 3"
+            if timeout --kill-after=20 240 pnpm exec playwright install chromium; then
               echo "::endgroup::"
-              echo "第 $i 次安装成功"
+              echo "第 $i 次下载成功"
               exit 0
             fi
             echo "::endgroup::"
-            echo "第 $i 次安装超时或失败（多半是 apt 镜像卡住），5 秒后重试"
+            echo "第 $i 次下载失败，5 秒后重试"
             sleep 5
           done
-          echo "::error::Chromium 连续 3 次装不上，放弃。先看上面 apt 的输出卡在哪一步。"
+          echo "::error::Chromium 连续 3 次下载失败（CDN 侧问题，与 apt 无关）。"
           exit 1
+
+      # 系统依赖与字体走 apt，**完全退出关键路径**：装了更好（CJK 字形正确），
+      # 装不上也照跑 —— 镜像抖动不该把一条 84 用例的流水线判红。
+      # apt 的超时在这里显式设好（默认 http 120s 且无总超时），最坏 6 分钟结束；
+      # 而且这一步**从不主动 kill**，所以不会留下 dpkg 锁坑下一次重试。
+      - name: 安装系统依赖与中文字体（可选，失败不阻断）
+        working-directory: app/packages/client
+        continue-on-error: true
+        timeout-minutes: 6
+        run: |
+          echo 'Acquire::http::Timeout "20";
+          Acquire::https::Timeout "20";
+          Acquire::Retries "2";' | sudo tee /etc/apt/apt.conf.d/99-ci-timeout >/dev/null
+          pnpm exec playwright install-deps chromium
 
       - name: 端到端
         working-directory: app/packages/client
