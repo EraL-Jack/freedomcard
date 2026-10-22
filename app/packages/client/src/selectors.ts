@@ -55,6 +55,29 @@ export function actionability(state: GameState, me: PlayerId, _now: number): Act
   const phase = state.started ? state.phase : null;
   const choiceOpen = state.pendingChoice !== null && state.pendingChoice.playerId === me;
 
+  /*
+   * 终局（issue #154）—— 结算改成**覆盖层**之后，牌桌不再被替换掉，仍在下面渲染。
+   * 于是「可操作性」必须自己知道对局已经结束：否则 `phase` 停在 battle 且轮到我方时，
+   * 界面照常给出「推进阶段 / 结束回合 / 认输」，点下去只会被服务端一句 `GAME_OVER` 拒掉
+   * —— 界面在承诺引擎已经不认的动作（ADR-0002：界面口径必须与引擎一致）。
+   *
+   * `choiceOpen` 保持原值：万一终局时还挂着待定选择，回答它仍然是引擎允许的，
+   * 这里把它一并禁掉反而会把玩家卡在浮层里。
+   */
+  if (state.winner !== null || state.draw) {
+    return {
+      myTurn: false,
+      choiceOpen,
+      canPickHand: false,
+      canBattle: false,
+      canMulligan: false,
+      mulliganOpen: false,
+      canDraw: false,
+      canCommanderAttack: false,
+      canRevealAttack: false,
+    };
+  }
+
   const canPickHand =
     // 换牌阶段（D-259）：双方同时选要换掉的手牌，不依赖回合归属。
     (phase === 'mulligan' && !choiceOpen) ||

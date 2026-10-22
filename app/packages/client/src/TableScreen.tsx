@@ -675,6 +675,12 @@ function GameOverPanel(props: {
   room: RoomView | null;
   onBack: () => void;
   onNextGame: () => void;
+  /**
+   * 收起态（issue #154）—— 结算现在是**覆盖层**，让玩家能把它收起去看战报，
+   * 收起时保留「查看本局结算 / 返回主界面」两个出口。
+   */
+  collapsed: boolean;
+  onCollapseChange: (collapsed: boolean) => void;
 }): React.JSX.Element {
   const draw = props.state.draw;
   const won = props.state.winner === props.me;
@@ -711,69 +717,142 @@ function GameOverPanel(props: {
         ? '胜利'
         : '败北';
 
+  /*
+   * 本局摘要（issue #154）—— 结算页原来只有四行字（败北 / 对局结束 / 成因 / 返回），
+   * 血量与回合数都不在。回放入口置灰（D-183）、战报才是唯一复盘手段，
+   * 所以结算页必须自己回答「这局打了多久、双方最后各剩多少」。
+   * 血量直接取 `players[].health`（ADR-0024 的 10 血口径），**不在这里重算任何规则**。
+   */
+  const foeId = Object.keys(props.state.players).find((id) => id !== props.me);
+  const myHealth = props.state.players[props.me]?.health ?? 0;
+  const foeHealth = foeId ? (props.state.players[foeId]?.health ?? 0) : 0;
+
+  /*
+   * 收起态：结算让开，牌桌与战报回到可读状态，但两个出口不能丢
+   * —— 收起来之后玩家仍然要能「返回主界面」，否则等于把人锁在牌桌里。
+   */
+  if (props.collapsed) {
+    return (
+      <div
+        className="fixed inset-x-0 bottom-2 z-[75] flex justify-center gap-2 px-2"
+        data-testid="result-bar"
+      >
+        <button
+          type="button"
+          className="rounded bg-slate-700 px-4 py-2 text-xs text-slate-100 shadow-lg"
+          onClick={() => props.onCollapseChange(false)}
+          data-testid="result-reopen"
+        >
+          查看本局结算
+        </button>
+        <button
+          type="button"
+          className="rounded border border-slate-600 bg-slate-800 px-4 py-2 text-xs text-slate-300 shadow-lg"
+          onClick={props.onBack}
+          data-testid="result-back"
+        >
+          返回主界面
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex h-dvh flex-col items-center justify-center gap-4 p-6 text-center">
-      <p
-        className={`text-4xl font-bold ${draw ? 'text-slate-200' : (seriesWon ?? won) ? 'text-amber-300' : 'text-slate-300'}`}
-        data-testid="game-result"
+    /*
+     * 覆盖层（issue #154）—— 不再 `return` 掉整块牌桌。
+     *
+     * `sm:right-40 md:right-56` **就是右侧战报列的宽度**（`aside` 的 `sm:w-40 md:w-56`）：
+     * 容器缩到战报列左边，遮罩随之只压暗牌桌，战报既不被压暗、也不被挡住滚动。
+     * 窄屏没有常驻右列（战报是抽屉，默认收起），所以那里仍是全屏遮罩。
+     */
+    <div
+      className="fixed inset-0 z-[75] flex items-center justify-center p-3 sm:right-40 sm:p-4 md:right-56"
+      data-testid="result-overlay"
+    >
+      <div className="absolute inset-0 bg-slate-950/72" aria-hidden="true" />
+      <div
+        className="relative flex max-h-full w-full max-w-sm flex-col items-center gap-3 overflow-y-auto rounded-xl border border-slate-600 bg-slate-900/95 p-5 text-center shadow-2xl"
+        data-testid="result-card"
       >
-        {title}
-      </p>
-      <p className="text-sm text-slate-400" data-testid="series-score">
-        {room && room.format === 'bo3'
-          ? `BO3 · 第 ${Math.max(1, room.gameNo)} 局结束 · 比分 我 ${myWins} : ${foeWins} 对手`
-          : '对局结束'}
-      </p>
-      {/* 成因行（P-02）：说清「怎么输的 / 怎么赢的」，避免同一句「败北」有四种含义 */}
-      {reasonText ? (
-        <p className="text-xs text-slate-500" data-testid="end-reason">
-          {reasonText}
+        {/* 收起入口放在卡片右上角：它是「想让开」的动作，不该和「返回主界面」混在一排 */}
+        <button
+          type="button"
+          className="absolute right-2 top-2 rounded px-2 py-1 text-[11px] text-slate-400 hover:bg-slate-800"
+          onClick={() => props.onCollapseChange(true)}
+          data-testid="result-collapse"
+        >
+          收起
+        </button>
+        <p
+          className={`text-4xl font-bold ${draw ? 'text-slate-200' : (seriesWon ?? won) ? 'text-amber-300' : 'text-slate-300'}`}
+          data-testid="game-result"
+        >
+          {title}
         </p>
-      ) : null}
-      {awaitingNext ? (
-        isHost ? (
-          <button
-            type="button"
-            className="rounded bg-emerald-700 px-6 py-2 text-sm"
-            onClick={props.onNextGame}
-            data-testid="next-game"
-          >
-            开始第 {nextGameNo} 局
-          </button>
-        ) : (
-          <p className="text-xs text-slate-400" data-testid="wait-next">
-            等待房主开始第 {nextGameNo} 局…
+        <p className="text-sm text-slate-400" data-testid="series-score">
+          {room && room.format === 'bo3'
+            ? `BO3 · 第 ${Math.max(1, room.gameNo)} 局结束 · 比分 我 ${myWins} : ${foeWins} 对手`
+            : '对局结束'}
+        </p>
+        <div className="flex flex-col items-center gap-0.5">
+          <p className="text-xs text-slate-300" data-testid="result-turns">
+            共 {props.state.turn} 回合
           </p>
-        )
-      ) : null}
-      <button
-        type="button"
-        className="rounded bg-slate-700 px-6 py-2 text-sm"
-        onClick={props.onBack}
-        data-testid="back-home"
-      >
-        返回主界面
-      </button>
-      {/*
-        回放入口（D-183）—— Era 2026-10-20：**先置灰，但正常记录**。
-        公网走隧道、每月流量有限，开放观看等于每次复盘都从服务器拉一份 `replay.json`。
-        服务端记录链路不受影响（`app/replays/` 照常落盘），要开放只改
-        `features.ts` 的 `REPLAY_VIEW_ENABLED`。
-        按钮位置定在结算面板：看回放的人一定是刚打完的人，且不需要额外的列表页。
-      */}
-      <button
-        type="button"
-        disabled={!REPLAY_VIEW_ENABLED}
-        title={
-          REPLAY_VIEW_ENABLED
-            ? '查看本局回放'
-            : '回放观看暂未开放（节省公网流量）；对局记录已在服务端保存'
-        }
-        className="rounded border border-slate-600 bg-slate-800 px-6 py-2 text-sm text-slate-300 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-800/40 disabled:text-slate-500"
-        data-testid="replay-view"
-      >
-        查看回放{REPLAY_VIEW_ENABLED ? '' : '（暂未开放）'}
-      </button>
+          <p className="text-xs text-slate-300" data-testid="result-hp">
+            我方 {myHealth} · 对手 {foeHealth}
+          </p>
+          {/* 成因行（P-02）：说清「怎么输的 / 怎么赢的」，避免同一句「败北」有四种含义 */}
+          {reasonText ? (
+            <p className="text-xs text-slate-500" data-testid="end-reason">
+              {reasonText}
+            </p>
+          ) : null}
+        </div>
+        {awaitingNext ? (
+          isHost ? (
+            <button
+              type="button"
+              className="rounded bg-emerald-700 px-6 py-2 text-sm"
+              onClick={props.onNextGame}
+              data-testid="next-game"
+            >
+              开始第 {nextGameNo} 局
+            </button>
+          ) : (
+            <p className="text-xs text-slate-400" data-testid="wait-next">
+              等待房主开始第 {nextGameNo} 局…
+            </p>
+          )
+        ) : null}
+        <button
+          type="button"
+          className="rounded bg-slate-700 px-6 py-2 text-sm"
+          onClick={props.onBack}
+          data-testid="back-home"
+        >
+          返回主界面
+        </button>
+        {/*
+          回放入口（D-183）—— Era 2026-10-20：**先置灰，但正常记录**。
+          公网走隧道、每月流量有限，开放观看等于每次复盘都从服务器拉一份 `replay.json`。
+          服务端记录链路不受影响（`app/replays/` 照常落盘），要开放只改
+          `features.ts` 的 `REPLAY_VIEW_ENABLED`。
+          按钮位置定在结算面板：看回放的人一定是刚打完的人，且不需要额外的列表页。
+        */}
+        <button
+          type="button"
+          disabled={!REPLAY_VIEW_ENABLED}
+          title={
+            REPLAY_VIEW_ENABLED
+              ? '查看本局回放'
+              : '回放观看暂未开放（节省公网流量）；对局记录已在服务端保存'
+          }
+          className="rounded border border-slate-600 bg-slate-800 px-6 py-2 text-sm text-slate-300 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-800/40 disabled:text-slate-500"
+          data-testid="replay-view"
+        >
+          查看回放{REPLAY_VIEW_ENABLED ? '' : '（暂未开放）'}
+        </button>
+      </div>
     </div>
   );
 }
@@ -1122,6 +1201,16 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
    * 这不影响非多目标场景的排他纪律（Era 2026-10-18）。
    */
   const [mulliganPicks, setMulliganPicks] = useState<string[]>([]);
+  /**
+   * 结算覆盖层的收起态（issue #154）—— 收起后露出完整牌桌与战报。
+   *
+   * 它描述的只是「这一局的结算让不让开」，所以下一局一开始必须复位
+   * —— 否则 BO3 第二局会莫名其妙没有结算面板（牌桌正常、结算永不出现）。
+   */
+  const [resultCollapsed, setResultCollapsed] = useState(false);
+  useEffect(() => {
+    if (!gameEnded) setResultCollapsed(false);
+  }, [gameEnded]);
   const [now, setNow] = useState(() => Date.now());
 
   /**
@@ -1233,24 +1322,39 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
     return <WaitingRoom session={session} />;
   }
 
-  // 对局已结束（含对手中途离开由系统代认输）—— 必须放在「等待对手加入」之前：
-  // 对手离场后 state.players 里仍有其数据，但席位已空，若先判对手缺失会把
-  // 结束面板永远挡住（Era 2026-10-18：一方离开后另一方卡在空白页）。
-  if (state.winner !== null || state.draw) {
-    return (
-      <GameOverPanel
-        state={state}
-        me={me}
-        room={room}
-        onBack={session.leave}
-        onNextGame={session.nextGame}
-      />
-    );
-  }
+  /*
+   * 对局已结束（含对手中途离开由系统代认输）—— **不再在这里 return 掉整块牌桌**（issue #154）。
+   *
+   * 旧写法直接 `return <GameOverPanel/>`，代价是：右侧战报 DOM 一起消失
+   * （`[data-testid="log"]` 取不到），而回放入口置灰（D-183）之后，
+   * 战报就是唯一的复盘手段 —— 打完一局就没法回看发生了什么。
+   * 现在结算以**覆盖层**形式叠在牌桌上（见渲染末尾），牌桌与战报继续留在 DOM 里。
+   *
+   * ⚠️ 覆盖层仍要排在「等待对手加入」之前判定（Era 2026-10-18：一方离开后另一方卡在空白页）：
+   *    对手离场后 `state.players` 里仍有其数据、但席位已空，先判对手缺失会把结算永远挡住。
+   */
+  const over = state.winner !== null || state.draw;
 
   const mine: PlayerState | undefined = me ? state.players[me] : undefined;
   const theirs: PlayerState | undefined = foe ? state.players[foe] : undefined;
   if (!mine || !theirs) {
+    /*
+     * 终局时数据也不可能缺 —— 但要留兜底：真缺了也必须给结算与出口，
+     * 而不是把玩家按在「等待对手加入…」上（这正是 D-122 修过的那类卡死）。
+     */
+    if (over) {
+      return (
+        <GameOverPanel
+          state={state}
+          me={me}
+          room={room}
+          onBack={session.leave}
+          onNextGame={session.nextGame}
+          collapsed={resultCollapsed}
+          onCollapseChange={setResultCollapsed}
+        />
+      );
+    }
     return <p className="p-4 text-slate-400">等待对手加入…</p>;
   }
 
@@ -2295,6 +2399,12 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
           层级高于待定选择浮层（浮层 z-50 → 这里 z-[60]）：引擎守卫本来就只放行
           「回答 + 认输」，但浮层是 `fixed inset-0`，会把这一排整个盖住 ——
           于是规则允许认输、界面点不到。抬到浮层之上，界面才与引擎口径一致。 */}
+      {/*
+        终局（issue #154）：结算以覆盖层出现，牌桌仍可见 —— 但操作条必须消失。
+        否则「认输 / 推进 / 结束回合」还挂在那里，点下去只会换成服务端一句 GAME_OVER。
+        出口由结算卡片自己提供（返回主界面 / 收起后的小条）。
+      */}
+      {over ? null : (
       <footer className="relative z-[60] flex flex-wrap items-center gap-1">
         {myTurn && state.phase !== 'draw' && !choiceOpen ? (
           <button
@@ -2473,6 +2583,7 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
           长按卡牌看详情
         </span>
       </footer>
+      )}
 
       {/*
         认输确认浮层（issue #120 / D-295）—— **居中**，不留在原按钮位置。
@@ -2531,6 +2642,24 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
         >
           <CardOf card={dragCard} state={state} />
         </div>
+      ) : null}
+
+      {/*
+        结算覆盖层（issue #154）—— 牌桌与右侧战报留在下面，DOM 不再被替换。
+
+        层级 z-[75]：高于操作条（z-60）、认输浮层（z-68）、移动端日志抽屉（z-65），
+        但**低于断线横幅（z-80）** —— 「与服务器断开」是全局状态，任何时候都该压在最上面。
+      */}
+      {over ? (
+        <GameOverPanel
+          state={state}
+          me={me}
+          room={room}
+          onBack={session.leave}
+          onNextGame={session.nextGame}
+          collapsed={resultCollapsed}
+          onCollapseChange={setResultCollapsed}
+        />
       ) : null}
     </div>
   );
