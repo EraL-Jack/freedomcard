@@ -59,4 +59,5 @@ register(INTENTS.concede, concedeRule);
 export { attackRule, chargeRule, commanderAttackRule, concedeRule, drawRule, mulliganRule, phaseRule, playRule, startRule, turnEndRule };
 export { drawForPhase } from './draw.js';
 export { drawCountFor } from './phase.js'; // issue #109：定义搬去 phase，避免与 draw 循环依赖
+export { shouldAutoAdvanceDraw } from './phase.js'; // issue #139：0 张自动推进的判定，单点定义
 export { PHASE_ORDER, maxCostForTurn } from './phase.js';

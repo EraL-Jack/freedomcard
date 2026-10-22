@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { BOARD_SLOTS, COST_INCOME_PER_TURN, DECK_SIZE, INITIAL_HAND, INITIAL_HEALTH, KEYWORD_TAUNT, MAIN_DECK_SIZE, RULE_ERRORS, SECOND_PLAYER_HAND } from '@app/shared/constants';
 import type { CardDef, CardInstance, GameEvent, GameState, Intent, Phase, RuleContext, Zone } from '@app/shared/types';
 
-import { applyIntent, createInitialState, reduce, stateHash, INTENTS } from '../index.js';
+import { applyIntent, createInitialState, reduce, stateHash, INTENTS, shouldAutoAdvanceDraw } from '../index.js';
 import { commanderDamageEvents } from '../combat.js';
 
 import { unitPower } from '../ops.js';
@@ -516,36 +516,47 @@ describe('阶段流转 phaseRule', () => {
   });
 
   /*
-   * issue #109（Era 2026-10-21）：「先攻开局第一回合不抽牌，不需要展示抽牌按钮，
-   * 直接自动推进阶段就行了。」
+   * issue #139 / D-287（Era 2026-10-22 校正）：「我要求抽 0 自动推进抽阶，不是跳过抽阶」+
+   * 「抽 0 自动推进，非抽 0 就手动，就这么简单」。
    *
-   * 抽 0 张的抽牌阶段**没有任何决策点**，却和「抽 2 张」走同一条手动路径：
-   * 界面亮「点击抽牌」、点了什么也不发生，而且玩家还不能自己推进阶段
-   * （`phaseRule` 拒绝未抽牌的抽牌阶段）。唯一出路就是点那个空按钮。
+   * 所以先攻首回合现在是**抽 1 张**，和别的手动抽牌阶段一样停住等玩家点；
+   * 「抽 0 自动推进」那条分支留着（`shouldAutoAdvanceDraw`），只是正常对局走不到了。
    */
-  it('先攻第一回合抽 0 张：抽牌阶段瞬穿到主要阶段，不停顿（issue #109）', () => {
+  it('先攻第一回合抽 1 张：停在抽牌阶段，手动抽完才进主要（issue #139）', () => {
     const { events, state } = runWith(
       craft({ phase: 'charge', turn: 1 }),
       intent('p1', INTENTS.phaseAdvance),
     );
-    // 事件流完整保留（客户端照旧逐条播放，只是中间不停）：
-    // charge→reset（reset 早已瞬穿）→ reset→draw → 抽完 → draw→main
+    // 抽阶不许被吞：只走到 draw 就停，`draw:completed` 还没发生
     const phases = events
       .filter((e) => e.type === 'phase:changed')
       .map((e) => `${String(e.payload?.['from'])}→${String(e.payload?.['to'])}`);
-    expect(phases).toEqual(['charge→reset', 'reset→draw', 'draw→main']);
-    expect(events.map((e) => e.type)).toContain('draw:completed');
+    expect(phases).toEqual(['charge→reset', 'reset→draw']);
+    expect(events.map((e) => e.type)).not.toContain('draw:completed');
 
-    // 状态不停在 draw，手牌也没多（先攻首回合抽 0 张）
-    expect(state.phase).toBe('main');
+    expect(state.phase).toBe('draw');
+    expect(state.drawnThisPhase).toBe(false);
     expect(state.players['p1']!.zones.hand.length).toBe(0);
 
-    // 已经不在抽牌阶段 —— 客户端不该再给「点击抽牌」这个动作
-    const again = applyIntent(state, intent('p1', INTENTS.draw), CTX);
-    expect(again.ok).toBe(false);
+    // 点一次卡组 → 抽 1 张（不是 2 张）→ 自动推进到主要
+    const drawn = runWith(state, intent('p1', INTENTS.draw));
+    expect(drawn.events.map((e) => e.type)).toContain('draw:completed');
+    expect(drawn.state.players['p1']!.zones.hand.length).toBe(1);
+    expect(drawn.state.phase).toBe('main');
   });
 
-  it('后手第一回合仍停在抽牌阶段，等玩家点卡组抽 2 张（issue #109 的对照面）', () => {
+  /*
+   * 0 张自动推进这条分支，正常对局已经构造不出来（首回合抽 1、其余抽 2），
+   * 所以直接测谓词 —— 不能留一条「只能靠临时把常量改回 0 才跑得到」的分支。
+   * 将来改数值或加特殊模式时，这里就是唯一的覆盖点。
+   */
+  it('shouldAutoAdvanceDraw：只有 0 张才自动推进（issue #139）', () => {
+    expect(shouldAutoAdvanceDraw(0)).toBe(true);
+    expect(shouldAutoAdvanceDraw(1)).toBe(false);
+    expect(shouldAutoAdvanceDraw(2)).toBe(false);
+  });
+
+  it('后手第一回合仍停在抽牌阶段，等玩家点卡组抽 2 张（issue #139 的对照面）', () => {
     // 座位 0 是先攻（start 规则按掷骰重排）；turn 2 且 activeSeat=1 即后手的第一个回合
     const { events, state } = runWith(
       craft({ phase: 'charge', turn: 2, activeSeat: 1 }),

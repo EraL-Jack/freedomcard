@@ -5080,3 +5080,41 @@ Era 于 2026-10-21 23:47 与 2026-10-22 逐条批准了 6 项设计变更（`doc
 - 编号：新增 **D-286** 不与既有条目重复，当前最大编号即 D-286。
   另注：`## D-102` 在本文件里有两条同名标题，属历史遗留，**不在本次范围**（发现即记，不顺手改）。
 - `git diff --stat` 仅 `docs/` 与 `logs/CHANGELOG.md`，`app/` 无变更。
+
+## D-287 · 先攻第一回合抽 1 张，抽 0 自动推进保留（2026-10-22）
+
+issue **#139**（P-05 / `docs/16 §15` C-05）。Era 拍板「先手抽 0 改成抽 1」，并校正口径：
+「我要求抽 0 自动推进抽阶，不是跳过抽阶」「抽 0 自动推进，非抽 0 就手动，就这么简单」。
+
+### 交付件
+
+| ID | 内容 |
+| --- | --- |
+| D-287 | `packages/shared/src/constants.ts`：`FIRST_TURN_DRAW` **0 → 1**（唯一必改点；`drawCountFor` 是唯一张数出口，调用方零改动） |
+| D-287-a | `core/src/rules/phase.ts`：新增并导出纯谓词 **`shouldAutoAdvanceDraw(count)`**，`advanceOnce` 改用它；瞬穿分支**保留不删** |
+| D-287-b | `core/src/index.ts` / `rules/index.ts`：导出 `shouldAutoAdvanceDraw`（core 与客户端同源） |
+| D-287-c | 注释纠偏 4 处：`phase.ts` 瞬穿段、`draw.ts` 阶段闭环、`selectors.ts` 的 `canDraw` 与 draw 指引 —— 原文都写着「先攻首回合抽 0」，实现已改为抽 1 |
+| D-287-d | `app/README-运行说明.md` §3.4 重写：先攻首回合抽 1 + 「抽 0 自动推进 ≠ 跳过抽阶」的能力说明 |
+| D-287-e | `docs/16 §12.3`：给「0 充能 + 0 抽牌」那句加注，说明那是当次实测局面（抽牌已按 C-05 改为 1） |
+
+### 测试
+
+| 层 | 变化 |
+| --- | --- |
+| core `rules.test.ts` | 原「首回合抽 0 瞬穿」用例**反转**为「首回合抽 1：停在 draw、手牌不变；点一次 +1 后自动进主要」；新增 `shouldAutoAdvanceDraw(0/1/2)` 用例（0 张分支原先只能靠改常量才跑得到） |
+| client `selectors.test.ts` | 原「首回合 0 张不给动作 / 不给指引」3 条**反转**为「给动作 + 给指引」 |
+| e2e `turn.spec.ts` | 原「全程不出现点击抽牌」**反转**为「停在抽牌、点一次 +1 进主要」 |
+
+### 验证
+
+- 单测：core **238** / client **67** / server 见全量；typecheck 0、lint 0。
+- E2E：**58 passed**（4.8m），含新增的首回合用例。
+- **反向验证**（`git stash push -- constants.ts` 退回 `FIRST_TURN_DRAW = 0`）：
+  core 1 红、client 2 红、E2E 1 红（`draw-deck` 始终不出现）；恢复后全绿。
+
+### 边界
+
+- **不删**「抽 0 自动推进」分支 —— Era 要的是「自动推进」不是「跳过抽阶」；删了等于把能力删掉。
+- 先手强度上升（起手 5 + 首回合 1 = 6，与后手同数但先动）。按 Era 口径**只能靠 BO3 消化，
+  不加座位补偿**；与 #138 同批复测。
+- 抽牌阶段动画不受影响：事件流仍是 `phase:changed → draw:completed → phase:changed`。

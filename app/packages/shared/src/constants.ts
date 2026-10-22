@@ -250,8 +250,14 @@ export const MAX_COPIES = 3;
 /** A5-2：最高费用初始为 1。 */
 export const INITIAL_MAX_COST = 1;
 
-/** A10-3 + docs/16 §1：先攻方第一回合**抽 0 张**（ADR-0024，原为 1 张）。 */
-export const FIRST_TURN_DRAW = 0;
+/**
+ * 先攻方第一回合抽几张（docs/16 §1 + §15 C-05，Era 2026-10-22 拍板，D-287 / issue #139）。
+ *
+ * 历史：A10-3 + ADR-0024 曾定为 **0 张**，理由是「先手先动，少抽一张作补偿」。
+ * 实测下来先手少一张反而更弱、首回合还多出一个没有决策点的抽牌阶段，故改回 **1 张**。
+ * 后手仍是 2 张（`DRAW_PER_TURN`），先手差值改由「先动」本身承担。
+ */
+export const FIRST_TURN_DRAW = 1;
 
 /** A2-4：先后手由 1d6 掷骰决定，较大者先攻。 */
 export const SEQUENCE_DIE = 6;

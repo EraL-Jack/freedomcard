@@ -303,27 +303,31 @@ describe('待定选择的阵营标注（issue #105）', () => {
   });
 });
 
-describe('先攻第一回合「零抽牌」的抽牌阶段（issue #109）', () => {
+describe('先攻第一回合的抽牌阶段（issue #139 / D-287：抽 0 → 抽 1）', () => {
   /*
-   * 引擎已改成瞬穿，这个局面正常不会停住；客户端这一层是**双保险 + 播放中间帧**：
-   * `phase:changed` 每条停 750ms，瞬穿那一批中间必然出现一两帧 `phase === 'draw'`，
-   * 那时不能给「点击抽牌」（服务端早已在主要阶段，点了只会换回 WRONG_PHASE）。
+   * Era 2026-10-22 校正口径：「抽 0 自动推进，非抽 0 就手动」。
+   * 首回合改成抽 1 之后，这个局面**就该停住等玩家点**，与后手一致 ——
+   * 原先那两条「零抽牌不给动作、不给指引」的断言随之反转。
+   *
+   * `canDraw` 里的 `drawCountFor(state) > 0` 守卫仍然保留：它挡的不是首回合，
+   * 而是「0 张抽牌阶段自动推进」那一批事件按 750ms 逐条播放时的中间帧
+   * （那时服务端早已在主要阶段，给按钮只会换回 WRONG_PHASE）。
    */
-  const zeroDraw = (): GameState => base({ phase: 'draw', turn: 1, activeSeat: 0 });
+  const firstTurn = (): GameState => base({ phase: 'draw', turn: 1, activeSeat: 0 });
   const normalDraw = (): GameState => base({ phase: 'draw', turn: 2, activeSeat: 1 });
 
-  it('该抽 0 张时不给抽牌动作', () => {
-    const a = actionability(zeroDraw(), ME, NOW);
+  it('先攻首回合现在给抽牌动作（原先是 0 张、不给）', () => {
+    const a = actionability(firstTurn(), ME, NOW);
     expect(a.myTurn).toBe(true);
-    expect(a.canDraw).toBe(false);
+    expect(a.canDraw).toBe(true);
   });
 
   it('该抽 2 张时照旧给抽牌动作', () => {
     expect(actionability(normalDraw(), FOE, NOW).canDraw).toBe(true);
   });
 
-  it('该抽 0 张时也不给「点卡组抽一张」的指引 —— 不指引一个不存在的动作', () => {
-    expect(turnGuidance(zeroDraw(), ME, false).hint).toBe('');
+  it('先攻首回合也给「点卡组抽一张」的指引', () => {
+    expect(turnGuidance(firstTurn(), ME, false).hint).toContain('抽一张');
     expect(turnGuidance(normalDraw(), FOE, false).hint).toContain('抽一张');
   });
 });
