@@ -1347,6 +1347,14 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
    * 战报在手机上根本看不到。桌面(≥640px)仍是常驻列，窄屏改为按钮展开的抽屉。
    */
   const [logOpen, setLogOpen] = useState(false);
+  /**
+   * 是否显示机制行（#157）。默认**关**：玩家打开战报是想知道「刚才发生了什么」，
+   * 而阶段切换 / 重置 / 自动充能是引擎在推进，不是任何人做的决定。
+   * 复盘要时间轴骨架时再打开（`data-testid="log-detail"`）。
+   */
+  const [showMech, setShowMech] = useState(false);
+  /** 被折叠掉的机制行条数 —— 用一句话告诉玩家「还藏着多少」，避免以为战报不全。 */
+  const hiddenMech = showMech ? 0 : log.reduce((n, l) => n + (l.mech ? 1 : 0), 0);
 
   /**
    * 出牌的两段选择（D-257，Era 2026-10-21）。
@@ -2498,17 +2506,49 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
           } flex-col gap-1 sm:static sm:z-auto sm:flex sm:w-40 sm:shrink-0 md:w-56`}
           data-testid="log-panel"
         >
+          {/*
+            「细节」开关（#157）：只控制机制行，不影响正文。
+
+            ⚠️ 必须放在日志框**上方**。放下面会把日志框顶起来，底部多出 ~29px 空白 ——
+            `polish.spec.ts` 的 #122 用例守的正是「日志列下方不留空块」
+            （当初是删掉聊天占位后留下的洞），放下面当场就红。
+          */}
+          <button
+            type="button"
+            className="rounded bg-slate-800 py-1 text-[11px] text-slate-300"
+            onClick={() => setShowMech((v) => !v)}
+            aria-pressed={showMech}
+            data-testid="log-detail"
+          >
+            {showMech ? '隐藏机制细节' : '显示机制细节'}
+          </button>
+          {/*
+            移动端抽屉**必须不透明**（#157）：原来 `bg-slate-900/95`，牌桌的浅色文字
+            仍会透上来，在 390px 的窄抽屉里和战报糊成一片。
+            桌面是右侧独立一列、下面就是深色页面，半透明反而有层次感，所以保留（`sm:`）。
+          */}
           <div
             ref={logRef}
-            className="min-h-0 flex-1 overflow-y-auto rounded border border-slate-700 bg-slate-900/95 p-1 text-[11px] sm:bg-slate-900/60"
+            className="min-h-0 flex-1 overflow-y-auto rounded border border-slate-700 bg-slate-950 p-1 text-[11px] sm:bg-slate-900/60"
             data-testid="log"
           >
-            {log.map((l) => (
-              <p key={l.id} className="text-slate-300">
-                {l.text}
-              </p>
-            ))}
+            {/*
+              机制行默认折叠（#157）。判据见 `log.ts` 的 `MECH_EVENTS`：
+              主语是系统（阶段 / 重置 / 自动充能 / 上限）→ 收进「细节」。
+              折叠而不是删除：复盘要时间轴骨架，但那不是玩家看战报的目的。
+            */}
+            {log
+              .filter((l) => showMech || !l.mech)
+              .map((l) => (
+                <p key={l.id} className="text-slate-300">
+                  {l.text}
+                </p>
+              ))}
+            {hiddenMech > 0 && !showMech ? (
+              <p className="mt-1 text-slate-500">…另有 {hiddenMech} 条机制记录已收起</p>
+            ) : null}
           </div>
+
           {/* 抽屉的关闭入口只在窄屏出现（桌面没有抽屉这回事） */}
           <button
             type="button"

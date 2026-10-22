@@ -5,7 +5,7 @@ import { ROOM_ERROR_TEXT, SOCKET_EVENTS } from '@app/shared/constants';
 import type { RoomErrorCode } from '@app/shared/constants';
 import type { CardInstance, GameEvent, GameState, Intent, MatchFormat, PlayerId } from '@app/shared/types';
 
-import { describeEvent, pushLogLine } from './log.js';
+import { describeEvent, isMechanism, pushLogLine } from './log.js';
 import { PHASE_LABEL, ackTimeoutText } from './labels.js';
 import { sfx } from './sfx.js';
 import { socket } from './socket.js';
@@ -486,10 +486,10 @@ export function useRoom(): RoomSession {
    * React 报 key 冲突并可能重复/吞行。详见 `log.ts` 的 `pushLogLine`。
    */
   const logSeqRef = useRef(0);
-  const appendLog = useCallback((text: string, at: number): void => {
+  const appendLog = useCallback((text: string, at: number, mech = false): void => {
     logSeqRef.current += 1;
     const seq = logSeqRef.current;
-    setLog((prev) => pushLogLine(prev, at, text, seq));
+    setLog((prev) => pushLogLine(prev, at, text, seq, mech));
   }, []);
 
   /** 逐条播放队列里的事件：先应用到状态，再按节奏停顿（横幅停留时间）。 */
@@ -524,7 +524,8 @@ export function useRoom(): RoomSession {
         // 战报是自动推送，不能把「桌面上要主动点开才看得到」的私有流向直接刷给玩家
         // （手牌是 count 态完全不可查看；费用区是 float 态、点开浮窗可见）。
         const text = describeEvent(e, namesRef.current, next, meRef.current);
-        if (text) appendLog(text, e.at);
+        // 机制行标上 `mech`（#157）：战报面板默认折叠它们，玩家看的是「谁做了什么」。
+        if (text) appendLog(text, e.at, isMechanism(e.type));
 
         if (e.type === 'combat:resolved') combatTick = e.at;
 

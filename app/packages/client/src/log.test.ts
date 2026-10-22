@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { GameEvent, GameState } from '@app/shared/types';
 
-import { LOG_LIMIT, describeEvent, pushLogLine, type LogEntry } from './log.js';
+import { LOG_LIMIT, describeEvent, isMechanism, pushLogLine, type LogEntry } from './log.js';
 
 /**
  * 事件 → 中文日志（B2-5 右侧战报列）。
@@ -492,5 +492,65 @@ describe('战报行的 id 单调递增、不重复（issue #135 / D-291）', () 
     expect(new Set(ids).size).toBe(101);
     expect(ids[ids.length - 1]).toBe(201);
     expect(ids.filter((x) => x === 201)).toHaveLength(100);
+  });
+});
+
+/* ------------------------- 战报降噪（#157） ------------------------- */
+
+describe('战报降噪（#157）', () => {
+  /*
+   * 判据是**主语**：系统在推进 → 机制行；玩家/某张牌做了什么 → 正文。
+   * 这条断言的价值不在「四个常量对不对」，而在于**新事件默认进正文**：
+   * 谁往 `MECH_EVENTS` 里塞一个玩家动作（比如「抽牌」），这里就会红。
+   */
+  it('机制行的判定只覆盖系统推进类事件', () => {
+    for (const t of ['phase:changed', 'units:reset', 'cost:income', 'maxCost:changed']) {
+      expect(isMechanism(t), `${t} 应是机制行`).toBe(true);
+    }
+    for (const t of [
+      'card:moved',
+      'card:revealed',
+      'combat:resolved',
+      'commander:damaged',
+      'cost:spent',
+      'draw:completed',
+      'unit:replaced',
+    ]) {
+      expect(isMechanism(t), `${t} 不是机制行（玩家看得见主语）`).toBe(false);
+    }
+  });
+
+  /*
+   * 合并：支付 N 张费用只写一行 `cost:spent`，逐张的「费用区 → 弃牌区」不再成行。
+   *
+   * issue 里那段实测是「一次出牌 6 行」：4 张费用 + 消耗 + 登场。
+   * 这条把前 4 行钉成 null —— 改回去就红。
+   */
+  it('支付费用的逐张位移不再单独成行（被 cost:spent 概括）', () => {
+    const e: GameEvent = {
+      type: 'card:moved',
+      at: 1000,
+      payload: { uid: 'c1', from: 'cost', to: 'graveyard', playerId: 'p1' },
+    };
+    expect(describeEvent(e, NAMES, null, 'p1')).toBeNull();
+  });
+
+  /* 反方向：**进**费用区仍要成行（充能是玩家能感知的事件，且带卡名）。 */
+  it('置入费用区仍然成行（与上面那条不是一回事）', () => {
+    const e: GameEvent = {
+      type: 'card:moved',
+      at: 1000,
+      payload: { uid: 'c1', from: 'deck', to: 'cost', playerId: 'p1' },
+    };
+    expect(describeEvent(e, NAMES, null, 'p1')).toContain('置入费用区');
+  });
+
+  it('pushLogLine 会保留 mech 标记（UI 靠它折叠）', () => {
+    const one = pushLogLine([], 1, '阶段：充能 → 重置', 1, true);
+    expect(one[0]?.mech).toBe(true);
+    // 不传 = 正文行，且**不带**这个键（避免每行都多一个 false，序列化对比也干净）
+    const two = pushLogLine([], 1, 'Era 消耗 2 张费用', 1);
+    expect(two[0]).not.toHaveProperty('mech');
+    expect(two[0]?.text).toBe('Era 消耗 2 张费用');
   });
 });
