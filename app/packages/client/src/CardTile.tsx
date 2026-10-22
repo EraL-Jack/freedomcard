@@ -66,6 +66,18 @@ export interface CardTileProps {
    * 可执行操作的对象边框发光（与不可操作置灰互补）。
    */
   glow?: boolean;
+  /**
+   * 「我是攻击目标」（issue #119 / D-294）。
+   *
+   * 与 `glow` 分开是刻意的：`glow` 是「你可以操作**我**」（自己的随从、自己的指挥官），
+   * `hittable` 是「**我**可以被他打」（对手的单位）。两者在同一个界面上同名同色，
+   * 玩家就分不清哪个是「点它来出手」、哪个是「点它来挨打」。
+   *
+   * 原实现把对手目标也塞进 `glow`，效果只是一圈同色系描边 —— 对方随从的卡框本来就是
+   * 青色的，微调看不出来，玩家点完自己的随从会以为卡住了。这里改为**角标文字**：
+   * 颜色可以骗人，字不会。
+   */
+  hittable?: boolean;
   /** 战斗呈现类名（如攻击冲撞 / 受击抖动），由 TableScreen 按正在播放的裁决事件注入。 */
   fxClass?: string;
   /**
@@ -89,6 +101,8 @@ export default function CardTile(props: CardTileProps): React.JSX.Element {
   const state = [
     props.selected && !greyed ? 'ring-2 ring-amber-400' : '',
     props.glow && !greyed && !props.selected ? 'ring-2 ring-emerald-400/80 animate-pulse' : '',
+    // 攻击目标：玫红描边 + 外发光（与 `glow` 的翠绿严格区分），并配下方角标文字。
+    props.hittable && !greyed && !props.selected ? 'ring-2 ring-rose-400 shadow-[0_0_10px_rgba(251,113,133,0.6)]' : '',
     greyed ? 'opacity-40' : interactive ? 'active:scale-95' : 'cursor-default',
   ]
     .filter(Boolean)
@@ -178,6 +192,21 @@ export default function CardTile(props: CardTileProps): React.JSX.Element {
         {props.frozen ? (
           <span className="absolute left-0.5 top-0.5 rounded bg-sky-800/90 px-1 text-[9px] leading-tight text-sky-100">
             冻结
+          </span>
+        ) : null}
+        {/*
+          攻击目标角标（issue #119）。压在插图区正中而不是右上角 ——
+          右上角是卡名条，压上去会把最该读的字盖掉；插图区本来就是纯色占位。
+          `pointer-events-none` 保证不会把点击吃掉（点击必须落到按钮上）。
+        */}
+        {props.hittable ? (
+          <span className="pointer-events-none absolute inset-x-0 top-1/2 z-10 flex -translate-y-1/2 justify-center">
+            <span
+              className="rounded bg-rose-600/95 px-1 text-[9px] font-medium leading-tight text-white shadow"
+              data-testid="hittable-mark"
+            >
+              可攻击
+            </span>
           </span>
         ) : null}
       </button>

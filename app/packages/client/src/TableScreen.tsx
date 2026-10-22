@@ -283,6 +283,8 @@ function CardOf(props: {
   disabled?: boolean;
   /** 当前可操作（Era 2026-10-18：可操作的对象边框发光）。 */
   glow?: boolean;
+  /** 当前是**合法攻击目标**（issue #119 / D-294）—— 与 `glow` 分开，见 `CardTile`。 */
+  hittable?: boolean;
   /** 战斗呈现类名（攻击冲撞 / 受击抖动）—— 由调用方按播放中的裁决事件注入。 */
   fxClass?: string;
   /** 区域内紧凑尺寸（格子内卡片比手牌小一号，避免压排 —— D-118 截图实测）。 */
@@ -359,6 +361,7 @@ function CardOf(props: {
         selected={props.selected}
         disabled={props.disabled}
         glow={props.glow}
+        hittable={props.hittable}
         fxClass={props.fxClass}
         fitHeight={props.compact}
         onSelect={props.onClick}
@@ -403,8 +406,10 @@ function ZoneBox(props: {
   /** 点击区域内某张卡的回调 —— 不传则该区域不可点（默认）。 */
   onCardClick?: (uid: string) => void;
   selected?: boolean;
-  /** 区域内的卡当前可操作（发光提示，Era 2026-10-18）—— 如被选为攻击目标时。 */
+  /** 区域内的卡当前可操作（发光提示，Era 2026-10-18）—— 如出牌/充能时的我方区域。 */
   glow?: boolean;
+  /** 区域内的卡是**合法攻击目标**（issue #119 / D-294）—— 如选中攻击方后的对方指挥官区。 */
+  hittable?: boolean;
   /** 拖拽落点标记（B3-1 拖拽）：`dropKey` = 区域级落点（board/cost），`dropUid` = 单卡落点（攻击目标）。 */
   dropKey?: string;
   dropUid?: string;
@@ -509,6 +514,7 @@ function ZoneBox(props: {
               state={props.state}
               selected={props.selected}
               glow={props.glow}
+              hittable={props.hittable}
               compact
               fxClass={props.fxFor?.(c.uid)}
               onClick={props.onCardClick ? () => props.onCardClick?.(c.uid) : undefined}
@@ -542,8 +548,10 @@ function BoardSlot(props: {
   selected?: boolean;
   /** 当前不可作为攻击方被选中（非战斗阶段 / 休眠 / 非我方回合）。 */
   disabled?: boolean;
-  /** 当前可操作（发光提示）—— 可攻击的我方随从 / 选中攻击方后的对方目标。 */
+  /** 当前可操作（发光提示）—— 目前只有「我方战斗阶段的随从可被选为攻击方」这一处。 */
   glow?: boolean;
+  /** 这一格是**合法攻击目标**（issue #119 / D-294）—— 选中攻击方后的对方随从格。 */
+  hittable?: boolean;
   /** 拖拽源标记（data-drag-*，仅可操作时才由调用方传入）。 */
   dragKind?: 'minion';
   dragUid?: string;
@@ -588,6 +596,7 @@ function BoardSlot(props: {
           selected={props.selected}
           disabled={props.disabled}
           glow={props.glow}
+          hittable={props.hittable}
           compact
           fxClass={props.fxClass}
           onClick={props.onClick}
@@ -1056,13 +1065,18 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
   const [picked, setPicked] = useState<string | null>(null);
   const [attacker, setAttacker] = useState<string | null>(null);
   /**
-   * 认输二次确认（D-147）。
+   * 认输二次确认（D-147；D-295 改为居中浮层）。
    *
    * `concede` 规则（docs/06 A3-4「随时认输」）早就实现了，但一直没有 UI 入口 ——
    * 玩家想认输只能点「离开」，而在 BO3 里离开 = 判负**整个系列赛**，差别很大。
-   * 认输不可撤销，故做成两段式：第一次点变红并改文案，第二次才真的发。
+   * 认输不可撤销，故做成两段式：第一次点打开确认浮层，浮层里点「确认认输」才真的发。
    */
   const [concedeArmed, setConcedeArmed] = useState(false);
+  /** 对局已经结束就收起确认浮层 —— 否则结果面板上会一直压着一层「要不要认输」。 */
+  const gameEnded = state !== null && (state.winner !== null || state.draw);
+  useEffect(() => {
+    if (concedeArmed && gameEnded) setConcedeArmed(false);
+  }, [concedeArmed, gameEnded]);
   /** 详情浮层里正在查看的卡（Era 2026-10-18：卡牌携带效果必须可查看）。 */
   const [detailCard, setDetailCard] = useState<CardInstance | null>(null);
   /**
@@ -1896,7 +1910,9 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
               state={state}
               badge={`血 ${theirs.health}`}
               badgeTestId="hp-foe"
-              glow={attacker !== null}
+              /* issue #119：选中攻击方后，对方指挥官是合法目标 —— 用 `hittable` 的角标
+                 （不是 `glow`）。指挥官不走「破坏」，角标同样要出现，否则玩家只敢砍随从。 */
+              hittable={attacker !== null}
               dropUid={theirs.zones.commander[0]?.uid}
               highlight={dragging?.kind === 'minion'}
               fxFor={(uid) => combatClass(uid, 'foe')}
@@ -1917,7 +1933,8 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
 
           {/* ③ 对方费用区 + 随从区 1·2·3 + 展示区 —— D-123（Era 2026-10-18）：
               费用区居左、展示区居右，随从 1·2·3 与第 ④ 排**逐格对齐**。
-              选中攻击方后对方随从发光提示可攻击（嘲讽过滤由引擎裁决，界面不预判）。 */}
+              选中攻击方后对方随从挂「可攻击」角标（`hittable`，issue #119）——
+              嘲讽等限制仍由引擎裁决，界面不预判。 */}
           <section className="grid min-h-0 flex-1 auto-rows-fr grid-cols-5 gap-1">
             <ZoneBox label="费用区" zone="cost" cards={theirs.zones.cost} content="float" state={state} />
             {slots.map((i) => {
@@ -1928,7 +1945,8 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
                   index={i}
                   state={state}
                   card={fc}
-                  glow={attacker !== null && !!fc}
+                  /* issue #119：可被攻击的目标挂角标（原来这里是 glow，只让描边变一点点色）。 */
+                  hittable={attacker !== null && !!fc}
                   dropUid={fc?.uid}
                   highlight={dragging?.kind === 'minion' && !!fc}
                   fxClass={fc ? combatClass(fc.uid, 'foe') : undefined}
@@ -2314,6 +2332,17 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
             )}
           </>
         ) : null}
+        {/* 已选中随从作为攻击方（issue #119）—— 指挥官那句提示原先只为指挥官写了，
+            随从选中后操作条上一句话都没有，玩家不知道下一步点谁。力量一并报出来，
+            因为「这一下打不打得赢」是玩家此刻真正在算的事。 */}
+        {attacker !== null && !commanderAttacking ? (
+          <span
+            className="rounded bg-rose-900/60 px-2 py-1 text-[11px] text-rose-100"
+            data-testid="attacker-selected"
+          >
+            已选随从（力 {core.unitPower(state, CARD_POOL, attacker) ?? 0}）→ 点带「可攻击」角标的单位或指挥官
+          </span>
+        ) : null}
         {/* 指挥官已选中（D-258）：说明下一步点哪里，以及这次能打几点。 */}
         {commanderAttacking ? (
           <span className="rounded bg-rose-900/60 px-2 py-1 text-[11px] text-rose-100" data-testid="commander-selected">
@@ -2345,60 +2374,109 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
             取消攻击
           </button>
         ) : null}
-        <button
-          type="button"
-          className={
-            concedeArmed
-              ? 'rounded bg-rose-700 px-3 py-2 text-xs font-medium sm:text-sm'
-              : 'rounded bg-slate-800 px-3 py-2 text-xs sm:text-sm'
-          }
-          onClick={() => {
-            if (!concedeArmed) {
-              setConcedeArmed(true);
-              return;
-            }
-            setConcedeArmed(false);
-            session.concede();
-          }}
-          data-testid={concedeArmed ? 'concede-confirm' : 'concede'}
+        {/*
+          危险 / 退出类操作统一靠右，并与左侧常用操作之间加一道竖线（issue #120）。
+
+          原来「认输」就排在「取消攻击」右边 4px 处，同一行同一高度 —— 取消一次攻击
+          的手滑直接落到认输上。认输本身有二次确认，但**确认按钮原本长在原位**：
+          连点两下就成立了，二次确认形同虚设。现在确认态改到居中浮层（见文件末尾），
+          这条操作条上只剩一个入口，且与常用操作隔开。
+        */}
+        <div
+          className="ml-auto flex flex-wrap items-center gap-2 border-l border-slate-700 pl-2"
+          data-testid="danger-bar"
         >
-          {concedeArmed ? '确认认输（本局判负）' : '认输'}
-        </button>
-        <button
-          type="button"
-          className="rounded bg-slate-800 px-3 py-2 text-xs sm:text-sm"
-          onClick={session.leave}
-          data-testid="leave"
-        >
-          离开
-        </button>
-        {/* 日志抽屉入口（T-02）—— 只在窄屏需要；桌面日志列常驻 */}
-        <button
-          type="button"
-          className="rounded bg-slate-800 px-3 py-2 text-xs sm:hidden"
-          onClick={() => setLogOpen((v) => !v)}
-          data-testid="log-toggle"
-        >
-          {logOpen ? '关闭日志' : '日志'}
-        </button>
-        {/* 音效开关（P-06）—— 选择存本机；静音只影响本端，不影响对手 */}
-        <button
-          type="button"
-          className={`rounded px-3 py-2 text-xs sm:text-sm ${sfxOn ? 'bg-slate-800' : 'bg-slate-900 text-slate-500'}`}
-          onClick={() => {
-            const next = !sfxOn;
-            setSfxOn(next);
-            setSfxMuted(!next);
-          }}
-          data-testid="sfx-toggle"
-        >
-          音效：{sfxOn ? '开' : '关'}
-        </button>
+          <button
+            type="button"
+            className="rounded bg-slate-800 px-3 py-2 text-xs text-slate-300 sm:text-sm"
+            onClick={() => setConcedeArmed(true)}
+            data-testid="concede"
+          >
+            认输
+          </button>
+          <button
+            type="button"
+            className="rounded bg-slate-800 px-3 py-2 text-xs sm:text-sm"
+            onClick={session.leave}
+            data-testid="leave"
+          >
+            离开
+          </button>
+          {/* 日志抽屉入口（T-02）—— 只在窄屏需要；桌面日志列常驻 */}
+          <button
+            type="button"
+            className="rounded bg-slate-800 px-3 py-2 text-xs sm:hidden"
+            onClick={() => setLogOpen((v) => !v)}
+            data-testid="log-toggle"
+          >
+            {logOpen ? '关闭日志' : '日志'}
+          </button>
+          {/* 音效开关（P-06）—— 选择存本机；静音只影响本端，不影响对手 */}
+          <button
+            type="button"
+            className={`rounded px-3 py-2 text-xs sm:text-sm ${sfxOn ? 'bg-slate-800' : 'bg-slate-900 text-slate-500'}`}
+            onClick={() => {
+              const next = !sfxOn;
+              setSfxOn(next);
+              setSfxMuted(!next);
+            }}
+            data-testid="sfx-toggle"
+          >
+            音效：{sfxOn ? '开' : '关'}
+          </button>
+        </div>
         {/* 详情入口提示（D-261）—— 长按没有视觉提示，这里常显一句，否则发现不了。 */}
-        <span className="ml-auto text-[10px] text-slate-500" data-testid="detail-hint">
+        <span className="text-[10px] text-slate-500" data-testid="detail-hint">
           长按卡牌看详情
         </span>
       </footer>
+
+      {/*
+        认输确认浮层（issue #120 / D-295）—— **居中**，不留在原按钮位置。
+
+        「二次确认」挡的是「没想清楚」，挡不住「手滑连点」：只要确认按钮还长在
+        原按钮那一点上，两下连击就真的判负了。换到屏心 + 两个按钮要大（44px 级），
+        才真正要求玩家**重新瞄准**一次。
+
+        层级 z-[68]：高于操作条（z-60）与待定选择浮层（z-50），低于新手引导（z-70）。
+      */}
+      {concedeArmed ? (
+        <div
+          className="fixed inset-0 z-[68] flex items-center justify-center bg-black/60 p-4"
+          data-testid="concede-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-label="确认认输"
+        >
+          <div className="w-full max-w-xs rounded-xl border border-rose-700 bg-slate-900 p-4 text-center">
+            <p className="text-sm font-medium text-rose-200">认输 = 本局判负</p>
+            <p className="mt-1 text-xs leading-relaxed text-slate-300">
+              本局立即判负，不可撤销。BO3 下只是输掉这一局，系列赛按当前比分继续。
+            </p>
+            <div className="mt-3 flex gap-2">
+              <button
+                type="button"
+                className="min-h-11 flex-1 rounded bg-slate-700 px-3 py-2 text-sm text-slate-100"
+                onClick={() => setConcedeArmed(false)}
+                data-testid="concede-cancel"
+              >
+                继续对战
+              </button>
+              <button
+                type="button"
+                className="min-h-11 flex-1 rounded bg-rose-700 px-3 py-2 text-sm font-medium text-rose-50"
+                onClick={() => {
+                  setConcedeArmed(false);
+                  session.concede();
+                }}
+                data-testid="concede-confirm"
+              >
+                确认认输
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/* 拖拽预览 —— 跟随指针的浮动卡（B3-1 拖拽手感）。pointer-events-none 不挡落点判定。
           复用 `CardOf`（而不是手抄一份数值）—— 否则局内「实际值」口径会在这里漏掉一处。 */}
