@@ -2,7 +2,7 @@
  * 专属成长资源与星轨展示机制（D-229 / D-230）。
  *
  * 覆盖三块：
- *  1. **霜痕**：冻结敌方随从即 +1 层，永久累积；裁决官Ⅰ 按 3/6/9 分档；
+ *  1. **霜痕**：冻结敌方随从即 +1 层，永久累积；裁决官Ⅰ 按 2/4/6 分档（D-290 前移）；
  *  2. **星轨**：展示即 +1 层；指挥官攻击付费展示 2/3/4 张；
  *  3. **展示时**效果：星轨随从/法术在「没被打出」时的结算边界。
  */
@@ -10,10 +10,12 @@
 import { describe, expect, it } from 'vitest';
 
 import type { CardInstance, GameState, Intent, Phase, Zone } from '@app/shared/types';
+import { INITIAL_HEALTH } from '@app/shared/constants';
 import { CARD_POOL } from '@app/shared/cards';
 
 import { applyIntent, createInitialState, reduce, replay, stateHash, INTENTS } from '../index.js';
 import { freezeUnit } from '../effects/primitives.js';
+import { frostTierOf } from '../effects/frost-commander.js';
 import { revealCountFor } from '../effects/star-commander.js';
 import { unitPower } from '../ops.js';
 
@@ -101,11 +103,33 @@ describe('霜痕（docs/16 §6.3.2 / D-229）', () => {
     expect(next.players['p1']!.frostMark).toBe(1);
   });
 
-  it('裁决官Ⅰ 0–2 层：付 2 费，冻结 1 个，不抽牌', () => {
+  /*
+   * 档位函数边界（D-290 / docs/16 §15 C-03）—— 门槛从 3/6/9 前移到 2/4/6，
+   * 效果与顺序不变：0–1 冻 1 / 2–3 冻 1 抽 1 / 4–5 冻 2 / 6+ 冻 2 抽 1。
+   * 这条只测纯函数，不铺状态，改门槛时最先红。
+   */
+  it('frostTierOf 的档位边界正好是 2 / 4 / 6', () => {
+    const tier = (mark: number): string => {
+      const t = frostTierOf(mark);
+      return `${t.count}/${t.draw ? '抽' : '不抽'}`;
+    };
+    expect([0, 1, 2, 3, 4, 5, 6, 7].map(tier)).toEqual([
+      '1/不抽',
+      '1/不抽',
+      '1/抽',
+      '1/抽',
+      '2/不抽',
+      '2/不抽',
+      '2/抽',
+      '2/抽',
+    ]);
+  });
+
+  it('裁决官Ⅰ 0–1 层：付 2 费，冻结 1 个，不抽牌', () => {
     const s = craft({
       zones: { commander: [c('cmd1', 'frostAdjudicator')], cost: [c('k1', 'frostRecruit'), c('k2', 'frostRecruit')] },
       foeZones: { board: [c('f1', 'bladeVanguard'), c('f2', 'bladeVanguard')] },
-      mark: 2,
+      mark: 1,
     });
     const s1 = run(s, intent('p1', INTENTS.effectActivate, { uid: 'cmd1', effect: '1' }));
     expect(s1.pendingChoice?.kind).toBe('frost-adjudicator-1');
@@ -115,15 +139,15 @@ describe('霜痕（docs/16 §6.3.2 / D-229）', () => {
     expect(s2.players['p2']!.zones.board.find((x) => x.uid === 'f1')!.frozen).toBe(true);
     // 只冻结 1 个：第二个目标仍未冻结
     expect(s2.players['p2']!.zones.board.find((x) => x.uid === 'f2')!.frozen).toBeFalsy();
-    // 0–2 层不抽牌（冻结触发的裁决官Ⅱ会抽 1，那是另一条被动）
+    // 0–1 层不抽牌（冻结触发的裁决官Ⅱ会抽 1，那是另一条被动）
     expect(s2.players['p1']!.zones.hand.length).toBe(handBefore + 1);
   });
 
-  it('裁决官Ⅰ 6–8 层：冻结 2 个（连续两次选择）', () => {
+  it('裁决官Ⅰ 4–5 层：冻结 2 个（连续两次选择）', () => {
     const s = craft({
       zones: { commander: [c('cmd1', 'frostAdjudicator')], cost: [c('k1', 'frostRecruit'), c('k2', 'frostRecruit')] },
       foeZones: { board: [c('f1', 'bladeVanguard'), c('f2', 'bladeVanguard'), c('f3', 'bladeVanguard')] },
-      mark: 6,
+      mark: 4,
     });
     const s1 = run(s, intent('p1', INTENTS.effectActivate, { uid: 'cmd1', effect: '1' }));
     const s2 = run(s1, intent('p1', INTENTS.effectChoose, { choice: 'f1' }));
@@ -135,11 +159,11 @@ describe('霜痕（docs/16 §6.3.2 / D-229）', () => {
     expect(s3.players['p2']!.zones.board.filter((x) => x.frozen).map((x) => x.uid)).toEqual(['f1', 'f2']);
   });
 
-  it('裁决官Ⅰ 9 层及以上：冻结 2 个 + 抽 1 张（档位函数）', () => {
+  it('裁决官Ⅰ 6 层及以上：冻结 2 个 + 抽 1 张（档位函数）', () => {
     const s = craft({
       zones: { commander: [c('cmd1', 'frostAdjudicator')], cost: [c('k1', 'frostRecruit'), c('k2', 'frostRecruit')] },
       foeZones: { board: [c('f1', 'bladeVanguard'), c('f2', 'bladeVanguard')] },
-      mark: 9,
+      mark: 6,
     });
     const handBefore = s.players['p1']!.zones.hand.length;
     let st = run(s, intent('p1', INTENTS.effectActivate, { uid: 'cmd1', effect: '1' }));
@@ -271,7 +295,7 @@ describe('星轨（docs/17 / D-230）', () => {
     expect(p1.starTrack).toBe(8);
 
     // ④ 展示时效果各触发一次：弓手 1 点 + 指挥官攻击本身 1 点 = 8 − 2
-    expect(after.players['p2']!.health).toBe(6);
+    expect(after.players['p2']!.health).toBe(INITIAL_HEALTH - 2);
   });
 
   it('展示期间卡片停在展示区，结算完才回牌库底（Era 2026-10-20）', () => {
@@ -363,7 +387,7 @@ describe('星轨（docs/17 / D-230）', () => {
     expect(p2.zones.cost.length).toBe(1);
     expect(p2.zones.reveal).toEqual([]);
     // 血量与资源同步
-    expect(p2.health).toBe(7);
+    expect(p2.health).toBe(INITIAL_HEALTH - 1);
     expect(p2.zones.deck.length).toBe(29);
   });
 
@@ -414,7 +438,7 @@ describe('星轨（docs/17 / D-230）', () => {
     expect(after.players['p1']!.zones.cost.length).toBe(0); // 付了 1 张
     expect(after.players['p1']!.commanderAttacked).toBe(true);
     expect(after.players['p1']!.starTrack).toBe(2); // 展示 2 张
-    expect(after.players['p2']!.health).toBe(7); // 1 点伤害
+    expect(after.players['p2']!.health).toBe(INITIAL_HEALTH - 1); // 1 点伤害
   });
 
   it('不带 reveal 的攻击不展示、不付费', () => {
@@ -427,7 +451,7 @@ describe('星轨（docs/17 / D-230）', () => {
     const after = run(s, intent('p1', INTENTS.commanderAttack));
     expect(after.players['p1']!.zones.cost.length).toBe(1);
     expect(after.players['p1']!.starTrack).toBe(0);
-    expect(after.players['p2']!.health).toBe(7);
+    expect(after.players['p2']!.health).toBe(INITIAL_HEALTH - 1);
   });
 
   it('星轨侍僧：展示时给指挥官 +1 伤害（不可叠加）', () => {
@@ -441,7 +465,7 @@ describe('星轨（docs/17 / D-230）', () => {
     const after = run(s, intent('p1', INTENTS.commanderAttack, { reveal: true }));
     // 翻到两张侍僧，但「不可叠加」→ 只 +1；指挥官伤害 1 + 1 = 2
     expect(after.players['p1']!.commanderDamageBonus).toBe(1);
-    expect(after.players['p2']!.health).toBe(6);
+    expect(after.players['p2']!.health).toBe(INITIAL_HEALTH - 2);
   });
 
   it('星轨织者：展示时召唤 1/1 星灵（衍生物进随从区）', () => {

@@ -7,6 +7,7 @@ import type { CardInstance, GameState, PlayerId, PlayerState, Zone } from '@app/
 
 import { ACTIVATABLE_EFFECTS, CARD_POOL } from '@app/shared/cards';
 import { RECONNECT_GRACE_MS, TURN_TIMEOUT_MS } from '@app/shared/constants';
+import { BLADE_EXILE_TIERS } from '@app/shared/constants';
 
 import CardTile from './CardTile.js';
 import IntroGuide, { INTRO_SEEN_KEY } from './IntroGuide.js';
@@ -744,12 +745,17 @@ function ChoiceOverlay(props: {
   onChoose: (choice: string) => void;
 }): React.JSX.Element {
   const { choice } = props;
+  /*
+   * 统领 Ⅰ 的子效果文案 —— 键是**序号**，门槛数字从 `BLADE_EXILE_TIERS` 取，
+   * 不在这里重写一遍。上一版把「3 档 / 5 档 / 9 档」写死在文案里，
+   * 门槛一前移就变成「菜单写 9、实装 7」（#138 / D-290）。
+   */
   const SUB_LABEL: Readonly<Record<string, string>> = {
-    l1: '1档：从弃牌区召唤随从（力量 ≤ 炎刃数）',
-    l3: '3档：一个随从本回合力量 +1',
-    l5: '5档：破坏一个随从（力量 ≤ 炎刃数，可选对方场上）',
-    l7: '7档：一个随从本回合对指挥官伤害 +1',
-    l9: '9档：一个随从一回合一次攻击后重置',
+    tier1: `≥${BLADE_EXILE_TIERS[0]} 个：从弃牌区召唤随从（力量 ≤ 炎刃数）`,
+    tier2: `≥${BLADE_EXILE_TIERS[1]} 个：一个己方随从本回合力量 +1`,
+    tier3: `≥${BLADE_EXILE_TIERS[2]} 个：破坏一个随从（力量 ≤ 炎刃数，可选对方场上）`,
+    tier4: `≥${BLADE_EXILE_TIERS[3]} 个：一个己方随从本回合对指挥官伤害 +1`,
+    tier5: `≥${BLADE_EXILE_TIERS[4]} 个：一个己方随从一回合一次攻击后重置`,
   };
   const TITLE: Readonly<Record<string, string>> = {
     'blade-lord-1': '统领效果Ⅰ：选择要执行的效果（可再选，或放弃）',
