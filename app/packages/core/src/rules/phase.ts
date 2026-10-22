@@ -53,6 +53,17 @@ export function drawCountFor(state: GameState): number {
 }
 
 /**
+ * 该抽牌阶段是否「无事可做」→ 自动推进，不停在 `draw`。
+ *
+ * 抽成纯谓词（而不是内联 `count === 0`）是为了让这条分支**永远有直接测试**：
+ * issue #139 把先攻首回合改成抽 1 之后，正常情况下再也构造不出 0 张的局面，
+ * 内联写法就只能靠「临时把常量改回 0」才跑得到，等于没有覆盖。
+ */
+export function shouldAutoAdvanceDraw(drawCount: number): boolean {
+  return drawCount === 0;
+}
+
+/**
  * 推进**一个**阶段，返回产生的事件（含进入该阶段的自动效果）。
  *
  * 导出给 `turn-end.ts` 复用 —— 超时 / 主动结束回合走的必须是同一条路径，
@@ -103,17 +114,22 @@ export function advanceOnce(state: GameState, ctx: RuleContext): GameEvent[] {
     }
 
     /*
-     * issue #109（Era 2026-10-21）：「先攻第一回合不抽牌…直接自动推进阶段就行了。」
-     *
      * 抽 0 张的抽牌阶段**没有决策点**：手动抽牌是 Era 2026-10-18 定的口径，
      * 而这里根本没有牌可抽 —— 界面上却照样亮「点击抽牌」，点了什么也不发生，
      * 玩家还不能自己推进（`phaseRule` 拒绝未抽牌的抽牌阶段），等于逼人点一次空按钮。
      *
      * 与 reset 同构的处理：进 draw 后立刻补 `draw:completed` 再继续推进。
-     * **张数知识仍只有 `drawCountFor` 一处**，客户端不需要复制「第一回合不抽」这条规则 ——
+     * **张数知识仍只有 `drawCountFor` 一处**，客户端不需要复制「哪一回合抽几张」——
      * 这是选 ① 而不是「前端按张数隐藏按钮」的理由（那会把规则搬到前端，迟早分叉）。
+     *
+     * ⚠️ 本分支**不是**「先攻首回合专用」（issue #139 / D-287 校正）：
+     *     首回合现已改为抽 1 张（`FIRST_TURN_DRAW = 1`），走手动路径正常停住。
+     *     这条分支留在原处，守的是「任何 0 张抽牌阶段都自动推进」这个通用能力 ——
+     *     将来改数值或加特殊模式时自动成立，不需要新写一遍。
+     *     补 `shouldAutoAdvanceDraw` 谓词，就是为了让 0 张这条路径在首回合抽 1 之后
+     *     **仍有直接覆盖**（不然只能靠临时改常量才跑得到，等于没测）。
      */
-    if (to === 'draw' && active && drawCountFor(state) === 0) {
+    if (to === 'draw' && active && shouldAutoAdvanceDraw(drawCountFor(state))) {
       events.push(ev(at, 'draw:completed', { playerId: active }));
       const s2 = events.reduce(reduce, state);
       events.push(...advanceOnce(s2, ctx));

@@ -74,15 +74,17 @@ export function actionability(state: GameState, me: PlayerId, _now: number): Act
   const canMulligan = mulliganOpen;
 
   /*
-   * issue #109（Era 2026-10-21）：先攻第一回合抽 0 张，那个抽牌阶段没有决策点。
+   * 抽 0 张的阶段没有决策点（issue #109），引擎已经「进 draw 后若该抽 0 张就自动推进」
+   * （`phase.ts` 的 `advanceOnce` + `shouldAutoAdvanceDraw`）。
    *
-   * 引擎已经改成「进入 draw 后若该抽 0 张就瞬穿」（`phase.ts` 的 `advanceOnce`），
-   * 所以这个局面**不该停住**。剩下的唯一窗口是客户端的事件播放节奏 ——
-   * `phase:changed` 每条停 750ms，瞬穿那一批中间必然有一两帧 `phase === 'draw'`。
-   * 那时若照常给按钮，玩家会点到一个「服务端早已在主要阶段」的动作，
-   * 换回一句 `WRONG_PHASE` 报错（这正是本单要消灭的交互）。
+   * 剩下的唯一窗口是客户端的事件播放节奏 —— `phase:changed` 每条停 750ms，
+   * 自动推进那一批中间必然有一两帧 `phase === 'draw'`。那时若照常给按钮，
+   * 玩家会点到一个「服务端早已在主要阶段」的动作，换回一句 `WRONG_PHASE` 报错。
    *
-   * 张数判定直接用引擎的 `drawCountFor` —— **不复制「第一回合不抽」这条规则**，
+   * ⚠️ 这个守卫**不是**「先攻首回合专用」（issue #139 / D-287）：首回合现已抽 1 张，
+   *     它会正常停在 draw 并给按钮；`drawCountFor(state) > 0` 挡的只是「0 张的中间帧」。
+   *
+   * 张数判定直接用引擎的 `drawCountFor` —— **不复制「哪一回合抽几张」这条规则**，
    * 前端与引擎读同一个函数，口径不会分叉（ADR-0002：客户端不推算规则）。
    */
   const canDraw =
@@ -175,7 +177,8 @@ export function turnGuidance(
     state.phase === 'charge'
       ? '充能阶段：点手牌里的随从 →「充能」放进费用区（每回合开始已自动 +2 张）'
       : state.phase === 'draw'
-        ? // issue #109：该抽 0 张的抽牌阶段没有动作可做（引擎会瞬穿，这里只在播放中间帧出现）
+        ? // 0 张的抽牌阶段没有动作可做（引擎会自动推进，这里只在播放中间帧出现）；
+          // 首回合自 #139 起抽 1 张，会走到下面那支正常给指引
           drawCountFor(state) > 0
           ? '抽牌阶段：点你的卡组区抽一张'
           : ''

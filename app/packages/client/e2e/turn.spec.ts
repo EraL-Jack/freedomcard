@@ -101,16 +101,19 @@ test('推进阶段 → 充能 → 出牌 → 结束回合', async ({ browser }) 
 });
 
 /**
- * 先攻第一回合抽 0 张（issue #109 / D-271）。
+ * 先攻第一回合抽 1 张（issue #139 / D-287）。
  *
- * Era 2026-10-21：「先攻开局第一回合不抽牌，不需要展示抽牌按钮，直接自动推进阶段就行了。」
+ * Era 2026-10-22 校正口径：「我要求抽 0 自动推进抽阶，不是跳过抽阶」+
+ * 「抽 0 自动推进，非抽 0 就手动，就这么简单」。首回合由 0 张改为 1 张，
+ * 这个阶段**重新有了决策点**，E2E 钉三件事：
+ *  ① 推进后停住，界面给「点击抽牌」；
+ *  ② 抽一次只 +1（不是 2 张），抽完自动进主要；
+ *  ③ 「抽牌阶段」这一拍横幅照常出现（抽阶不许被吞）。
  *
- * 这个阶段**没有决策点**，引擎已改成瞬穿（`advanceOnce` 进 draw 后若该抽 0 张就补
- * `draw:completed` 再继续）。E2E 要钉两件事：
- *  ① 玩家点一次「推进阶段」就落在主要阶段，不会卡在抽牌；
- *  ② 连播放中间帧都不出现「点击抽牌」—— 否则玩家会点到一个服务端早已离开的阶段。
+ * 反面（抽 0 自动推进）已无法用正常对局构造，改由 core 的
+ * `shouldAutoAdvanceDraw(0/1/2)` 单测覆盖。
  */
-test('先攻第一回合：推进后直接落在主要阶段，全程不出现「点击抽牌」（issue #109）', async ({ browser }) => {
+test('先攻第一回合抽 1 张：停在抽牌阶段，点一次 +1 后进主要（issue #139）', async ({ browser }) => {
   const { host, guest } = await startGame(browser);
   const p = await activePage([host, guest]);
   expect(await turnNo(p)).toBe(1);
@@ -118,20 +121,15 @@ test('先攻第一回合：推进后直接落在主要阶段，全程不出现�
 
   await p.getByTestId('advance').click();
 
-  // ② 采样整段播放（phase:changed 每条停 750ms，三个阶段约 2s），任何一帧都不该有抽牌按钮
-  let sawDrawButton = false;
-  const deadline = Date.now() + 4_000;
-  while (Date.now() < deadline) {
-    if ((await p.getByTestId('draw-deck').count()) > 0) {
-      sawDrawButton = true;
-      break;
-    }
-    await p.waitForTimeout(100);
-    if ((await phaseText(p)).includes('阶段 主要')) break;
-  }
-  expect(sawDrawButton, '抽 0 张的抽牌阶段不该给「点击抽牌」').toBe(false);
+  // ①③ 停在抽牌阶段：按钮在、横幅在
+  await expect(p.getByTestId('draw-deck')).toBeVisible({ timeout: 10_000 });
+  await expect.poll(() => phaseText(p), { timeout: 10_000 }).toContain('阶段 抽牌');
 
-  // ① 最终停在主要阶段，而不是抽牌阶段
+  const before = await handCount(p);
+  await p.getByTestId('draw-deck').click();
+
+  // ② 只抽 1 张（不是 2 张），抽完自动进主要
+  await expect.poll(() => handCount(p), { timeout: 10_000 }).toBe(before + 1);
   await expect.poll(() => phaseText(p), { timeout: 10_000 }).toContain('阶段 主要');
   await expect(p.getByTestId('draw-deck')).toHaveCount(0);
 });
