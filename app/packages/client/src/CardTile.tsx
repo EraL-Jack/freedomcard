@@ -165,17 +165,23 @@ export default function CardTile(props: CardTileProps): React.JSX.Element {
             否则卡面会出现「费 0 / 力 0」这种与规则矛盾的数值。 */}
         {props.kind === 'commander' ? null : (
           <span className="mt-0.5 flex items-end justify-between leading-none">
-            <span className="rounded-full bg-blue-900/80 px-1.5 py-0.5 text-[10px] font-medium text-blue-200">
+            <span
+              className="rounded-full bg-blue-900/80 px-1.5 py-0.5 text-xs font-medium text-blue-200 sm:text-[10px]"
+              data-testid="card-cost"
+            >
               费 {props.cost}
             </span>
             <span className="flex flex-col items-end gap-0.5">
-              <span className="rounded-full bg-red-900/80 px-1.5 py-0.5 text-[10px] font-medium text-red-200">
+              <span
+                className="rounded-full bg-red-900/80 px-1.5 py-0.5 text-xs font-medium text-red-200 sm:text-[10px]"
+                data-testid="card-power"
+              >
                 力 {props.power}
               </span>
               {/* 打脸伤害（D-232）—— 只有局内传了实际值才显示；卡面旧文案里的「伤害值」不再是权威。 */}
               {props.faceDamage === undefined ? null : (
                 <span
-                  className="rounded-full bg-rose-800/90 px-1.5 py-0.5 text-[9px] font-medium text-rose-100"
+                  className="rounded-full bg-rose-800/90 px-1.5 py-0.5 text-xs font-medium text-rose-100 sm:text-[9px]"
                   data-testid="card-damage"
                 >
                   伤 {props.faceDamage}
