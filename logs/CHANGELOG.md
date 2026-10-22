@@ -6113,3 +6113,31 @@ Error: Test timeout of 30000ms exceeded
 
 原则：**依赖装不上不该判红，功能跑不过才该判红**。apt 从此不在关键路径上，
 既不会再挂 6 小时，也不会再因为重试拿不到锁而假红。
+
+### 第四轮：关掉动效、给重试、让 trace 只在重试时录（D-316-j / k / l）
+
+第三轮推上去又红（run 39847438152），`83 passed (16.2m)` + 1 failed，但**又是新姿势**：
+
+```
+✘ turn.spec.ts:37 (1.1m)
+  Error: locator.click: Test ended.
+  - waiting for getByTestId('hand')...[data-testid="card"] .first()
+    - locator resolved to <button ... class="... animate-pulse ...">炎刃军先锋</button>
+  - attempting click action
+    - waiting for element to be visible, enabled and stable
+  ← 到这里就没了，直到 60s 用例超时
+```
+
+注意**没有** `element is not stable` 那一行 —— 说明「稳定」判定根本没得出结论。
+结合那次 E2E 用了 **16.2 分钟**（本机 7 分钟）、`zone-inspect:74` 单条 18.1s（本机 2s）：
+这台 runner 的 CPU 被压得很死，而卡片上挂着**无限循环**的 `animate-pulse`。
+
+| ID | 位置 | 改动 |
+| --- | --- | --- |
+| D-316-j | `client/src/style.css` | 加 `@media (prefers-reduced-motion: reduce)` 全局关动效。**这不是测试开关**：系统里开了「减少动态效果」的用户本来就不该被脉冲/突进/震动晃到（无障碍） |
+| D-316-k | `playwright.config.ts` | `use.reducedMotion: 'reduce'` —— 让 E2E 统一命中上面那条规则 |
+| D-316-l | `playwright.config.ts` | CI 下 `retries: 2`；`trace: 'on-first-retry'`（原来 `retain-on-failure` 每次都录，把 16 分钟的活拖成 20 分钟 —— **录现场本身在制造现场**） |
+
+**关于重试的口径**：重试不是用来掩盖缺陷的，是用来吸收**运行环境**抖动的 ——
+三次都红还是红，真缺陷跑不掉；而「一次抖动 = 一个红 PR」的代价太高（ADR-0081）。
+本地不重试（`retries: 0`），保持红绿判据的锋利。

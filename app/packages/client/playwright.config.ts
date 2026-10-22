@@ -15,17 +15,33 @@ export default defineConfig({
   // （ADR-0078：队列没排空时客户端视图是旧的），这段等待是**合法耗时**，不是挂起。
   // 放不到这里的话，一个 25s 的用例会被「等正确的东西」顶过线。
   timeout: 60_000,
+  /*
+   * 重试（D-316）：**不是用来掩盖缺陷的，是用来吸收「运行环境」的抖动。**
+   *
+   * 2026-10-22 的 CI 上，同一条用例在 7 分钟的机器上稳定通过、在 16 分钟的机器上
+   * 卡在 `waiting for element to be visible, enabled and stable` 直到超时 ——
+   * 那不是断言写错，是 runner 太慢导致 actionability 检查迟迟出不了结论。
+   *
+   * 真缺陷不会被重试放过：三次都红还是红。而「一次抖动 = 一个红 PR」的代价太高
+   * （ADR-0081：宁可制造可重试的假红，也不要制造阻塞）。
+   */
+  retries: process.env.CI ? 2 : 0,
   use: {
     baseURL: 'http://127.0.0.1:5173',
     /*
-     * 只在 CI 留现场（D-316）。本地跑图省事、跑得快，trace 一直开着没必要；
-     * CI 上恰恰相反 —— 失败如果没留下 trace，就只能对着两行 Call log 猜，
-     * 2026-10-22 两次红都是这么白追的。
-     *
-     * `retain-on-failure`：跑的时候录，通过就丢，红的那条留着。
-     * GitHub Actions 会置 `CI=true`，本地手动跑仍是一律不录。
+     * 全场关掉动效：`prefers-reduced-motion` 在 `style.css` 里有对应的 CSS
+     * （不只服务测试，也服务真开了「减少动态效果」的用户）。
+     * 无限循环的 `animate-pulse` 正是「等不到稳定」的元凶。
      */
-    trace: process.env.CI ? 'retain-on-failure' : 'off',
+    reducedMotion: 'reduce',
+    /*
+     * **在第一次重试时才录 trace**（D-316）：
+     * - `retain-on-failure` 会每次都录，CI 里把 16 分钟的活拖成 20 分钟，
+     *   机器越慢越容易抖 —— 录现场本身变成了制造现场；
+     * - `on-first-retry` 让正常路径保持轻量，抖了那一次仍然留得下 trace。
+     * 本地（无 CI 环境变量）一律不录。
+     */
+    trace: process.env.CI ? 'on-first-retry' : 'off',
     screenshot: process.env.CI ? 'only-on-failure' : 'off',
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
