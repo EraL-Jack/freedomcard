@@ -59,10 +59,39 @@ function FxOverlay({ fx }: { fx: Fx | null }): React.JSX.Element | null {
             ? 'border-cyan-500/60 bg-slate-900/95 text-cyan-100'
             : 'border-slate-500/50 bg-slate-900/95 text-slate-100';
   const size =
-    fx.kind === 'damage' ? 'text-4xl font-bold' : fx.kind === 'ended' ? 'text-3xl font-bold' : 'text-2xl';
+    fx.kind === 'damage'
+      ? 'text-4xl font-bold'
+      : fx.kind === 'ended'
+        ? 'text-3xl font-bold'
+        : fx.kind === 'turn'
+          ? /*
+             * 回合横幅缩小一号（issue #159-1）：它要在 1100ms 里只回答「现在第几回合」，
+             * 不需要占满整行。390px 下 `text-2xl` 会把横幅撑到接近满宽，必然压住牌桌。
+             */
+            'text-lg font-bold sm:text-2xl'
+          : 'text-2xl';
+  /*
+   * 回合横幅贴顶部，其余 FX 仍在中央（issue #159-1）。
+   *
+   * 原来所有 FX 都 `inset-0` 居中 → 回合横幅正落在牌桌中线：
+   * 1440×900 压住我方第 2 格，390×844 压住整排我方随从格 —— 而那一刻玩家正要
+   * 选格子放随从。它是 `pointer-events-none`，所以「点得到、看不见」，
+   * 是最坏的一种遮挡：操作照旧成功，玩家却不知道自己点到了哪里。
+   *
+   * 只挪回合横幅：伤害 / 裁决 / 收入是**结算**提示，居中才在视线焦点上。
+   */
+  const isTurn = fx.kind === 'turn';
   return (
-    <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center">
-      <div key={fx.id} className={`fx-pop rounded-xl border px-8 py-4 text-center ${tone}`} data-testid="fx">
+    <div
+      className={`pointer-events-none fixed inset-0 z-50 flex justify-center ${
+        isTurn ? 'items-start pt-16 sm:pt-20' : 'items-center'
+      }`}
+    >
+      <div
+        key={fx.id}
+        className={`fx-pop rounded-xl border text-center ${isTurn ? 'px-4 py-2' : 'px-8 py-4'} ${tone}`}
+        data-testid="fx"
+      >
         <p className={size}>{fx.text}</p>
         {fx.sub ? <p className="mt-1 text-sm opacity-80">{fx.sub}</p> : null}
       </div>
@@ -513,9 +542,16 @@ function ZoneBox(props: {
               {props.badge}
             </span>
           ) : null}
-          <span className="text-slate-200" data-testid="zone-count">
-            {props.cards.length}
-          </span>
+          {/*
+            张数只在「看不到卡」的区域出现（float / count）。
+            指挥官区是 `cards`：它恒有 1 张，那个 `1` 是纯噪音 —— 而它紧跟在
+            「血 10」后面，读起来像一个两位数（issue #159-2「血 10 1」）。
+          */}
+          {showCards ? null : (
+            <span className="text-slate-200" data-testid="zone-count">
+              {props.cards.length}
+            </span>
+          )}
           {inspectable ? (
             <span className="text-slate-500" aria-hidden="true">
               ›
@@ -1246,6 +1282,8 @@ function WaitingRoom({ session }: { session: RoomSession }): React.JSX.Element {
 export default function TableScreen({ session }: { session: RoomSession }): React.JSX.Element {
   const { room, state, me, foe, turnDeadline, log, notice, fx, revealed, turnPending, dismiss } =
     session;
+  /** 我的操作还在处理（#158）—— 动作按钮据此禁用并改文案。 */
+  const syncing = session.syncing;
   // 手牌选中 —— Era 2026-10-18：**非多目标场景的选中必须排他**，任何时候最多一张手牌高亮。
   // （充能规则上允许任意数量（X-2），但协议支持逐张发，多张充能 = 连续多次单张操作。）
   const [picked, setPicked] = useState<string | null>(null);
@@ -1933,6 +1971,16 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
           计时 {remain === null ? '—' : `${remain}s`}
         </span>
         {/*
+          统一进度指示（#158）—— 除了按钮自己变形，顶栏再给一句「同步中…」：
+          操作可能由拖拽、点卡、点格子等多个入口发起，不是每个入口都有按钮可变形。
+          它只在**我发出的操作**在途时出现，对手的回合不会亮（那是「他在想」，说过了）。
+        */}
+        {syncing ? (
+          <span className="whitespace-nowrap text-cyan-300" data-testid="syncing" role="status">
+            同步中…
+          </span>
+        ) : null}
+        {/*
           血量**不在**这里显示 —— Era 2026-10-14 指定：血量就在指挥官区显示。
           故血量徽标挂在两侧的指挥官区上（见下方 `badge`）。
         */}
@@ -2329,7 +2377,15 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
               content="count"
               state={state}
               action={
-                canDraw ? { label: '点击抽牌', testId: 'draw-deck', onClick: () => session.draw() } : undefined
+                canDraw
+                  ? {
+                      // 抽牌也有在途态（#158）：点一次要等播放队列走完才能再点，
+                      // 期间按钮保持可见但改成「处理中…」，别让玩家以为没点上。
+                      label: syncing ? '处理中…' : '点击抽牌',
+                      testId: 'draw-deck',
+                      onClick: () => session.draw(),
+                    }
+                  : undefined
               }
             />
           </section>
@@ -2482,21 +2538,27 @@ export default function TableScreen({ session }: { session: RoomSession }): Reac
         {myTurn && state.phase !== 'draw' && !choiceOpen ? (
           <button
             type="button"
-            className="rounded bg-slate-700 px-3 py-2 text-xs sm:text-sm"
+            /*
+             * 在途禁用 + 改文案（#158）。不禁用的话，第二下会基于客户端还没 reduce 的
+             * 旧状态发出、被阶段规则拒掉，提示还会被下一条盖掉 —— 玩家只会觉得「点了没反应」。
+             */
+            disabled={syncing}
+            className="rounded bg-slate-700 px-3 py-2 text-xs disabled:cursor-progress disabled:bg-slate-800 disabled:text-slate-400 sm:text-sm"
             onClick={session.advance}
             data-testid="advance"
           >
-            推进阶段
+            {syncing ? '处理中…' : '推进阶段'}
           </button>
         ) : null}
         {myTurn && !choiceOpen ? (
           <button
             type="button"
-            className="rounded bg-slate-700 px-3 py-2 text-xs sm:text-sm"
+            disabled={syncing}
+            className="rounded bg-slate-700 px-3 py-2 text-xs disabled:cursor-progress disabled:bg-slate-800 disabled:text-slate-400 sm:text-sm"
             onClick={session.endTurn}
             data-testid="end-turn"
           >
-            结束回合
+            {syncing ? '处理中…' : '结束回合'}
           </button>
         ) : null}
         {/* 起手换牌（D-259）：**游戏开始之前**的独立阶段，不属于任何回合。
