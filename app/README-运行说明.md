@@ -176,10 +176,10 @@ Windows 需放行 5173 / 3000 端口的入站规则（网络配置文件为 Publ
 | `pnpm dev` | 并行起服务端与客户端 |
 | `pnpm typecheck` | 全量 `tsc --noEmit` |
 | `pnpm lint` | ESLint（flat config） |
-| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层 + `client` 纯逻辑，2026-10-22 时点 **512 passed**（core 259 + server **173** + client 80，另有 1 条 skipped 基线采样） |
+| `pnpm test` | 单测（Vitest）：`core` 规则引擎 + `server` 会话层 + `client` 纯逻辑，2026-10-22 时点 **516 passed**（core 259 + server 173 + client **84**，另有 1 条 skipped 基线采样） |
 | `pnpm --filter @app/client run test:coverage` | client 覆盖率（v8）。目前只覆盖 `selectors` / `labels` / `log` 三个纯逻辑模块；组件层由 E2E 兜 |
 | `pnpm build` | 构建客户端到 `packages/client/dist` |
-| `pnpm --filter @app/client test:e2e` | 端到端（Playwright）：**81 条** —— 房间流程 / 首页与对战桌布局 / 视口溢出 / 联机开局 / 回合操作 / 攻击与指挥官伤害 / 卡组编辑 / 人机对战 / 人机房换牌阶段与倒计时 / 回合边界的指引不变量 / 堆叠区浮窗 / 新手引导 / 390px 日志抽屉 / 断线与点击反馈 / 危险操作 / 打磨观感 / 结算覆盖层 / 再来一局 / 计时回弹 / 在途反馈 / 人机对手卡组 / 确定性守卫 |
+| `pnpm --filter @app/client test:e2e` | 端到端（Playwright）：**84 条** —— 房间流程 / 首页与对战桌布局 / 视口溢出 / 联机开局 / 回合操作 / 攻击与指挥官伤害 / 卡组编辑 / 人机对战 / 人机房换牌阶段与倒计时 / 回合边界的指引不变量 / 堆叠区浮窗 / 新手引导 / 390px 日志抽屉 / 断线与点击反馈 / 危险操作 / 打磨观感 / 结算覆盖层 / 再来一局 / 计时回弹 / 在途反馈 / 人机对手卡组 / 战报降噪 / 确定性守卫 |
 
 > 首次跑 E2E 需先下载浏览器：`pnpm --filter @app/client exec playwright install chromium`（约 197 MiB，慢）。
 > 截图落在 `packages/client/e2e/screenshots/`（已被 `.gitignore` 忽略）。
@@ -547,6 +547,14 @@ app/
     只影响人机：联机建房的协议入参与行为都不变。
     ⚠️ 该控件**必须与按钮同一行**：1366×768 下首页只剩 22px 余量，
     单独一行会把「编辑卡组」顶出首屏（`home-layout.spec.ts` 会红）。
+
+35. **战报只留「谁做了什么」，机制行收起**（#157 / D-315）：
+    阶段切换 / 重置 / 自动充能 / 费用上限这四类**系统推进**的事件默认不显示，
+    日志框上方的「显示机制细节」可展开；收起时底部写「…另有 N 条机制记录已收起」。
+    一次支付 N 张费用只留一行「消耗 N 张费用」，不再逐张列「费用区 → 弃牌区」。
+    移动端抽屉底板改为**不透明**（原来半透明，牌桌文字会透上来）。
+    ⚠️ 「细节」开关必须在日志框**上方** —— 放下面会把日志框顶起来、底部留 29px 空白，
+    `polish.spec.ts` 的 #122 用例会红。
 
 ## 11. 本轮验收清单（D-137 ~ D-149）
 

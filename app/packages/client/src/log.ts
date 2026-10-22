@@ -24,6 +24,37 @@ export interface LogEntry {
   id: number;
   at: number;
   text: string;
+  /**
+   * **机制行**（#157）—— 阶段切换 / 重置 / 自动充能 / 费用上限。
+   *
+   * 这些不是「谁做了什么」，而是引擎在自动推进。它们默认**不显示**，
+   * 靠战报面板的「细节」开关打开。
+   *
+   * 为什么不直接从日志里删掉：复盘时要能回答「这一回合到底发生了什么」，
+   * 机制行是时间轴骨架。删掉是丢信息，藏起来只是降噪。
+   */
+  mech?: boolean;
+}
+
+/**
+ * 算作「机制行」的事件（#157）。
+ *
+ * 判据是**主语**，不是重要性：
+ *  - 主语是系统（阶段、重置、自动收入、上限抬升）→ 机制；
+ *  - 主语是玩家或某张牌（出牌、攻击、破坏、抽牌、受伤）→ 战报正文。
+ *
+ * 「玩家抽了 1 张」不进这里：它是玩家的动作结果，一回合就 1~2 行。
+ */
+const MECH_EVENTS: ReadonlySet<string> = new Set([
+  'phase:changed',
+  'units:reset',
+  'cost:income',
+  'maxCost:changed',
+]);
+
+/** 这条事件是不是机制行（#157）。调用方据此把 `mech` 传给 `pushLogLine`。 */
+export function isMechanism(type: string): boolean {
+  return MECH_EVENTS.has(type);
 }
 
 /**
@@ -41,8 +72,9 @@ export function pushLogLine(
   at: number,
   text: string,
   seq: number,
+  mech = false,
 ): LogEntry[] {
-  return [...prev, { id: seq, at, text }].slice(-LOG_LIMIT);
+  return [...prev, { id: seq, at, text, ...(mech ? { mech: true } : {}) }].slice(-LOG_LIMIT);
 }
 
 /** 取卡名；查不到定义时退回 `defId`，避免出现空白格。 */
@@ -238,6 +270,15 @@ export function describeEvent(
           : `${name} 置入费用区`;
       }
       if (to === 'board') return `${name} 登场`;
+      if (from === 'cost' && to === 'graveyard') return null;
+      /*
+       * 支付费用是**一次动作 N 张**（#157）：`cost:spent` 已经写了
+       * 「Era 消耗 4 张费用」，再逐张印「X：费用区 → 弃牌区」就是 4 行噪音。
+       * 实测一次出牌 6 行（4 张费用 + 消耗 + 登场），玩家根本读不下去。
+       *
+       * 与 D-263（洗回不逐张印）同一个判断：**被另一条事件完整概括的位移，
+       * 不再单独成行**。信息没丢 —— 消耗几张在 `cost:spent`，去哪了由区域语义决定。
+       */
       return `${name}：${zoneText(from)} → ${zoneText(to)}`;
     }
 
