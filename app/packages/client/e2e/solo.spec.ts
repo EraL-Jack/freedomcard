@@ -303,3 +303,41 @@ test('人机局：电脑抽牌只记「抽了 1 张」，充能念卡名（#136 
 
   expect(lines.join('\n'), '战报里不该出现「电脑 的」这种归属前缀').not.toContain('电脑 的');
 });
+
+/**
+ * 战报里不许出现英文协议串（issue #121 / D-291）。
+ *
+ * 症状：中文界面蹦出 `draw:completed`、`mulligan:closed`，玩家会当成报错。
+ * 根因是事件翻译的 `default` 直接回显事件名。修法是**未映射就隐藏**。
+ *
+ * 这条用例不看代码，只看**玩家真正读到的文本** —— 逐行扫整块战报，
+ * 任何一行匹配 `^[a-z][a-z-]*:[a-z-]+$`（协议串的形态）就算失败。
+ */
+test('战报里只有中文，不出现 draw:completed 这类协议串（#121）', async ({ browser }) => {
+  test.setTimeout(90_000);
+  const { page } = await startSoloGame(browser);
+
+  // 顺便盯住控制台：战报的 React key 冲突只在浏览器里可见（#135）
+  const consoleNoise: string[] = [];
+  page.on('console', (m) => {
+    if (m.type() === 'error' || m.type() === 'warning') consoleNoise.push(m.text());
+  });
+
+  // 走满一个回合，让阶段切换 / 抽牌收尾 / 换牌关闭这些事件都真的产生过
+  await expect(page.getByTestId('log')).toContainText('换牌结束，进入第一回合', { timeout: 20_000 });
+  await expect(page.getByTestId('end-turn')).toBeEnabled({ timeout: 20_000 });
+  await page.getByTestId('end-turn').click();
+  await expect.poll(() => turnNo(page), { timeout: 20_000 }).toBe(2);
+
+  const text = await page.getByTestId('log').innerText();
+  const lines = text.split('\n').map((x) => x.trim()).filter((x) => x.length > 0);
+  expect(lines.length, '战报应该有内容').toBeGreaterThan(3);
+
+  // 协议串的形态：小写标识符 + 冒号，整行只有它（如 `draw:completed` / `mulligan:closed`）
+  const protocol = lines.filter((x) => /^[a-z][a-z-]*:[a-z-]+$/.test(x));
+  expect(protocol, `战报里出现了英文协议串：${protocol.join(' / ')}`).toHaveLength(0);
+
+  // 顺带钉住 #135：这一局不该出现 React 的 key 冲突警告
+  const keyWarnings = consoleNoise.filter((x) => x.includes('same key'));
+  expect(keyWarnings, `出现 React key 冲突：${keyWarnings.join(' / ')}`).toHaveLength(0);
+});

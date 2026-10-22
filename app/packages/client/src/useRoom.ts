@@ -5,7 +5,7 @@ import { ROOM_ERROR_TEXT, SOCKET_EVENTS } from '@app/shared/constants';
 import type { RoomErrorCode } from '@app/shared/constants';
 import type { CardInstance, GameEvent, GameState, Intent, MatchFormat, PlayerId } from '@app/shared/types';
 
-import { describeEvent } from './log.js';
+import { describeEvent, pushLogLine } from './log.js';
 import { PHASE_LABEL, ackTimeoutText } from './labels.js';
 import { sfx } from './sfx.js';
 import { socket } from './socket.js';
@@ -74,11 +74,10 @@ const REVEAL_HOLD_MS = 900;
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-export interface LogEntry {
-  id: number;
-  at: number;
-  text: string;
-}
+import type { LogEntry } from './log.js';
+
+/** 战报行类型定义在 `log.ts`（与 `pushLogLine` 同处，避免 id 生成规则分散）。 */
+export type { LogEntry };
 
 /** 服务端 `game:events` 广播载荷（accepted / rejected / dropped 三态）。 */
 interface EventsOut {
@@ -420,8 +419,16 @@ export function useRoom(): RoomSession {
     meRef.current = me;
   }, [names, me]);
 
+  /*
+   * 战报行的序号（#135）：**单调自增**，不能取 `prev.length + 1`。
+   * 数组被截到 200 条后长度恒为 200，用长度算 id 会让此后每一行都叫 201，
+   * React 报 key 冲突并可能重复/吞行。详见 `log.ts` 的 `pushLogLine`。
+   */
+  const logSeqRef = useRef(0);
   const appendLog = useCallback((text: string, at: number): void => {
-    setLog((prev) => [...prev, { id: prev.length + 1, at, text }].slice(-200));
+    logSeqRef.current += 1;
+    const seq = logSeqRef.current;
+    setLog((prev) => pushLogLine(prev, at, text, seq));
   }, []);
 
   /** 逐条播放队列里的事件：先应用到状态，再按节奏停顿（横幅停留时间）。 */
