@@ -146,3 +146,26 @@ button {
 .anim-destroy {
   animation: anim-destroy 0.58s ease-in forwards;
 }
+
+/*
+ * 减少动态效果（D-316 / 无障碍 + E2E 稳定性，两件事一次办）。
+ *
+ * 1. **无障碍**：系统里开了「减少动态效果」的用户，不该被脉冲高亮、突进/震动特效晃到。
+ *    这是 `prefers-reduced-motion` 的标准用法，不是为测试而加的开关。
+ * 2. **E2E 稳定性**：`animate-pulse` 这类**无限循环**的动画会让 Playwright 的
+ *    「等待元素稳定」一直等不到结论（2026-10-22 的 CI 就卡在这一步：
+ *    `waiting for element to be visible, enabled and stable` 直到用例超时）。
+ *    E2E 通过 `reducedMotion: 'reduce'` 统一命中这条规则，动画一律不跑。
+ *
+ * 关掉的是**运动**，不是内容：特效元素仍会出现在最终态，信息不丢。
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
