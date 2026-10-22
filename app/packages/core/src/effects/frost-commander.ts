@@ -25,6 +25,7 @@ import type { GameEvent, Result, Rejection } from '@app/shared/types';
 import { baseGuard, ev, firstRejection, locate, playerOf, reject, strArg } from '../ops.js';
 
 import {
+  canPayCost,
   choiceCleared,
   choicePending,
   commanderSkillCost,
@@ -51,6 +52,23 @@ function metaNum(meta: Record<string, unknown> | undefined, key: string, fallbac
 }
 
 export const frostAdjudicatorEffect: EffectModule = {
+  /**
+   * AI 何时该发动 Ⅰ（issue #137 / D-288）。
+   *
+   * 判定与 `activate` **同源**：本回合没用过 Ⅰ、2 费付得起、敌方场上至少有一个
+   * 未冻结的随从（H31：对已冻结者再冻结是空操作，凑不出目标就别白付 2 费）。
+   * 霜痕 0 层也有一档收益（冻结 1 个），所以不设层数门槛 —— 档位表只影响收益大小。
+   */
+  aiCouldUse(state, ctx, owner) {
+    const p = playerOf(state, owner);
+    const cmd = p?.zones.commander[0];
+    if (!p || !cmd) return null;
+    if (usedGuard(p, cmd.uid, '1')) return null;
+    if (!canPayCost(p, commanderSkillCost(p))) return null;
+    if (enemyBoard(state, owner).every((c) => c.frozen)) return null;
+    return { via: 'activate', effectId: '1' };
+  },
+
   activate(state, intent, ctx, effectId): Result<GameEvent[], Rejection> {
     if (effectId !== '1') {
       return reject(RULE_ERRORS.EFFECT_UNAVAILABLE, `未知效果: ${effectId}`);

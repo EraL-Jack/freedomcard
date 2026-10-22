@@ -27,6 +27,7 @@ import { enemyBoard } from './primitives.js';
 
 import {
   bladeExileCount,
+  canPayCost,
   choiceCleared,
   choicePending,
   commanderSkillCost,
@@ -103,6 +104,36 @@ function pendingPlayer(state: GameState, fallbackUid: string): string {
 }
 
 export const bladeLordEffect: EffectModule = {
+  /**
+   * AI 何时该发动 Ⅰ（issue #137 / D-288）。
+   *
+   * 三个条件缺一不可，全部读本文件里的常量与既有助手 —— **不抄数字**：
+   *  - 除外区炎刃数达到 1 档（`LEVELS.l1`，`#138` 调档后自动跟随）；
+   *  - 弃牌区里至少有一张力量值达标的随从、且随从区有空位 ——
+   *    否则付掉 2 费什么也拿不回来（1 档就是「从弃牌区召唤」）；
+   *  - 2 费付得起、本回合还没用过（`usedGuard`）。
+   *
+   * 「值不值得」的判断留给调用方：这里只回答「现在发动会不会打空」。
+   * Ⅱ（除外一张手牌）**不给 AI 用**：它不产生即时收益，还会让 AI 先把手里
+   * 能打的牌扔掉换档位 —— 属策略取舍，不在 #137 的范围内。
+   */
+  aiCouldUse(state, ctx, owner) {
+    const p = playerOf(state, owner);
+    const cmd = p?.zones.commander[0];
+    if (!p || !cmd) return null;
+    if (usedGuard(p, cmd.uid, '1')) return null;
+    if (!canPayCost(p, commanderSkillCost(p))) return null;
+    const bladeCount = bladeExileCount(p, ctx.cards);
+    if (bladeCount < LEVELS.l1) return null;
+    if (p.zones.board.length >= BOARD_SLOTS) return null;
+    const hasSummonTarget = p.zones.graveyard.some((c) => {
+      const def = ctx.cards[c.defId];
+      return def?.type === 'minion' && def.power <= bladeCount;
+    });
+    if (!hasSummonTarget) return null;
+    return { via: 'activate', effectId: '1' };
+  },
+
   activate(state, intent, ctx, effectId) {
     const at = ctx.now;
     const me = intent.playerId;
