@@ -14,9 +14,9 @@ import {
 } from './helpers.js';
 
 /**
- * 批次 2「打磨」的界面回归（issue #123 #124 #128 #129 #130）。
+ * 「打磨」类界面回归（issue #122 #123 #124 #128 #129 #130）。
  *
- * 这五条都是 T-0029 黑盒审计里「功能对、观感错」的那一类：引擎与协议全无问题，
+ * 这几条都是 T-0029 黑盒审计里「功能对、观感错」的那一类：引擎与协议全无问题，
  * 但玩家第一次上手会撞上。它们有一个共同点 —— **普通功能用例测不出来**：
  * 断言「按钮存在」不会发现按钮指向错的方向，断言「提示条可见」不会发现它压住了手牌。
  * 所以这里全部改用**几何事实**或**计算样式**做断言（矩形 / 字号 / scrollWidth），
@@ -29,6 +29,28 @@ const WAIT = Number(process.env.E2E_WAIT_MS ?? 15_000);
 
 /** 移动端视口（issue #128 / #129 只在窄屏暴露）。 */
 const MOBILE = { viewport: { width: 390, height: 844 }, hasTouch: true } as const;
+
+test('右侧日志列不再有空白的对话框占位（#122）', async ({ browser }) => {
+  test.setTimeout(90_000);
+  const { host, guest } = await startGame(browser);
+  const p = await activePage([host, guest]);
+
+  const panel = p.getByTestId('log-panel');
+  await expect(panel).toBeVisible({ timeout: WAIT });
+
+  // ① 文案层：那个空块整块不该还在 DOM 里。
+  await expect(p.getByText('对话框'), '右下不该再有「对话框（占位）」这种空承诺').toHaveCount(0);
+
+  // ② 几何层：日志框必须吃满整列。
+  //    只查文本是不够的 —— 换一句话把空块留着照样「没有『对话框』三个字」，
+  //    但玩家看到的仍然是「有东西没加载出来」。空块的存在只能靠「下面还剩多少高度」证明。
+  const pb = await panel.boundingBox();
+  const lb = await p.getByTestId('log').boundingBox();
+  expect(pb, '日志列应有可见矩形').not.toBeNull();
+  expect(lb, '日志框应有可见矩形').not.toBeNull();
+  const gap = pb!.y + pb!.height - (lb!.y + lb!.height);
+  expect(gap, `日志框下方仍留 ${Math.round(gap)}px 空白（占位块还在？）`).toBeLessThanOrEqual(2);
+});
 
 test('换牌提示不再指向一个不存在的按钮（#123）', async ({ browser }) => {
   test.setTimeout(90_000);
